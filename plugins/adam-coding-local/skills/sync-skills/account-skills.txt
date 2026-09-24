@@ -32,18 +32,20 @@
 # RULINGS ON RECORD (owner, 2026-08-16)
 # `finding-unknowns` and `writing-adrs` are IN. Both are repo-independent
 # methodology, and the fleet AGENTS.md tells agents across 7 repos to "reach
-# for finding-unknowns" — but Cowork and claude.ai chat carry no `adam`
-# bundle, so the skill that guidance names is unreachable exactly where the
+# for finding-unknowns" — but Cowork and claude.ai chat carried no copy of
+# the plugin that holds it (then the `adam` bundle, now
+# `adam-anything-anywhere`, ADR 0013), so the skill that guidance names is unreachable exactly where the
 # guidance is loudest. Neither has been uploaded yet; they are declared
 # ahead of the upload on purpose, so --verify names the gap out loud instead
 # of hiding it.
 #
 # `debug-github-workflows` and `review-bash-ci-reliability` are OUT, and
 # stay out. Both need a git checkout and CI context, so pushing them is
-# precisely the "push the adam bundle to the account store" alternative ADR
-# 0002 rejects: account skills cannot be repo-scoped, so they would load as
-# pure context cost in every unrelated session while being outranked by the
-# marketplace bundle in the repos they were written for. Do not add them.
+# precisely the "push the coding plugin to the account store" alternative
+# ADR 0002 rejects (it was the `adam` bundle then; they now live in
+# `adam-coding-anywhere`): account skills cannot be repo-scoped, so they
+# would load as pure context cost in every unrelated session while being
+# outranked by the marketplace plugin in the repos they were written for. Do not add them.
 #
 # Order is alphabetical and carries no meaning.
 

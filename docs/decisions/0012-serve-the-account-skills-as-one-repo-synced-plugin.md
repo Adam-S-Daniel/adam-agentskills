@@ -16,7 +16,7 @@ exists because nothing else can see the account.
 
 Experiment E6
 ([`docs/experiments/E6-account-plugin-channel.md`](../experiments/E6-account-plugin-channel.md),
-[#160](https://github.com/Adam-S-Daniel/agentskills/issues/160)) tested the
+old-registry issue 160) tested the
 plugin channel on 2026-09-23 and 2026-09-24 with throwaway probes. What each
 one showed matters here, because they are not interchangeable:
 
@@ -132,7 +132,7 @@ carries no status change; this section is the carve-out.
 
 ## Rollout
 
-1. **Phase 1 — PR #175, merged.** The first shape (a curated `./` entry), its
+1. **Phase 1 — old-registry PR #175, merged.** The first shape (a curated `./` entry), its
    checks, `setup.sh`'s terminal opt-out and this ADR. Nothing changed on the
    account.
 2. **Phase 1b — this change.** The symlink-folder shape replaces the curated
@@ -154,7 +154,7 @@ carries no status change; this section is the carve-out.
       **before** the plugin is enabled anywhere. The pass condition is reading
       each home's `~/.claude/settings.json` and seeing
       `enabledPlugins["adam-personal@synced"] == false`, **not** setup.sh's
-      output: before PR #175 setup.sh could print "Setup complete." on a
+      output: before old-registry PR #175 setup.sh could print "Setup complete." on a
       Windows home having written nothing, because it picked the Microsoft
       Store `python3` stub by name and never checked the exit code (measured
       2026-09-24; that home's settings.json had none of ADR 0010's keys). It
@@ -240,7 +240,7 @@ carries no status change; this section is the carve-out.
   unless `consistency` becomes a required check in repo-settings' `fleet.yml`.
 - **A `core.symlinks=false` checkout sees the links as text files.** That is
   the Git for Windows default, so the owner's Windows clone; the GitHub
-  Windows runners, measured on PR #177, check them out as real symlinks. It is
+  Windows runners, measured on old-registry PR #177, check them out as real symlinks. It is
   harmless for the account: claude.ai builds the plugin from GitHub, where
   they are symlinks, and the Desktop app installs from claude.ai's build —
   measured working in local Cowork on Windows (E6 §3.7). Every check here
@@ -312,7 +312,7 @@ carries no status change; this section is the carve-out.
 ## Alternatives considered
 
 - **A curated `./` entry with `strict: false` and a `skills` list** (this
-  ADR's first shape, merged in PR #175). Rejected: claude.ai does not list an
+  ADR's first shape, merged in old-registry PR #175). Rejected: claude.ai does not list an
   entry whose source folder has no `plugin.json` at all (E6 §3.7, measured
   2026-09-24).
 - **A curated `skills` list on an existing bundle's entry.** Rejected:
@@ -384,9 +384,9 @@ carries no status change; this section is the carve-out.
 ## References
 
 - [E6](../experiments/E6-account-plugin-channel.md) and
-  [#160](https://github.com/Adam-S-Daniel/agentskills/issues/160) — the
+  old-registry issue 160 — the
   measurements this rests on
-- [PR #175](https://github.com/Adam-S-Daniel/agentskills/pull/175) — the first
+- old-registry PR 175 — the first
   shape, superseded by this revision
 - [ADR 0001](0001-consolidate-plugins-into-bundles.md) — bundles and the
   append-only `renames` map

@@ -21,7 +21,7 @@ It closed that question and deliberately left two open:
    converting a deliberate per-repo opt-in into a fleet default.
 
 The two are sequenced, and that is why they are answered together. Fixing the
-dispatch half of #84 needs a settings file at a level the chain reads, which
+dispatch half of old-registry #84 needs a settings file at a level the chain reads, which
 makes the hook run from a fixed absolute path in **every** session on the
 machine — so question 2 has to be settled before that wiring is safe to place,
 and question 1 has to be settled before the wiring is worth placing.
@@ -66,7 +66,7 @@ session decide what gets written into `$HOME`.
 > is FALSE even when `dir` is a symlink.
 
 > **AMENDMENT, 2026-08-30 — what the `.git` predicate actually buys
-> ([#133](https://github.com/Adam-S-Daniel/agentskills/issues/133)).** The
+> (old-registry issue 133).** The
 > paragraph above is correct about what the predicate CLOSED and wrong about
 > what it can be leaned on for. It was cited as restoring "a lockless project is
 > a project that did not opt in", and that claim was in turn cited as what makes
@@ -310,7 +310,7 @@ whole risk the lock exists to close.
 
 **Delete the `$SELF_ROOT` fallback entirely.** Rejected: a hand run with no
 `CLAUDE_PROJECT_DIR` could then find no lock at all, and that is the documented
-way to run the hook manually — it is how #84 was diagnosed.
+way to run the hook manually — it is how old-registry #84 was diagnosed.
 
 **Gate the fallback behind a new environment variable.** Rejected as a knob for a
 condition already exactly expressed by "the session named no project directory".
@@ -320,7 +320,7 @@ condition already exactly expressed by "the session named no project directory".
 Three rounds now. The first two produced 26 verified findings; six were fixed,
 two were REFUTED as stated limits re-reported, and one — the digest not covering
 symlinks — predates this work and is
-[#132](https://github.com/Adam-S-Daniel/agentskills/issues/132).
+old-registry issue 132.
 
 > **ROUND 3, 2026-08-25.** Five independent lenses against the FIX ROUND itself,
 > because E4's rule is that the gate does not close while rounds keep finding
@@ -360,43 +360,43 @@ symlinks — predates this work and is
 >   yet, the reader's `synced` refusal is the only guard, not the second one.
 >
 > Filed rather than fixed, because each needs a decision rather than a patch:
-> [#133](https://github.com/Adam-S-Daniel/agentskills/issues/133) (`.git` is a
+> old-registry issue 133 (`.git` is a
 > hygiene signal, not the trust signal this ADR leans on),
-> [#134](https://github.com/Adam-S-Daniel/agentskills/issues/134) (same-LINE
+> old-registry issue 134 (same-LINE
 > repo-controlled prose still reaches `additionalContext`),
-> [#135](https://github.com/Adam-S-Daniel/agentskills/issues/135) (a project dir
+> old-registry issue 135 (a project dir
 > that acquires its own lock reaps its children's skills under `— OK` — a second
 > in-session residual the CORRECTION above does not cover), and
-> [#136](https://github.com/Adam-S-Daniel/agentskills/issues/136)
+> old-registry issue 136
 > (`scan_incomplete` under-reports).
 >
-> **RESOLVED, 2026-08-30 — all four, plus #138 and #139 from round 4.** Kept as
+> **RESOLVED, 2026-08-30 — all four, plus old-registry #138 and old-registry #139 from round 4.** Kept as
 > a record of what each decision WAS, since the issues are closed and a reader
 > arriving here should not have to reconstruct them:
 >
-> - **#133** — decided as the AMENDMENT above: `.git` buys hygiene, not trust,
+> - **old-registry #133** — decided as the AMENDMENT above: `.git` buys hygiene, not trust,
 >   and this ADR no longer cites it as what makes a user-scope wiring safe. No
 >   code change; tightening the predicate would buy the appearance of a trust
 >   boundary without the substance.
-> - **#134** — every repo-derived ATOM in a verdict is now bounded (160
+> - **old-registry #134** — every repo-derived ATOM in a verdict is now bounded (160
 >   characters, elision stated). The cap goes on at construction rather than on
 >   any joined clause: a clause that EMBEDS a path is the hook's own sentence,
 >   and clamping it truncates the run's own conclusion. 201,902 bytes of
 >   `additionalContext` from one padded skill key became 1,515.
-> - **#135** — a project directory with its own lock AND child repositories
+> - **old-registry #135** — a project directory with its own lock AND child repositories
 >   carrying locks now claims authority over NOTHING: it installs its own lock's
 >   skills and prunes none, saying so in its own words rather than borrowing the
 >   incomplete-scan clause (nothing failed; the run declined to look). This
 >   closes the second in-session residual, so the CORRECTION above should now be
 >   read as enumerating the in-session cases COMPLETELY.
-> - **#136** — `scan_incomplete` accumulates instead of overwriting (three
+> - **old-registry #136** — `scan_incomplete` accumulates instead of overwriting (three
 >   unsearchable children reported as one), and the searchability probe moved
 >   above the name arms, which had been deciding whether to name a child with a
 >   test that cannot see into a directory it may not search.
-> - **#138** — one `child_carries_lock` probe answers "did this repo opt in, in
+> - **old-registry #138** — one `child_carries_lock` probe answers "did this repo opt in, in
 >   any shape" for all five arms; three of them had tested bare `-f`, so a
 >   non-regular lock read exactly like no lock.
-> - **#139** — the whole-run verdict distinguishes a lock that would not PARSE
+> - **old-registry #139** — the whole-run verdict distinguishes a lock that would not PARSE
 >   from one that was REFUSED, and offers "regenerate it" only where that can
 >   work. Undecodable bytes render as `<0xNN>` rather than a space, so two
 >   children can no longer render identically and a hostile one cannot make the
@@ -434,7 +434,7 @@ symlinks — predates this work and is
 > `emit` printf fallback widened to the whole line-forging class.
 >
 > Filed rather than fixed:
-> [#137](https://github.com/Adam-S-Daniel/agentskills/issues/137) — refuse a lock
+> old-registry issue 137 — refuse a lock
 > by where it RESOLVES, not by being a symlink. The round-3 guard refuses
 > legitimate in-project layouts (`skills.lock -> locks/prod.lock`) with a reason
 > that is false for them, and makes a permanent session-wide prune kill-switch
@@ -443,9 +443,9 @@ symlinks — predates this work and is
 > that attaches it. That is a real widening of the limit this file states, because
 > the stated trigger requires a child that is NOT a git repository and these
 > require one that IS.
-> [#138](https://github.com/Adam-S-Daniel/agentskills/issues/138) — three older
+> old-registry issue 138 — three older
 > discovery arms still drop a lock-carrying child silently.
-> [#139](https://github.com/Adam-S-Daniel/agentskills/issues/139) — an undecodable
+> old-registry issue 139 — an undecodable
 > child name gets a false remediation, and four bash label surfaces still render
 > it, which allows a hostile child to make the verdict blame an honest sibling.
 >
@@ -574,7 +574,7 @@ Recorded so the coverage is not read as wider than it was:
 
 ## References
 
-- [#84](https://github.com/Adam-S-Daniel/agentskills/issues/84) — the
+- old-registry issue 84 — the
   investigation; measurements dated 2026-08-16.
 - ADR 0005 — the two open questions this answers, and the constraint it records.
 - ADR 0001 — skill directory basenames must stay unique.

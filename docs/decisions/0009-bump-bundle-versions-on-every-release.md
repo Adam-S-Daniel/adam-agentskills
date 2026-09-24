@@ -27,7 +27,7 @@ The CLI is not missing the information — it records the source commit and then
 declines to consult it. `~/.claude/plugins/installed_plugins.json` carries
 `"gitCommitSha": "88526d12e3d6b35e4db6248497334b3a85e50b68"`, which is
 `Prune skills that left the lock, without deleting what we did not install`
-(#77, 2026-08-14). `git merge-base --is-ancestor` confirms it a clean ancestor
+(old-registry #77, 2026-08-14). `git merge-base --is-ancestor` confirms it a clean ancestor
 of `main`, 381 commits back.
 
 What those commits changed under `plugins/adam/skills` — +10,516 / −295 lines
@@ -166,7 +166,7 @@ exiting 0 over zero assertions).
   basename constraint this decision must not violate.
 - [ADR 0003](0003-retire-the-sha-pinning-skill.md) — the retirement that never
   took effect on the stale install.
-- Installed source commit: `88526d12e3d6b35e4db6248497334b3a85e50b68` (#77).
+- Installed source commit: `88526d12e3d6b35e4db6248497334b3a85e50b68` (old-registry #77).
 - `main` at time of measurement: `f2b86d204f2c89d8867df5ba85b8831337fdfba8`.
 - Follow-up in a different repo: `_agent-guidance`'s `agents-md/base.md`
   prescribes the clone-vs-remote freshness check this ADR shows is permanently

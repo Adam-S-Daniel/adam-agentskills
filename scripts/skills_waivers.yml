@@ -64,7 +64,7 @@
 # number right instead of the prose above it.
 # ---------------------------------------------------------------------------
 
-# No waivers are currently declared. The the school bell-schedule skill dangling-payload-ref
+# No waivers are currently declared. The `bell-schedule` dangling-payload-ref
 # pair that lived here (descoped by owner directive 2026-08-14, ADR 0002) was
 # retired by ADR 0011 (2026-09-22) when the skill itself was removed from the
 # registry — its account-store copy is now deleted by hand instead of kept

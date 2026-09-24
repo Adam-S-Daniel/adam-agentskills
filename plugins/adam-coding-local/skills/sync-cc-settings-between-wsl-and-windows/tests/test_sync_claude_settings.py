@@ -2,7 +2,7 @@
 
 Every test runs the real script against two fixture settings.json files in
 tmp_path, never against a real home. The findings these pin are in
-https://github.com/Adam-S-Daniel/agentskills/issues/170.
+old-registry issue 170.
 
 Environment knobs (both optional):
 

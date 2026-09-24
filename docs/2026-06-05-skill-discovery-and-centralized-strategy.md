@@ -109,7 +109,7 @@ every skill into every session.* This repo has 9 plugins today and will grow.
 
 **Recommendations:**
 
-- Consider marking niche/personal plugins (the school bell-schedule skill, `fastmail`,
+- Consider marking niche/personal plugins (`bell-schedule`, `fastmail`,
   `sync-cc-settings-between-wsl-and-windows`) as `defaultEnabled: false` in their
   `plugin.json` / marketplace entries, so they're installed-but-dormant until
   invoked. Keep broadly useful ones (`adam-writing-style`,
@@ -164,7 +164,7 @@ that added this document. Status:
    legacy whole-directory link). Personal skills the user keeps there are left
    untouched. The migration is idempotent and was verified on a simulated legacy
    link.
-2. **Context hygiene — DONE.** the school bell-schedule skill, `fastmail`, and
+2. **Context hygiene — DONE.** `bell-schedule`, `fastmail`, and
    `sync-cc-settings-between-wsl-and-windows` are now `"defaultEnabled": false` in
    `.claude-plugin/marketplace.json`. They install but stay dormant until invoked.
    The broadly-useful plugins remain enabled by default.

@@ -3,7 +3,7 @@
 **Question.** Does the repo's existing CI gate — `claude plugin validate` — detect
 malformed skill frontmatter, and if not, what is it blind to?
 
-Context: issue #55 found unparseable SKILL.md frontmatter that had already
+Context: old-registry issue #55 found unparseable SKILL.md frontmatter that had already
 propagated into a consumer repo, past a CI job whose entire purpose is validating
 this marketplace. Either the gate ran and missed it, or the gate cannot see it.
 
@@ -46,7 +46,7 @@ PyYAML: ERROR -> mapping values are not allowed here
 Green, with `--strict`, on a skill whose frontmatter no YAML parser will load.
 `claude plugin validate` reads the marketplace and plugin **manifests**; it never
 opens a `SKILL.md`. No amount of `--strict` would have caught the frontmatter that
-issue #55 watched propagate into a consumer — this is a blind spot by
+old-registry issue #55 watched propagate into a consumer — this is a blind spot by
 construction, not a missing flag.
 
 ## Result 3 — the payload-reference check needs precision, established empirically
@@ -63,7 +63,7 @@ all three registries:
 
 | Registry | Gating findings | Which |
 |---|---|---|
-| agentskills | 2 | the school bell-schedule skill → `scripts/next_break.py`, `scripts/test_next_break.py` |
+| agentskills | 2 | `bell-schedule` → `scripts/next_break.py`, `scripts/test_next_break.py` |
 | cms-platform | 1 | `admin-config-render` → `scripts/render-decap-config.rb` |
 | adamdaniel.ai | 1 | `admin-config-render` → `scripts/render-decap-config.rb` |
 
@@ -73,7 +73,7 @@ The `admin-config-render` pair is the interesting row. The referenced script exi
 at **cms-platform's repo root** but not inside the skill directory — so the
 reference resolves only from the repo root, by accident of where the skill happens
 to live. The identical reference then rides the vendored mirror into adamdaniel.ai,
-where the file exists nowhere at all. That is issue #55's third defect class —
+where the file exists nowhere at all. That is old-registry issue #55's third defect class —
 repo-relative payload paths that dangle the moment a skill is copied — caught in
 the act, mid-propagation.
 
@@ -90,7 +90,7 @@ the act, mid-propagation.
 
 **`--strict` is necessary but nowhere near sufficient.** Arming it is worth doing —
 it costs three lines and closes the manifest lane — but Result 2 shows the gate
-cannot see the defect class issue #55 was actually about, and no future flag will
+cannot see the defect class old-registry issue #55 was actually about, and no future flag will
 change that: it is a manifest validator, and the defects live in files it does not
 read. A separate tool that opens every `SKILL.md` is the only thing that can cover
 this, which is what `scripts/check_skills.py` is for.

@@ -200,6 +200,94 @@ def test_an_unknown_base_is_an_error_not_a_pass(tmp_path, capsys):
     assert "failed" in out.err
 
 
+@pytest.mark.parametrize("field, value, line", [
+    ("user.name", SECRET_NAME, 1),          # author name (committer too: line 3)
+    ("user.email", SECRET_MAIL, 2),         # author email (committer too: line 4)
+])
+def test_history_scans_the_author_and_committer(tmp_path, capsys, field, value, line):
+    """A commit's author and committer are published with it, message or not."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    base = _git(repo, "rev-parse", "HEAD")
+    (repo / "README.md").write_text("still clean\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "-c", f"{field}={value}", "commit", "-q", "-m", "an ordinary message")
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, "--base", base, capsys=capsys)
+    assert code == 1
+    assert f":identity:{line}: pattern #" in out.out
+    assert f":identity:{line + 2}: pattern #" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+def test_a_symlinks_committed_target_is_scanned(tmp_path, capsys):
+    """Committed as mode 120000 its content is the TARGET string, which is
+    public; a checkout that writes real links has no file body to read."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    target = repo / "target.tmp"
+    target.write_text("../notes/" + SECRET_MAIL, encoding="utf-8", newline="")
+    blob = _git(repo, "hash-object", "-w", "target.tmp")
+    target.unlink()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},link")
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, capsys=capsys)
+    assert code == 1, out.out
+    assert "link:1: pattern #2" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+@pytest.mark.parametrize("encoding", ["utf-16", "utf-16-le", "utf-16-be"])
+def test_a_utf16_file_is_decoded_and_scanned(tmp_path, capsys, encoding):
+    """To a UTF-8 reader every letter of a UTF-16 file is followed by a NUL,
+    so no pattern can match until the bytes are decoded as what they are."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    (repo / "notes.txt").write_bytes(("first line\nby " + SECRET_NAME + "\n").encode(encoding))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "add notes")
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, capsys=capsys)
+    assert code == 1, out.out
+    assert "notes.txt:2: pattern #1" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+def test_a_line_typed_into_a_merge_commit_is_scanned(tmp_path, capsys):
+    """An "evil merge": the line exists in no parent, only in the merge. It is
+    reported against the merge commit itself."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    base = _git(repo, "rev-parse", "HEAD")
+    trunk = _git(repo, "rev-parse", "--abbrev-ref", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "side")
+    commit(repo, {"side.md": "from the side\n"}, "side work")
+    _git(repo, "checkout", "-q", trunk)
+    commit(repo, {"trunk.md": "from the trunk\n"}, "trunk work")
+    _git(repo, "merge", "-q", "--no-ff", "--no-commit", "side")
+    (repo / "merged.md").write_text("added in the merge by " + SECRET_NAME + "\n",
+                                    encoding="utf-8", newline="\n")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "merge side")
+    merge = _git(repo, "rev-parse", "HEAD")[:12]
+    assert len(_git(repo, "rev-list", "--parents", "-n", "1", "HEAD").split()) == 3
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, "--base", base, capsys=capsys)
+    assert code == 1
+    assert f"{merge}:merged.md:1: pattern #1" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+@pytest.mark.parametrize("variable", ["GITHUB_HEAD_REF", "GITHUB_REF_NAME"])
+def test_the_branch_name_is_scanned_when_ci_names_it(tmp_path, capsys, variable):
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    code, out = run(repo, {"PRIVACY_DENYLIST": "zorblax", variable: "fix/zorblax-typo"},
+                    capsys=capsys)
+    assert code == 1
+    assert "branch-name: pattern #1" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+def test_a_head_ref_wins_over_the_merge_ref_name(tmp_path, capsys):
+    """On a pull request GITHUB_REF_NAME is `<n>/merge`; the branch is HEAD_REF."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    code, _ = run(repo, {"PRIVACY_DENYLIST": "zorblax", "GITHUB_HEAD_REF": "fix/zorblax",
+                         "GITHUB_REF_NAME": "12/merge"}, capsys=capsys)
+    assert code == 1
+
+
 def test_the_script_runs_as_ci_runs_it(tmp_path):
     """End to end through a real process and a real environment variable, the
     way the `privacy` job calls it."""

@@ -1,6 +1,6 @@
 {
   "name": "adam-coding-anywhere",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, and disarming inherited reach.",
   "author": { "name": "Adam Daniel" }
 }

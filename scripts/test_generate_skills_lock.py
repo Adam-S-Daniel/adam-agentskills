@@ -4853,6 +4853,21 @@ def _drifted_plain(tmp_path):
     return primary, out, []
 
 
+def _drifted_default_bundle(tmp_path):
+    """`_drifted_plain`, laid out under this repo's first DEFAULT bundle."""
+    bundle = gsl.DEFAULT_BUNDLES[0]
+    primary = tmp_path / "registry"
+    sha = make_registry(primary, {f"{bundle}/alpha": SKILL_A})
+    out = tmp_path / "skills.lock"
+    assert run_generator("--repo", str(primary), "--registry", primary.resolve().as_uri(),
+                         "--ref", sha, "--bundles", bundle, "-o", str(out)).returncode == 0
+    _write(primary / "plugins" / bundle / "skills" / "alpha" / "SKILL.md",
+           "---\nname: alpha\n---\nedited\n")
+    _git(primary, "add", "-A")
+    _git(primary, "commit", "-q", "-m", "the primary really moved")
+    return primary, out, []
+
+
 def _drifted_source_only(tmp_path):
     primary = tmp_path / "registry"
     sha = make_registry(primary, {"adam/alpha": SKILL_A})
@@ -5167,7 +5182,12 @@ def _hand_broken_lock(field, value=None):
     the write path and nothing on the report path knew about them.
     """
     def build(tmp_path):
-        primary, out, extra_args = _drifted_plain(tmp_path)
+        # A lock that lost 'bundles' is read against gsl.DEFAULT_BUNDLES, so
+        # that shape's registry must hold (and drift) a DEFAULT bundle — with
+        # the fixture bundle, the fallback would read nothing and report the
+        # tree as current, which is not the shape under test.
+        builder = _drifted_default_bundle if field == "bundles" else _drifted_plain
+        primary, out, extra_args = builder(tmp_path)
         document = json.loads(out.read_text(encoding="utf-8"))
         if value is None:
             document.pop(field)

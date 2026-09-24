@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "adam-non-coding-local",
+  "version": "1.0.0",
+  "description": "Adam's non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork: PDF OCR, audit, renaming and comparison, and Fastmail email and sending-identity workflows.",
+  "author": { "name": "Adam Daniel" },
+  "repository": "https://github.com/Adam-S-Daniel/adam-agentskills",
+  "keywords": [
+    "pdf",
+    "ocr",
+    "fastmail",
+    "email",
+    "identities",
+    "from-address",
+    "browser",
+    "claude-in-chrome"
+  ]
+}

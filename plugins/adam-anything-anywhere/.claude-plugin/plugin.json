@@ -1,0 +1,6 @@
+{
+  "name": "adam-anything-anywhere",
+  "version": "1.0.0",
+  "description": "Adam's skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. Writing ADRs and resolving task ambiguity.",
+  "author": { "name": "Adam Daniel" }
+}

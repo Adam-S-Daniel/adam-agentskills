@@ -1,0 +1,6 @@
+{
+  "name": "adam-non-coding-local",
+  "version": "1.0.0",
+  "description": "Adam's non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork: PDF OCR, audit, renaming and comparison, and Fastmail email and sending-identity workflows.",
+  "author": { "name": "Adam Daniel" }
+}

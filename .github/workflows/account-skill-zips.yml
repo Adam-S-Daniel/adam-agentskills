@@ -1,0 +1,614 @@
+# Build one downloadable ZIP per account-store skill that needs re-uploading,
+# so the upload can be done from a phone: download the artifact in Safari, then
+# hand the same file to claude.ai Settings -> Capabilities.
+#
+# WHAT THIS CAN AND CANNOT KNOW
+# A runner has no ~/.claude/skills/synced, so it cannot ask the account store
+# anything (ADR 0002). It reads the COMMITTED recording, `account-state.json`
+# at the REGISTRY ROOT beside skills.lock - never inside a skill directory,
+# because zip_skill() uploads a skill's whole folder - written by
+# `sync_skills.py --record-account-state` from a session that does have a
+# mirror. So "needs upload" means "the registry moved since someone last
+# looked at the account" - strong evidence, not proof. Re-record after
+# uploading or the same skill keeps being offered.
+#
+# THE SECOND SOURCE, AND WHY IT IS THE SAME CONDITION THAT FILES THE ISSUE
+# The recording above goes stale on its own. The one thing that actually LOOKS
+# at the account store is skills-evals' Tier-3 Routine, which publishes
+# `propagation/account/latest.json` to that repo's `eval-results` branch, and
+# whose `reported-failure` verdict is what opens or updates the tracking issue
+# "Account skill store drifted from registry (automated Tier-3 audit)"
+# (`fresh` closes it). The `pick` job below clones that repo and calls
+# skills-evals' OWN `account_store.freshness_verdict` on the published
+# artifact, so the ZIPs appear under exactly the condition that files the
+# issue - the report of the problem and the fix for it arrive together, and
+# neither repo can quietly start using a different predicate.
+#
+# CONSEQUENCE, STATED SO IT IS NOT DISCOVERED AS A SURPRISE: this workflow now
+# has a CROSS-REPO DEPENDENCY whose verdict can change with NO COMMIT IN THIS
+# REPO AT ALL - the same property ci.yml's `skills-conformance` job has, and
+# the reason both carry a schedule. The audit half is best effort: if the clone
+# or the import fails the verdict is `unavailable`, the run continues on the
+# local recording alone, and the summary says DEGRADED in words. It must never
+# be possible to mistake "we could not ask" for "we asked and it passed".
+#
+# WHY THE ARTIFACT IS THE SKILL'S FILES AND NOT A .zip FILE
+# GitHub hands you an artifact AS a zip named after the artifact, so an
+# artifact named `sync-skills` downloads as `sync-skills.zip` with SKILL.md at
+# its root - the exact shape `zip_skill()` uploads (SKILL.md at root,
+# ZIP_STORED). `compression-level: 0` keeps it stored rather than deflated.
+# Putting a .zip INSIDE the artifact would instead force an extract step on the
+# phone, and a nested .zip would upload as part of the skill.
+#
+# NO `concurrency:` BLOCK, DELIBERATELY. It publishes no required status
+# context, and a dispatch is a human asking for a build right now - grouping
+# would let one dispatch cancel another's pending run. See AGENTS.md,
+# "A required status check gets no `concurrency` group".
+name: Account skill ZIPs
+
+on:
+  workflow_dispatch:
+    inputs:
+      selection:
+        description: "stale (default) | all | comma-separated skill names"
+        required: false
+        default: stale
+  # DAILY, BECAUSE THE CONDITION CAN BECOME TRUE WITH NO EVENT HERE. The
+  # Tier-3 Routine publishes at about 05:04 UTC, but GitHub queues cron across
+  # the whole platform and delays it by an unbounded amount, so no cron can be
+  # "just after" that publish - aligning them exactly is not something this
+  # side can arrange. That is precisely why the run reads the published
+  # CONDITION (the artifact's own `generated_at`, judged by
+  # `freshness_verdict`) instead of trusting the clock: an early run sees a
+  # yesterday's-but-still-fresh result and says so, and a Routine that stopped
+  # firing reads as `stale` rather than as a pass. :23 rather than :00 for the
+  # queueing reason above, and offset from ci.yml's `17 6 * * *` so the two
+  # daily jobs do not contend for the same runner minute.
+  schedule:
+    - cron: '23 6 * * *'
+  push:
+    branches: [main]
+    # Salient paths only: the skills that can be declared, the recording that
+    # decides staleness, the tool that computes it, the module that selects,
+    # and this file.
+    #
+    # `account-state.json` is listed EXPLICITLY and is not covered by any glob
+    # above it: the recording lives at the repo ROOT, deliberately (a copy
+    # inside a skill directory would be uploaded as part of that skill by
+    # `zip_skill()`), so it matches neither `plugins/*/skills/**` nor the
+    # workflow path. Without this line, merging a `record-account-upload` PR -
+    # whose diff is exactly and only that file - did not re-run this workflow,
+    # so the offer list stayed stale until some unrelated push moved it.
+    paths:
+      - 'plugins/*/skills/**'
+      - 'account-state.json'
+      - 'scripts/account_zip_selection.py'
+      - '.github/workflows/account-skill-zips.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  pick:
+    runs-on: ubuntu-latest
+    outputs:
+      names: ${{ steps.drift.outputs.names }}
+      count: ${{ steps.drift.outputs.count }}
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Read the published account audit's verdict
+        id: audit
+        # WHY THIS IMPORTS skills-evals' FUNCTION INSTEAD OF RE-DERIVING IT
+        # `freshness_verdict` is the ONE decision function over
+        # propagation/account/latest.json, and the tracking issue named in this
+        # file's header is opened, updated and closed by its result. A second
+        # implementation here would be free to disagree with it: this workflow
+        # would build ZIPs for a condition nobody filed, or stay silent while an
+        # issue sat open, and nothing would report the divergence. So the
+        # harness is cloned and its own function is called, with `max_age_days`
+        # read from ITS fixture rather than copied into a constant here.
+        #
+        # Two clones because they want different things - blobless for the code,
+        # single-branch for the published artifact - and both anonymous: the two
+        # repos are public, which is the same reason ci.yml's sibling clones
+        # need no token. Cloned to ../ so neither tree pollutes the workspace
+        # checkout that `--account-drift` scans.
+        #
+        # THIS STEP RUNS UNDER `bash -e`, AND EVERY FAILURE THAT REACHES FOR
+        # skills-evals IS EXPLICITLY GUARDED. Both facts are load-bearing, and
+        # the first one is not a
+        # choice made here: no `shell:` and no `defaults:` are declared
+        # anywhere in this file, so GitHub runs each `run:` body as
+        # `/usr/bin/bash -e {0}`. The `set -uo pipefail` below adds nounset and
+        # pipefail to that; it cannot take errexit away, because `set -o` only
+        # ENABLES options. This comment previously claimed the step ran without
+        # `-e` "deliberately", which was false at runtime and is the more
+        # dangerous direction to be wrong in: an editor who believes an
+        # unguarded command fails soft here writes one, and it aborts the step
+        # instead.
+        #
+        # What makes the tolerance real is the SHAPE of every failable command,
+        # not the absence of a flag. Both clones sit in `if` conditions, and
+        # the pyyaml install, the placeholder `mkdir`, the heredoc capture and
+        # the drift-constant read sit in `||` lists - all constructs errexit is
+        # defined not to act on, so each failure is caught by name and becomes
+        # `status=unavailable`, which the summary renders as DEGRADED. Keep new
+        # commands in one of those shapes. A missing `eval-results` branch in
+        # particular is reported and never fatal - the same tolerance
+        # skills-evals' own propagation.yml applies in "Fetch the account
+        # audit's published result", and for the same reason: a hard failure
+        # would take out the one workflow that hands a phone the fix for the
+        # drift.
+        #
+        # THAT `mkdir` USED TO BE THE COUNTEREXAMPLE, and it sat in the one
+        # branch the sentence above promises is never fatal. `mkdir -p
+        # ../eval-results` fails when the path already exists as a FILE or the
+        # parent is not writable, and unguarded that killed the step under
+        # errexit before any verdict handling ran - so the missing-branch path
+        # aborted the job instead of degrading, which is the exact failure the
+        # comment was telling an editor could not happen here. It is a `||`
+        # list now, and scripts/test_account_workflows.py executes that case
+        # rather than reading this paragraph.
+        #
+        # ONE COMMAND THAT CAN PLAUSIBLY FAIL IS DELIBERATELY LEFT UNGUARDED:
+        # the final `status=` write to $GITHUB_OUTPUT. There is no degraded
+        # path to take when the runner cannot write its own output file - the
+        # next step would read an absent status and normalise it to
+        # `unavailable`, which is this file header's "we could not ask" read as
+        # "we asked and it passed" one more time. Aborting is the honest answer
+        # there, and it is the reason the headline above says "reaches for
+        # skills-evals" rather than "every".
+        #
+        # THE QUALIFIER IS LOAD-BEARING, because an unqualified claim here
+        # would be false and this paragraph's own argument is that a wrong
+        # tolerance comment is worse than none. Every OTHER `echo` in this
+        # step is left unguarded too, and errexit reaches all of them alike:
+        # the ones in an `if`, `elif`, `else` or `case` body, the ones at the
+        # step's top level, and the ones written as the right-hand side of a
+        # `||`.
+        #
+        # THAT LAST SHAPE IS THE ONE THAT LOOKS PROTECTED AND IS NOT. A `||`
+        # covers the `mkdir` or the `pip install` on its LEFT; the command
+        # AFTER the final `||` is the one member of the list errexit is not
+        # exempted from, so it aborts the step exactly like a bare one. In one
+        # line each, and they print the same thing and both exit 1:
+        #   bash -e -c 'false || echo hi >&-; echo reached'
+        #   bash -e -c 'echo hi >&-; echo reached'
+        #
+        # They are all left that way because an `echo` to a runner's stdout
+        # essentially never fails; the one that also REDIRECTS is the one
+        # named above, and redirection is what makes it failable.
+        #
+        # NO COUNT HERE, DELIBERATELY. There was one, and the set it named
+        # left out the `mkdir` fallback and the `no verdict, which follows
+        # from the clone failure` line. Nothing in this repo asserted it
+        # either, and that is the whole reason it is gone rather than
+        # corrected: an unasserted count reads as checked, and this one was
+        # still accurate on the day it was deleted - which is exactly when
+        # nobody is looking at it. See #120. The SHAPE is the durable claim:
+        # every SIMPLE `echo` in this step is left unguarded, including the
+        # `$GITHUB_OUTPUT` write named above, and any command here that can
+        # plausibly fail and has a degraded path to take belongs in an `if`
+        # condition or a `||` list. Simple, because an `echo` at the head of
+        # a PIPELINE takes the status of whatever the pipeline ends with, and
+        # that one is an ordinary failable command however it starts.
+        #
+        # scripts/test_account_workflows.py holds that shape rather than
+        # leaving it to be read - see #124.
+        # TestEveryFailableCommandInTheAuditStepIsGuarded parses this step's
+        # body, blanks the Python heredoc and the comments, and reds on an
+        # `echo` that redirects anywhere but the `$GITHUB_OUTPUT` write, and
+        # on any command sitting outside an `if` condition and a `||` list
+        # that is not in that test's own carve-out list. That list is the
+        # EXACT TEXT of every command this step leaves unguarded on purpose,
+        # not a pattern, so nothing is exempt by resembling something: a
+        # pipeline is never carved out, an `echo` with a second redirect is
+        # never carved out, a command with an assignment before its name is
+        # never carved out, and a command whose name is glued to a `{` is
+        # never carved out. One entry does carry punctuation ahead of its
+        # name - the `{ pip_ok=no` this step's pip guard opens its brace
+        # group with, listed with the brace because that is the text the
+        # test is handed; drop the brace and the exemption goes with it.
+        # Which means EDITING A LINE BELOW CAN RED
+        # THAT TEST even when the edit is harmless - re-quoting one of these
+        # `::warning::` strings will do it. That is deliberate: the failure
+        # message quotes the new text to paste into the list, and pasting it
+        # is a reviewer re-affirming that the command may abort this step
+        # unnoticed. It also reds if a count comes back into this paragraph,
+        # and if the `status=` write acquires the guard the sentence above
+        # says it must not have.
+        run: |
+          set -uo pipefail
+          # ONE ANNOTATION PER DISTINCT FAULT. Not "one annotation per run":
+          # that is the weaker rule this block was briefly written to, and it
+          # is the rule that deleted the only annotation worth having (see the
+          # empty-capture guard below). Two different things going wrong earn
+          # two lines. One thing going wrong, reported twice, earns one.
+          #
+          # THE TWO CLONES ARE THE SAME-FAULT CASE, which is why they record
+          # their outcome in flags instead of annotating where they fail. Both
+          # pull from the SAME repository, so the failure that takes one out -
+          # an outage, a rate limit, the repo renamed or made private - almost
+          # always takes out the other, and warning in each `else` reported
+          # that single fault twice. A third annotation followed from the
+          # empty-capture guard below, and it told the reader the clones had
+          # succeeded when neither had, sending them to hunt a moved module in
+          # skills-evals while the real cause sat two lines above it, already
+          # annotated. This is the failure mode that needs no cross-repo rename
+          # to happen, so it is the one a reader meets first - and a reader who
+          # learns the annotations are duplicated stops counting them, which is
+          # how a genuinely silent one goes unnoticed.
+          harness_ok=yes
+          results_ok=yes
+          if git clone --filter=blob:none --depth 1 --quiet \
+              https://github.com/Adam-S-Daniel/skills-evals.git ../skills-evals; then
+            echo "skills-evals harness checked out"
+          else
+            harness_ok=no
+          fi
+          if git clone --depth 1 --single-branch --branch eval-results --quiet \
+              https://github.com/Adam-S-Daniel/skills-evals.git ../eval-results; then
+            echo "eval-results checked out"
+          else
+            results_ok=no
+            mkdir -p ../eval-results \
+              || echo "no placeholder for the missing eval-results clone either; the annotation below covers it"
+          fi
+          # THE FLAGS THE EMPTY-CAPTURE GUARD BELOW READS ARE THE STATE OF
+          # EACH PATH, NOT A COUNT OF ANNOTATIONS RAISED SO FAR. A single
+          # `annotated` tally was the shape that broke: it cannot say WHICH
+          # fault it is remembering, so every guard downstream had to treat
+          # them all as equally explanatory, and the least explanatory one -
+          # pip - silenced the most actionable one. Keep any new guard the
+          # same way: record what happened, and let the reader of the flag
+          # decide whether it explains what came next.
+          if [ "$harness_ok" = no ] && [ "$results_ok" = no ]; then
+            echo "::warning::could not reach Adam-S-Daniel/skills-evals at all - neither the harness clone nor the eval-results branch came down. A GitHub outage, a rate limit, or the repo renamed or made private. The published audit could not be read, so this run used the local recording alone."
+          elif [ "$harness_ok" = no ]; then
+            echo "::warning::could not clone the skills-evals harness, so the published audit could not be read and this run used the local recording alone."
+          elif [ "$results_ok" = no ]; then
+            echo "::warning::eval-results branch not present yet, so there is no published audit to read and this run used the local recording alone."
+          fi
+          pip_ok=yes
+          # The whole declared set, though only pyyaml is imported below —
+          # requirements-dev.txt is the single place any of these versions is
+          # written down, and this job reads it rather than restating one.
+          python3 -m pip install --quiet -r requirements-dev.txt \
+            || { pip_ok=no; echo "::warning::the requirements-dev.txt install failed; unless pyyaml is already present the verdict will be unavailable"; }
+          verdict=$(python3 - <<'PY'
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          sys.path.insert(0, "../skills-evals/harness")
+          import yaml
+          from propagation.account_store import freshness_verdict
+
+          fixture = yaml.safe_load(Path(
+              "../skills-evals/evals/propagation/fixture.yaml"
+          ).read_text(encoding="utf-8"))
+          latest = Path("../eval-results/propagation/account/latest.json")
+          try:
+              summary = json.loads(latest.read_text(encoding="utf-8"))
+          except (OSError, ValueError):
+              summary = None
+          ok, status, message = freshness_verdict(
+              summary,
+              now=datetime.now(timezone.utc),
+              max_age_days=int(fixture["account_audit_max_age_days"]),
+              bootstrapped=Path("../eval-results/propagation/.bootstrapped").exists(),
+          )
+          print(message, file=sys.stderr)
+          print(status)
+          PY
+          ) || verdict=""
+          # NORMALISED HERE, BECAUSE THE `case` BELOW AND
+          # account_zip_selection.py HAVE TO AGREE ABOUT WHAT A VERDICT IS.
+          # `normalise_status` strips before it tests the vocabulary; a `case`
+          # pattern does not.
+          #
+          # BEFORE THE `-z` GUARD, DELIBERATELY. A single space is an empty
+          # capture in every sense that matters and `[ -z "$verdict" ]` cannot
+          # see one, so a whitespace-only capture used to skip the diagnostic
+          # branch below, reach `*)`, and accuse skills-evals of a rename that
+          # never happened while writing `status= ` downstream. Trimming first
+          # hands it to the branch that was written for it.
+          #
+          # THE TRIM IS DEFENCE IN DEPTH AND IS NOT LOAD-BEARING TODAY:
+          # `freshness_verdict` returns string literals and its
+          # artifact-derived text goes to stderr, so nothing padded reaches
+          # this capture from skills-evals as it stands. It is two lines
+          # against a change in another repo that no test here can see.
+          verdict="${verdict#"${verdict%%[![:space:]]*}"}"
+          verdict="${verdict%"${verdict##*[![:space:]]}"}"
+          # THE LINE BELOW IS THE ONE THAT CLOSES A REACHABLE FAULT. `$( )`
+          # captures ALL stdout of the heredoc, so anything printing at import
+          # time inside it - in `yaml`, or in skills-evals' own
+          # `propagation.account_store` - prepends a line, and
+          # `echo "status=$verdict"` then writes a MULTI-LINE entry to
+          # $GITHUB_OUTPUT whose second line has no `=`. The runner parses that
+          # file line by line and rejects it, so the step dies instead of
+          # degrading. This is the same fault the paragraph above the `drift`
+          # read already names; `drift` has a test that executes it and this
+          # capture had nothing.
+          #
+          # REJECTED RATHER THAN SALVAGED. Keeping the last line would recover
+          # a plausible answer and leave the run green with no annotation,
+          # which is this file header's "we could not ask" read as "we asked
+          # and it passed". Blanking it hands the capture to the empty-capture
+          # branch, whose text - "what broke is the import inside this step" -
+          # is already the right diagnosis, and which degrades loudly.
+          #
+          # AFTER THE TRIM, so a capture that is only surrounded by whitespace
+          # is normalised rather than condemned: `$( )` already discards a
+          # TRAILING blank line, and treating a LEADING one as fatal while its
+          # mirror image is invisible would be the inconsistent rule.
+          #
+          # THE ORDER IS EXECUTED, NOT ARGUED. This paragraph used to be the
+          # only thing holding it: moving the line above the two trims left
+          # every test in this repo green while `\nfresh` began degrading to
+          # `unavailable` with an annotation blaming a cross-repo import.
+          # test_a_capture_padded_with_a_newline_is_trimmed_not_condemned runs
+          # the step for a padding that leads with a newline and reds if the
+          # two are swapped.
+          [ "$verdict" = "${verdict%%[$'\n']*}" ] || verdict=""
+          # An empty capture is the ONLY way this can end without a verdict, and
+          # it must not read as one. `unavailable` is not a skills-evals status;
+          # the selection module treats it - and any string it does not
+          # recognise - as "the audit could not be used".
+          #
+          # IT ALSO RAISES AN ANNOTATION, BECAUSE THIS IS ONE OF THE THREE
+          # PATHS THAT FAILED OPEN - not the only one. The other two are the
+          # `*)` arm and the `not-yet-bootstrapped` arm below, each of which
+          # had to grow its own annotation for the same reason. Every failure
+          # in this step that WARNED warned already, and this was the one that
+          # did not,
+          # which is backwards: it is the path that fires when the cross-repo
+          # IMPORT breaks and everything else went right. skills-evals moves
+          # `account_store.py`, renames `freshness_verdict`, or renames the
+          # `account_audit_max_age_days` fixture key; both clones succeed, no
+          # warning above fires, the heredoc raises, and with a clean local
+          # recording `count=0` skips the zip job - so the run ends GREEN with
+          # zero annotations while the cross-repo half of the evidence was
+          # never read. Nothing else reports it either: scheduled-run-health.yml
+          # scans for FAILED runs, and this one did not fail.
+          #
+          # WHICH EARLIER FAULT CAN EXPLAIN AN EMPTY CAPTURE, AND WHICH
+          # CANNOT. This is the distinction the guard has to make, and getting
+          # it wrong in the generous direction cost the run page the one
+          # annotation it most needed.
+          #
+          # A FAILED CLONE EXPLAINS IT. The heredoc reads out of both trees, so
+          # a clone that did not land leaves it reading a path that is not on
+          # disk - for the harness clone that IS why the import raised. An
+          # empty capture there is the annotated fault's consequence rather
+          # than a second fault, and repeating it would also force the text
+          # below to claim the clones were fine when they were not, sending
+          # the reader to diff two repos over something already named above.
+          # So that case goes to the log and not to the annotations list.
+          #
+          # A FAILED PIP INSTALL DOES NOT EXPLAIN IT, and treating it as
+          # though it did is the regression this branch shipped and then had
+          # to take back. `pyyaml` is very often already on the runner, which
+          # is exactly why its own annotation hedges ("unless it is already
+          # present") - so the install failing says almost nothing about why
+          # the capture came back empty. Suppressing on the strength of it
+          # meant a transient hiccup DELETED the cross-repo import annotation,
+          # the single fault this whole cross-repo half exists to surface, and
+          # the reader was left pointed at the hiccup. A wrong label is worse
+          # than no label, because it is read and believed. Two faults, two
+          # lines - and the text simply stops asserting that the install
+          # succeeded, because that is the part that would be false.
+          if [ -z "$verdict" ]; then
+            verdict=unavailable
+            if [ "$harness_ok" = no ] || [ "$results_ok" = no ]; then
+              echo "no verdict, which follows from the clone failure annotated above; this run used the local recording alone"
+            elif [ "$pip_ok" = no ]; then
+              echo "::warning::could not compute the published account audit verdict - both clones succeeded, so what broke is either the dependency install annotated above or the import inside this step (a moved module, a renamed function, a renamed fixture key in Adam-S-Daniel/skills-evals). This run used the local recording alone."
+            else
+              echo "::warning::could not compute the published account audit verdict - both clones and the dependency install succeeded, so what broke is the import inside this step (a moved module, a renamed function, a renamed fixture key in Adam-S-Daniel/skills-evals). This run used the local recording alone."
+            fi
+          fi
+          echo "published account audit reads: $verdict"
+          # THE LIVENESS VERDICTS GET AN ANNOTATION FOR THE SAME REASON. Each
+          # of these means the Tier-3 Routine has stopped publishing a usable
+          # result - a fault in the OTHER repo, which this run is the only
+          # thing here positioned to notice, and which otherwise shows up only
+          # inside a step summary nobody opens on a green run. Surfacing it as
+          # an annotation puts it on the Actions list instead.
+          #
+          # The healthy answers stay quiet on purpose - `fresh` and the drift
+          # verdict this workflow exists to react to. A warning on every run is
+          # a warning nobody reads. `unavailable` is
+          # quiet HERE for a different reason: it is set in exactly one place,
+          # the `if [ -z "$verdict" ]` branch a few lines up, and that branch
+          # has already reported the fault behind it - either by annotating it
+          # itself, or by naming the clone failure that explains it. Catching
+          # it below as well would report the SAME fault a second time, which
+          # is the duplication the rule at the top of this step forbids; a
+          # reader who learns the annotations are duplicated stops counting
+          # them. That is a different thing from the two-line case above,
+          # where a pip failure and an import failure are two faults.
+          #
+          # AND THE CATCH-ALL, WHICH IS WHY THE HEALTHY ANSWERS ARE ENUMERATED
+          # RATHER THAN LEFT TO FALL THROUGH. Without a `*)` arm a status this
+          # repo has never heard of matched nothing, said nothing, and was
+          # normalised to `unavailable` inside account_zip_selection.py - so the
+          # audit contributed no names, the Degraded notice went only to the
+          # step summary, and the run ended green with zero annotations while
+          # the whole cross-repo half of the evidence went unused. That is this
+          # file header's "we could not ask" read as "we asked and it passed",
+          # arriving through the one door the empty-capture guard above cannot
+          # cover: `$verdict` is not empty, it is just a word from a vocabulary
+          # that moved. A skills-evals rename of the drift status is exactly
+          # that shape, and nothing else here would report it - both clones are
+          # green, the import is green, and scheduled-run-health.yml only scans
+          # for FAILED runs.
+          #
+          # WHY THE DRIFT VERDICT IS READ FROM THE MODULE INSTEAD OF SPELLED IN
+          # THE ARM. It is the predicate both repos key on, and this repo writes
+          # it down exactly once - `AUDIT_DRIFT_STATUS` in
+          # scripts/account_zip_selection.py - precisely so a rename cannot
+          # update one copy and leave a second one behind; a non-comment line
+          # here naming it fails scripts/test_account_workflows.py. So the quiet
+          # arm imports it, which is also the more honest arrangement: the two
+          # lists cannot disagree, because there is only one list. If that read
+          # fails, `drift` is empty, the drift verdict falls to `*)` and warns
+          # about a status that is in fact recognised - wrong, but loud, and it
+          # cannot ship quietly. WHAT MAKES THAT TRUE IS
+          # scripts/test_account_workflows.py, NOT THE NEXT STEP. That file
+          # imports this constant by name, so a rename reds it at COLLECTION;
+          # and test_a_healthy_verdict_stays_quiet[reported-failure] executes
+          # this exact read, so anything writing to stdout at import time -
+          # which turns `drift` into a two-line string that matches nothing -
+          # reds that test. Both measured. The next step is NOT the backstop
+          # this comment used to name: it runs `python3
+          # scripts/account_zip_selection.py`, which needs the module to import
+          # but not this name to exist, and does not care what the module
+          # printed on the way in.
+          drift=$(PYTHONPATH=scripts python3 -c 'from account_zip_selection import AUDIT_DRIFT_STATUS as s; print(s)') || drift=""
+          case "$verdict" in
+            stale|missing|unreadable)
+              echo "::warning::the published account audit reads '$verdict' - the Tier-3 Routine has not published a usable result recently, so this run leaned on the local recording. Check that Routine and the eval-results branch of Adam-S-Daniel/skills-evals." ;;
+            not-yet-bootstrapped)
+              # THE FOURTH MEMBER OF THE FAULT FAMILY THE COMMENT ABOVE
+              # ENUMERATES, and the one that used to raise nothing. If
+              # skills-evals moves the published ARTIFACT PATH rather than a
+              # module, a function or a fixture key, both clones still succeed
+              # and the import still succeeds - the heredoc simply finds no
+              # `propagation/account/latest.json` and no `propagation/
+              # .bootstrapped`, which live in the same directory, so one rename
+              # takes both. `freshness_verdict` answers `not-yet-bootstrapped`,
+              # a word this repo has a name for, and the quiet arm swallowed
+              # it: green run, zero annotations, the whole cross-repo half of
+              # the evidence unused, and the Degraded notice reaching only the
+              # step summary nobody opens on a green run.
+              #
+              # MOVING IT TO THE LOUD ARM WOULD BE THE WRONG FIX. The verdict
+              # is honest when it is true - before the first audit run there is
+              # genuinely nothing published, and a workflow that annotates
+              # every run of a fresh install is a workflow whose annotations
+              # get ignored, which costs the ones above their meaning.
+              #
+              # SO THE GATE IS THE CLONE - AND IT IS A GATE ON THIS
+              # ACCOUNT'S CURRENT STATE, NOT ON A GENERAL TRUTH. A branch that
+              # is not there yet is the fresh-install shape, and it annotated
+              # its own absence above. But read the claim this does NOT make:
+              # a clean clone is not evidence the tree was ever bootstrapped.
+              # eval-results is a SHARED results branch that three other lanes
+              # write - `badges/` published to it from 2026-07-16 and
+              # `results/` from 2026-07-17, while `propagation/.bootstrapped`
+              # first appeared on 2026-08-14. For the 29 days in between, a
+              # genuinely never-bootstrapped audit cloned this branch cleanly,
+              # and this arm would have annotated it every single day. An
+              # earlier version of this comment asserted the opposite as a
+              # fact; the branch's own history is what falsifies it.
+              #
+              # What makes the gate right HERE is that the window is behind
+              # this repo, not that it cannot exist. Measured against the live
+              # branch on 2026-08-22: `propagation/.bootstrapped` and
+              # `propagation/account/latest.json` are both present, and every
+              # scheduled audit since 2026-08-14 has republished them. From
+              # here, a clean clone holding neither is something that CHANGED.
+              #
+              # Which leaves the annotation's two readings, both of them live.
+              # The published path moved is one. The marker was deleted is the
+              # other, and it is not the rhetorical half: this is an
+              # unprotected results branch that AGENTS.md designates untrusted
+              # generated data, so it can be reset, force-pushed or recreated,
+              # and a committed file can most certainly come back off.
+              #
+              # THE COST THIS ACCEPTS, NAMED RATHER THAN ARGUED AWAY: a repo
+              # adopting this workflow before its own first audit publishes
+              # gets this annotation daily until it does. The obvious narrower
+              # gate - demand a sibling `propagation/account/*.json` as
+              # positive evidence of a past publish - is worse, because the
+              # fault this arm exists for is a PATH MOVE and that takes the
+              # whole `propagation/` directory with it. There would be no
+              # sibling then either, so the arm would fall silent on exactly
+              # the case it was added for, which is the hole it closed.
+              if [ "$results_ok" = yes ]; then
+                echo "::warning::the published account audit reads '$verdict', but the eval-results branch cloned cleanly - so propagation/.bootstrapped and propagation/account/latest.json are not where this step reads them. Either skills-evals moved where it publishes, or the marker was deleted. The audit contributed no skill names, so this run fell back to the local recording alone. Check the propagation/ tree on the eval-results branch of Adam-S-Daniel/skills-evals."
+              fi ;;
+            fresh|unavailable|"$drift")
+              : ;;
+            *)
+              echo "::warning::the published account audit reads '$verdict', which is not a status this repo knows - skills-evals' verdict vocabulary has moved under it. The audit contributed no skill names, so this run fell back to the local recording alone. Teach scripts/account_zip_selection.py the new name, and this step with it." ;;
+          esac
+          echo "status=$verdict" >> "$GITHUB_OUTPUT"
+      - name: Decide which skills need a ZIP
+        id: drift
+        # SELECTION is read from the environment, never interpolated into the
+        # run: body - an `${{ inputs.* }}` expansion is echoed into the log and
+        # is attacker-controlled shell. See AGENTS.md, "Data exposure in CI".
+        # AUDIT_STATUS and EVENT_NAME come the same way for the same reason.
+        #
+        # The decision itself lives in scripts/account_zip_selection.py rather
+        # than in a heredoc here: it now takes the union of two sources, and a
+        # rule that spans two repos has to be exercisable against fixtures. See
+        # scripts/test_account_zip_selection.py.
+        env:
+          SELECTION: ${{ inputs.selection || 'stale' }}
+          AUDIT_STATUS: ${{ steps.audit.outputs.status }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          python3 plugins/adam-coding-local/skills/sync-skills/sync_skills.py \
+            --account-drift --repos "$GITHUB_WORKSPACE" > drift.json
+          python3 scripts/account_zip_selection.py \
+            --drift-report drift.json \
+            --selection "$SELECTION" \
+            --audit-latest ../eval-results/propagation/account/latest.json \
+            --audit-status "$AUDIT_STATUS" \
+            --event "$EVENT_NAME" \
+            --run-id "$GITHUB_RUN_ID"
+
+  zip:
+    needs: pick
+    if: needs.pick.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        name: ${{ fromJSON(needs.pick.outputs.names) }}
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Build the upload payload
+        # Built by the REAL uploader (`--prepare --zip-dir`), then unpacked, so
+        # the artifact's members are exactly what an upload would carry -
+        # `_include_in_zip`'s exclusions included. Re-walking the directory here
+        # would be a second implementation free to drift from the first.
+        # --yes: the runner is on a detached HEAD, which is not a dirty tree.
+        env:
+          SKILL: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          python3 plugins/adam-coding-local/skills/sync-skills/sync_skills.py \
+            --prepare --skill "$SKILL" --repos "$GITHUB_WORKSPACE" --yes \
+            --zip-dir "$RUNNER_TEMP/zips" > /dev/null
+          python3 - <<'PY'
+          import os, pathlib, zipfile
+          name = os.environ["SKILL"]
+          src = pathlib.Path(os.environ["RUNNER_TEMP"]) / "zips" / f"{name}.zip"
+          out = pathlib.Path("payload")
+          out.mkdir()
+          with zipfile.ZipFile(src) as zf:
+              zf.extractall(out)
+              print(f"{name}: {len(zf.namelist())} member(s)")
+          PY
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.name }}
+          path: payload/
+          # Stored, not deflated - matches zip_skill()'s ZIP_STORED, which its
+          # docstring keeps "for maximum server compatibility".
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 30

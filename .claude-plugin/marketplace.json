@@ -1,0 +1,47 @@
+{
+  "name": "adam-agentskills",
+  "owner": { "name": "Adam Daniel" },
+  "description": "Adam Daniel's reusable agent skills, packaged as Claude Code plugins grouped by audience (coding or not) and runtime (anywhere or local).",
+  "plugins": [
+    {
+      "name": "adam-anything-anywhere",
+      "source": "./plugins/adam-anything-anywhere",
+      "description": "Adam's skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. Writing ADRs and resolving task ambiguity.",
+      "category": "productivity",
+      "keywords": ["adr", "documentation", "requirements", "ambiguity", "planning"],
+      "defaultEnabled": true
+    },
+    {
+      "name": "adam-coding-anywhere",
+      "source": "./plugins/adam-coding-anywhere",
+      "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, and disarming inherited reach.",
+      "category": "development",
+      "keywords": ["github-actions", "ci-cd", "debugging", "security", "supply-chain", "settings-as-code", "bash", "code-review", "skills"],
+      "defaultEnabled": true
+    },
+    {
+      "name": "adam-coding-local",
+      "source": "./plugins/adam-coding-local",
+      "description": "Adam's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows homes): skill sync, Claude Code settings, session and memory management, and elevation from WSL.",
+      "category": "claude-code",
+      "keywords": ["claude-code", "wsl", "windows", "sync", "settings", "memory", "skills"],
+      "defaultEnabled": false
+    },
+    {
+      "name": "adam-non-coding-local",
+      "source": "./plugins/adam-non-coding-local",
+      "description": "Adam's non-coding skills that need local files or a signed-in browser, for the Claude Desktop app's local Cowork: PDF OCR, audit, renaming and comparison, and Fastmail email and sending-identity workflows.",
+      "category": "productivity",
+      "keywords": ["pdf", "ocr", "fastmail", "email", "identities", "from-address", "browser", "claude-in-chrome"],
+      "defaultEnabled": false
+    },
+    {
+      "name": "cms-platform",
+      "source": { "source": "github", "repo": "Adam-S-Daniel/cms-platform" },
+      "description": "The cms-platform site machinery's own skills, federated from that repo rather than mirrored here: Decap /admin config rendering, AWS bootstrap and PR preview environments, Playwright e2e, CI watcher loops, stuck-PR triage, and the platform release/consumer-bump flow.",
+      "category": "development",
+      "keywords": ["cms", "decap", "jekyll", "aws", "cloudformation", "cloudfront", "preview-environments", "playwright", "e2e", "ci-cd", "github-actions", "release"],
+      "defaultEnabled": false
+    }
+  ]
+}

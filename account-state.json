@@ -1,0 +1,54 @@
+{
+  "_comment": "Digest of each declared skill AS THE CLAUDE.AI ACCOUNT STORE HELD IT when this was recorded. Written by `sync_skills.py --record-account-state` from a session that has ~/.claude/skills/synced; read by `--account-drift`, which CI can run and which cannot see the account itself. Re-record after uploading.",
+  "recorded_at": "2026-09-23T19:53:06+00:00",
+  "skills": {
+    "fastmail": {
+      "basis": "observed",
+      "digest": "sha256:84ba88c622853b9d203058e1660fa71c42e35f7ee7a24f12adeb78e636da1d4d",
+      "updatedAt": "2026-08-18T13:17:29.154538Z",
+      "files": 1
+    },
+    "finding-unknowns": {
+      "basis": "observed",
+      "digest": "sha256:7e08b6263712dc9f3ccc3dec7c4637f3214f5f132dddb46365bda7dc7a176236",
+      "updatedAt": "2026-08-18T14:19:46.967043Z",
+      "files": 3
+    },
+    "ocr-pdfs": {
+      "basis": "observed",
+      "digest": "sha256:32d1bb1d787618c2487227e9079d0046dde3d6ff5f8113c1049a2d6b682ab701",
+      "updatedAt": "2026-08-18T13:17:15.009446Z",
+      "files": 1
+    },
+    "pdf-ocr-audit": {
+      "basis": "observed",
+      "digest": "sha256:33e52fbecf90e4bb2641c75f0496258ee67409a656dd59cfa6dd463762f4553e",
+      "updatedAt": "2026-04-05T14:58:26.446059Z",
+      "files": 2
+    },
+    "rename-pdfs": {
+      "basis": "observed",
+      "digest": "sha256:5ecdaaab837dba5939e20c3e46a22be3988e564bfa3e237bea2d0627c5398896",
+      "updatedAt": "2026-08-18T13:17:00.666196Z",
+      "files": 3
+    },
+    "sync-cc-settings-between-wsl-and-windows": {
+      "basis": "observed",
+      "digest": "sha256:5653d9a25bab6bb843a75181dae3a43c6c097be2209dd2b88d382b212dee9aab",
+      "updatedAt": "2026-09-23T19:51:38.596767Z",
+      "files": 4
+    },
+    "sync-skills": {
+      "basis": "observed",
+      "digest": "sha256:b2745eba534f4e3d0f7127881ef3ada6177c703fe3717f13acbbceb0a814d594",
+      "updatedAt": "2026-09-23T19:51:49.315484Z",
+      "files": 7
+    },
+    "writing-adrs": {
+      "basis": "observed",
+      "digest": "sha256:8977fb056ea016f18537e554407aac3c1bbadff4fcb3f95ce983437dfb474f95",
+      "updatedAt": "2026-08-18T14:30:55.088004Z",
+      "files": 2
+    }
+  }
+}

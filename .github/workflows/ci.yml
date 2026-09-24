@@ -1,0 +1,607 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Only skills-conformance benefits from a schedule. It clones the DEFAULT
+  # BRANCHES of two other repos and audits them, so its verdict can go red with
+  # no commit in this repo at all, and nothing else would ever notice. The other
+  # four jobs read only this repo's own contents, so a scheduled run of them
+  # could not tell anyone anything a push already did — they are gated off
+  # `schedule` below. :17 rather than :00 because GitHub queues the whole
+  # platform's cron on the hour and delays it.
+  schedule:
+    - cron: '17 6 * * *'
+  # The schedule above is the only trigger for `skills-conformance`, and until
+  # this line there was no way to fire it by hand: every fix to a job nobody
+  # can start waits for the next cron before anyone learns whether it worked,
+  # which is a 24-hour edit-test loop on the one job whose verdict can change
+  # with no commit in this repo at all. A manual run still does NOT file the
+  # tracking issue — that step is gated on `event_name == 'schedule'` — so
+  # dispatching is a probe, not a way to open issues.
+  #
+  # SAFE ONLY BECAUSE THIS WORKFLOW HAS NO `concurrency:` BLOCK, and that is a
+  # standing constraint rather than an observation. `pytest-windows` is a
+  # REQUIRED status check on this repo's default branch (declared in
+  # repo-settings' fleet.yml — the only one in that fleet), and a dispatch can
+  # re-fire on a head sha a PR is already using, producing a second run for the
+  # same context + sha. That is only harmless while nothing can CANCEL one of
+  # them: GitHub picks non-deterministically between a cancelled run and a
+  # successful one for the same context + sha, and when cancelled wins the
+  # merge API returns `405 Required status check "pytest-windows" is
+  # cancelled`, which nothing overrides — not auto-merge, not an explicit merge
+  # call — and every open PR wedges with no failing check to point at. With no
+  # concurrency group there is no cancellation to lose to.
+  #
+  # So: never add a `concurrency:` block to this workflow, at either level,
+  # while it publishes a required context. `cancel-in-progress: false` is not
+  # the escape hatch it looks like — GitHub still keeps only the in-progress
+  # run plus the latest pending one per group and cancels the other pending
+  # duplicates. scripts/test_ci_workflow.py parses this file and fails if one
+  # appears.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  plugin-validate:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: '22'
+      - name: Install Claude Code
+        # Pinned: the CLI version is sometimes the variable under test (see
+        # docs/experiments/), so validation results must be reproducible rather
+        # than silently re-baselined by whatever `latest` resolves to today.
+        # 2.1.223 is the `stable` dist-tag, published 2026-08-05 — old enough to
+        # satisfy this repo's 7-day dependency cooling-off as of 2026-08-14.
+        run: npm install -g @anthropic-ai/claude-code@2.1.223
+      - name: Validate marketplace and plugins
+        run: claude plugin validate . --strict
+
+  consistency:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          # Full history — required by the skills.lock check below, NOT an
+          # oversight. See the comment on that step before shortening this.
+          fetch-depth: 0
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        # Every job here installs the whole declared set, subset or not — see
+        # requirements-dev.txt for why, and
+        # scripts/test_workflow_dependency_pins.py for the test that keeps
+        # every `pip install` in every workflow pointing here.
+        run: python3 -m pip install -r requirements-dev.txt
+      - name: Check marketplace/filesystem consistency
+        run: python3 scripts/check_consistency.py
+      # Each bundle ships TWO manifests: the root plugin.json read by Agent
+      # Plugins v1 clients (Codex, VS Code, Cursor, Copilot) and
+      # .claude-plugin/plugin.json read by Claude Code, which is not a
+      # conformant client. Both are shipped, so both can drift — this validates
+      # the root ones against the pinned schema, checks that schema's sha256,
+      # and cross-checks name/version between each pair.
+      - name: Check Agent Plugins manifests
+        run: python3 scripts/check_agent_plugins.py
+      - name: Check README plugin table is up to date
+        run: python3 scripts/generate_readme_table.py --check
+      # Nothing else asserts that skills.lock is coherent, so without this it
+      # can be hand-edited or drift — the same rot the conformance gate's
+      # stale-waiver rule prevents on the other side.
+      #
+      # Needs `fetch-depth: 0` on the checkout above: --check reads the skill
+      # content out of the git object store AT THE COMMIT THE LOCK PINS, and a
+      # shallow clone contains only the tip, so the pinned commit is simply not
+      # there. The failure that produces is confusing rather than obvious — it
+      # surfaces as "cannot resolve ref <sha>" — so do not "optimise" the
+      # checkout back to a shallow one.
+      #
+      # It asserts the lock is faithful to the ref it PINS, not that it pins
+      # HEAD. That is deliberate: the lock pins an immutable commit and is
+      # re-pinned as its own step, so it normally lags main, and in CI HEAD is
+      # a merge commit that is never the pinned SHA.
+      #
+      # FEDERATED LOCKS NEED A SECOND PRECONDITION, of exactly the same kind.
+      # A lock with a `sources` array draws on more than one registry, and this
+      # step reads every source's content out of git — so each one needs a local
+      # checkout, found at the sibling `../<repo-name>` or named with
+      # `--source-repo '<bundles>=<path>'`. Neither flag is passed here (nothing
+      # is: registry, ref, bundles and the whole `sources` array are inherited
+      # from the lock), so the day skills.lock federates, BOTH steps below need
+      # that source checked out beside the workspace — the way the
+      # skills-conformance job already clones ../cms-platform — or they exit 1
+      # with "no checkout at ...". This repo's lock has no `sources` today, which
+      # makes that latent rather than fixed; scripts/test_generate_skills_lock.py
+      # covers it in the pytest job, hermetically, from both directions
+      # (test_the_ci_lock_checks_pass_on_a_federated_lock and
+      # test_the_ci_lock_checks_say_how_to_fix_a_missing_source_checkout).
+      - name: Check skills.lock is faithful to its pinned ref
+        run: python3 scripts/generate_skills_lock.py --check
+      # The step above is structurally BLIND to a stale pin, which is the
+      # failure this repo actually has: add a skill to plugins/<plugin>/skills/ and
+      # the lock keeps describing an older commit, faithfully. --check stays
+      # green, the new skill is delivered to no ephemeral surface at all, and
+      # nothing says so — a silent no-op.
+      #
+      # --check-current closes that by comparing the bundle content AT THE
+      # PINNED REF against the working tree. Distinct assertions, both wanted:
+      # --check says the lock is honest, --check-current says it is current.
+      #
+      # Uses the same `fetch-depth: 0` as --check, and for the same reason: it
+      # reads the pinned commit out of the object store, which a shallow clone
+      # does not contain. It needs a federated source's checkout for the same
+      # reason too — see the note on the step above.
+      #
+      # The ordering this implies, when a skill changes: change the bundle
+      # content -> commit -> regenerate the lock, which pins THAT commit ->
+      # commit the lock. The lock commit only touches skills.lock, so the
+      # bundle content at the pinned commit stays current and this step is
+      # green on the finished PR.
+      - name: Check skills.lock still describes the current bundle
+        run: python3 scripts/generate_skills_lock.py --check-current
+      # ADR 0009 (docs/decisions/0009-bump-bundle-versions-on-every-release.md):
+      # `claude plugin update` gates ONLY on the declared `version` string, and
+      # every bundle has shipped `1.0.0` forever — so a content change that
+      # never bumps it is invisible to that command forever, no matter how far
+      # the bundle moves. This step is the enforcement half: it fails when a
+      # PR touches files under plugins/<bundle>/ without also raising that
+      # bundle's version (in BOTH plugin.json and .claude-plugin/plugin.json)
+      # above its value at the PR base.
+      #
+      # PR-ONLY, deliberately: the gate's whole question is "changed since
+      # WHAT", and a push/schedule/workflow_dispatch run has no PR base to
+      # diff against at all — github.event.pull_request.base.sha does not
+      # exist on those events. Gating the STEP (rather than narrowing the
+      # job's trigger) keeps this job reporting on every event same as
+      # today, the same always-run-and-skip-inside shape this repo already
+      # uses for the pytest jobs' docs-only skip, just for a simpler reason
+      # here: this job publishes no required status context, so there is no
+      # "pending forever" hazard to design around — the step is scoped to
+      # pull_request purely because it has nothing to compare against
+      # otherwise.
+      #
+      # The base sha travels through `env:` and is read back as a shell
+      # variable, never interpolated into the `run:` body directly —
+      # AGENTS.md forbids `${{ github.event.* }}` inside `run:` because the
+      # rendered command is echoed to a public log. It happens to be a commit
+      # sha here, nothing sensitive, but the rule is applied uniformly rather
+      # than re-argued per field.
+      #
+      # Needs the SAME `fetch-depth: 0` this job's checkout already sets, and
+      # for the same reason as the lock checks above: check_plugin_versions.py
+      # reads the base version out of the git object store
+      # (`git show <base>:<path>`), and a shallow clone simply does not
+      # contain that commit.
+      - name: Check bundle versions moved when bundle content did
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check_plugin_versions.py --base "$BASE_SHA"
+
+  skills-conformance:
+    runs-on: ubuntu-latest
+    # Raised from the workflow-level default for the last step alone, which
+    # opens a tracking issue when the SCHEDULED run fails. Only this job gets
+    # it; the other four keep the read-only default.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        # Every job here installs the whole declared set, subset or not — see
+        # requirements-dev.txt for why, and
+        # scripts/test_workflow_dependency_pins.py for the test that keeps
+        # every `pip install` in every workflow pointing here.
+        run: python3 -m pip install -r requirements-dev.txt
+      - name: Check out sibling registries for the cross-registry census
+        # Cloned to ../<repo>, OUTSIDE the workspace checkout, so the trees being
+        # audited never pollute the one under test — and that is exactly where
+        # scripts/skills_registries.yml expects them by default. Both repos are
+        # public, so a plain anonymous shallow clone is simpler than
+        # actions/checkout here and needs no token scoping.
+        run: |
+          git clone --depth 1 --filter=blob:none --quiet https://github.com/Adam-S-Daniel/cms-platform.git ../cms-platform
+          git clone --depth 1 --filter=blob:none --quiet https://github.com/Adam-S-Daniel/adamdaniel.ai.git ../adamdaniel.ai
+      - name: Run the skills conformance census
+        # Deliberately NO --private-registry, deviating from issue #55's checklist:
+        # adam-agentskills-private is a private repo and public-repo CI has no token to
+        # clone it, so pointing the flag at a nonexistent path would only exercise
+        # check_consistency.py's silent-SKIP branch — the exact "green-by-default
+        # when the path is absent" anti-pattern umbrella issue #54 criticises in
+        # platform-drift-guard.yml. Instead the census declares that registry as
+        # `optional:` with a `reason:`, so its absence is REPORTED in this run's
+        # output rather than passing silently.
+        run: python3 scripts/check_skills.py
+      # A scheduled failure is INVISIBLE: no PR goes red and nobody is
+      # notified. This fleet has already lost a week to a daily audit running
+      # red unwatched, because detect-only was the wrong contract for a job
+      # nobody is looking at — so the scheduled run reports itself. Idempotent
+      # on purpose: otherwise it would open a fresh issue every morning until
+      # someone noticed.
+      #
+      # `gh` is preinstalled on the runner, so this needs no new `uses:` and
+      # therefore no third-party pin and no cooling-off period. It passes
+      # --repo rather than letting gh infer one from the workspace remote,
+      # because failure() also fires when the CHECKOUT step is what failed,
+      # leaving no git repo to infer from — the step guarding against silent
+      # failure must not have a silent failure of its own.
+      #
+      # Everything the script reads arrives through env:, and the only workflow
+      # expressions here are github.server_url/repository/run_id. Nothing off
+      # the event payload and nothing the census printed is interpolated into
+      # the run: body, where it would be echoed into a public log and evaluated
+      # as shell.
+      - name: File a tracking issue when the scheduled census fails
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TITLE: Scheduled skills census is failing
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/census-failure.md" <<EOF
+          The scheduled skills census failed: $RUN_URL
+
+          This job clones the DEFAULT BRANCHES of Adam-S-Daniel/cms-platform and
+          Adam-S-Daniel/adamdaniel.ai and audits them, so its verdict can change
+          with no commit in this repo at all. Look upstream first: the likely
+          cause is a change in one of those repos rather than a change here.
+          EOF
+          # --search is full text, so it can return near-misses; the title is
+          # re-checked EXACTLY before this concludes a duplicate already exists.
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$ISSUE_TITLE in:title" --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" \
+              --body-file "$RUNNER_TEMP/census-failure.md"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" \
+              --body-file "$RUNNER_TEMP/census-failure.md"
+          fi
+
+  pytest:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          # Needed by scripts/test_generate_skills_lock.py's dogfood test
+          # (test_this_repos_own_lock_is_installable_end_to_end), which drives
+          # the bootstrap hook against a file:// clone of THIS repo at the
+          # commit skills.lock pins. A shallow clone does not contain that
+          # commit — and the test then calls pytest.skip() rather than
+          # failing, so the whole end-to-end install path would go SILENTLY
+          # untested while the job stayed green. Measured: with `--depth 1`
+          # that test skips; with full history it passes. Same reason the
+          # consistency job above needs it. Do not shorten this.
+          fetch-depth: 0
+      # DOCS-ONLY EARLY SKIP, in-job on purpose. `pytest-windows` is a REQUIRED
+      # status check, so a `paths:` filter on the trigger would leave that
+      # context missing — pending forever — on any PR the filter excludes;
+      # test_ci_reports_on_every_pull_request guards the trigger, and this step
+      # is where the salience decision is allowed to live instead. The check
+      # still reports on every PR; a docs-only one just reports in runner-boot
+      # time instead of the several minutes the Windows suite costs.
+      #
+      # The inert list is an ALLOWLIST and the polarity fails open: the suites
+      # run in full unless EVERY changed file matches. Measured 2026-08-31
+      # before this landed: no suite this job runs reads any inert path — the
+      # citation meta-test (test_every_test_this_repo_cites_by_name_exists)
+      # scans only tracked *.py/*.sh, and no test reads the real
+      # README/AGENTS/CLAUDE/STRATEGY or docs/. plugins/**/*.md is deliberately
+      # NOT inert: SKILL.md and PURPOSE.md feed the digests and lock checks.
+      # scripts/test_ci_workflow.py pins this step byte-identical across both
+      # pytest jobs, pins the regex, and executes the body against fixture
+      # repos in both directions — change the list there and here together.
+      - name: Decide whether the suites need to run
+        id: salient
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${EVENT_NAME} event - running the full suite."
+            exit 0
+          fi
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA"); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Could not diff the PR range - running the full suite."
+            exit 0
+          fi
+          echo "Changed files:"
+          printf '%s\n' "$changed" | sed 's/^/  /'
+          # grep -v prints the NON-inert survivors and exits 1 when every line
+          # matched (the skip case) - the status is discarded on purpose; the
+          # emptiness test below is the verdict, not grep's exit code. No -q,
+          # so there is no early-exit SIGPIPE race either.
+          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md|\.claude/memory/.*\.md)$' || true)
+          if [ -n "$salient" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
+          fi
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        if: steps.salient.outputs.run == 'true'
+        # The scripts/ suites import the modules under test, so this job needs
+        # their third-party deps and not just pytest. It gets them the same way
+        # every other job does — see requirements-dev.txt.
+        #
+        # No git identity is configured on purpose: the lock tests set
+        # user.name/user.email as REPO-LOCAL config on each fixture repo, so
+        # they pass with no global identity available (measured with
+        # GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null).
+        run: python3 -m pip install -r requirements-dev.txt
+      # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
+      # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
+      # test_check_agent_plugins.py — 157 tests) once existed while this job ran
+      # only the sync-skills directory, so they executed NOWHERE for three PRs.
+      # Every target is a DIRECTORY rather than a file precisely so a new
+      # scripts/test_*.py, or a new skills/<skill>/tests/ dir, is picked up with
+      # no edit here and cannot silently go unrun again.
+      #
+      # The same failure then recurred one directory over, which is why there is
+      # a third target: the 12 tests in
+      # plugins/adam-non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py
+      # ran NOWHERE, sitting in a skill's scripts/ dir and so matching neither
+      # of the first two. The reason recorded here previously — that they need
+      # the heavy optional `pypdf` — was wrong: all 12 exercise find_dates(), a
+      # pure regex date parser, and not one of them imports pypdf. What actually
+      # kept them out was an import-time sys.exit(2) in extract_pdf_context.py's
+      # `except ImportError` for pypdf, which does not fail a single file — it
+      # aborts the entire run with `INTERNALERROR ... caught unexpected
+      # SystemExit`, measured by widening the glob without touching it. That
+      # exit now happens in main(), so nothing here needs pypdf: do not add it
+      # to the pip line above.
+      #
+      # This job is also where the FEDERATED (multi-registry) lock path is
+      # covered — the lock steps in the consistency job cannot cover it, because
+      # this repo's own skills.lock has no `sources` yet.
+      # scripts/test_generate_skills_lock.py builds `file://` fixture registries
+      # in tmp, generates a federated lock against them, and runs `--check`,
+      # `--check-current` and the bootstrap hook end to end (SKILLS_BOOTSTRAP_FORCE
+      # with a scratch HOME) — no network, no sibling clone. Deliberately a test
+      # rather than a separate CI job: the fixture registries, the scratch-HOME
+      # discipline (`_run_hook` REFUSES to run without a tmp home) and the verdict
+      # parsing all already exist there, so a job would be a second, drifting copy
+      # of them; and this step targets a DIRECTORY, so a new federated test is
+      # picked up with no edit here — which a hand-listed job is exactly what
+      # this comment's opening paragraph says goes wrong.
+      - name: Run every test suite in the repo
+        if: steps.salient.outputs.run == 'true'
+        run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto
+
+  # The same suites on Windows, because until #98 they could not run there at
+  # all — 72 failures, every one of them a platform fault rather than a real
+  # defect, on the machine most of these skills exist to run on. Three of the
+  # causes were in the SHIPPED code, not the tests: the bootstrap hook framed
+  # its python<->bash handoff with os.linesep and so reported a bogus "framing
+  # error" on every Windows session, generate_skills_lock.py digested a
+  # CRLF rendering of the pinned ref, and the vendored schema failed its own
+  # integrity check on every Windows clone. A Linux-only CI could not see any
+  # of that, and #92 was opened because of a Windows failure this lane is what
+  # would have caught.
+  #
+  # A SEPARATE JOB rather than a `matrix` on the one above, deliberately: a
+  # matrix renames the existing check to `pytest (ubuntu-latest)`, and a
+  # required status check that changes context name blocks every open PR until
+  # the ruleset in repo-settings is updated to match. This adds a context, it
+  # renames none.
+  #
+  # That hypothetical is now this job's own situation: `pytest-windows` IS a
+  # required status check on this repo's default branch (declared in
+  # repo-settings' fleet.yml, the only one in that fleet). So the job id below
+  # is a published contract, and this job must stay free of anything that
+  # renames its context — a `name:`, a `matrix` — or that could leave the
+  # context unreported on a PR: a `paths:` filter on the trigger, or a
+  # `concurrency:` block at either level, which lets a cancelled run win the
+  # sha and wedge the merge API. scripts/test_ci_workflow.py asserts all of
+  # that against this file, parsed.
+  pytest-windows:
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    defaults:
+      run:
+        # Git Bash, not pwsh. The pytest targets below are GLOBS, and pwsh
+        # neither expands them nor passes them through in a form pytest can
+        # use — the run would collect nothing and pass. It also keeps this
+        # step byte-identical to the ubuntu one above.
+        shell: bash
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          # Same reason as the ubuntu job: without full history the dogfood
+          # test SKIPS rather than fails, and the end-to-end install path goes
+          # silently untested while this job stays green.
+          fetch-depth: 0
+      # Byte-identical to the ubuntu job's step of the same id — see the
+      # comment there for why the skip lives in-job and what makes the list
+      # safe. test_ci_workflow.py pins the two bodies equal, so an edit to one
+      # that misses the other fails the suite rather than drifting.
+      - name: Decide whether the suites need to run
+        id: salient
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" != "pull_request" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::${EVENT_NAME} event - running the full suite."
+            exit 0
+          fi
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA"); then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Could not diff the PR range - running the full suite."
+            exit 0
+          fi
+          echo "Changed files:"
+          printf '%s\n' "$changed" | sed 's/^/  /'
+          # grep -v prints the NON-inert survivors and exits 1 when every line
+          # matched (the skip case) - the status is discarded on purpose; the
+          # emptiness test below is the verdict, not grep's exit code. No -q,
+          # so there is no early-exit SIGPIPE race either.
+          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md|\.claude/memory/.*\.md)$' || true)
+          if [ -n "$salient" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
+          fi
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - if: steps.salient.outputs.run == 'true'
+        run: python3 -m pip install -r requirements-dev.txt
+      # `core.autocrlf` is true by default on Windows runners. .gitattributes
+      # (`* -text`) is what keeps the checkout byte-identical to Linux's, and
+      # every digest in skills.lock depends on that holding — so assert it
+      # here rather than discovering it as an unexplained hash mismatch.
+      - name: Assert the checkout was not line-ending mangled
+        run: |
+          if grep -qU $'\r' README.md; then
+            echo "::error::README.md checked out with CRLF — .gitattributes did not apply."
+            exit 1
+          fi
+      # -rfEs (here and in the ubuntu job) lists every skipped test and its
+      # reason in the log, so "this test ran on Windows" is readable from the
+      # run rather than inferred from a skip count. It must be -rfEs, not -rs:
+      # -r REPLACES pytest's default `fE`, so a bare -rs drops failures and
+      # errors from the short summary (observed on run 35949072744).
+      #
+      # -n auto (pytest-xdist, pinned in requirements-dev.txt) spreads the
+      # suite over one worker per CPU. Both hosted runners have 4 CPUs, so on
+      # them it is the same as -n 4. It must stay in both jobs' step together:
+      # scripts/test_ci_workflow.py pins the two run lines equal, so an edit
+      # to one that misses the other fails the suite rather than drifting.
+      - name: Run every test suite in the repo
+        if: steps.salient.outputs.run == 'true'
+        run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto
+
+  shellcheck:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Run shellcheck
+        run: |
+          # DELIBERATELY REPO-WIDE — do not narrow this back to `setup.sh` plus
+          # `find plugins`. That pair matched .claude/hooks/skills-bootstrap.sh
+          # NEITHER way (it is not setup.sh and it is not under plugins/), so the
+          # riskiest bash in the repo — a SessionStart hook that runs with no
+          # approval prompt on every ephemeral surface and turns skills.lock
+          # fields into git remote URLs and filesystem paths — was never linted
+          # here at all. Same reasoning as the pytest job above: the target is a
+          # TREE, not a list of paths, so a new *.sh added anywhere is picked up
+          # with no edit here and cannot silently go unchecked.
+          #
+          # The file list is printed first so the run log shows what was covered.
+          # This step's whole failure mode was coverage nobody could see.
+          #
+          # No `--no-run-if-empty`, on purpose: if the find ever matches nothing,
+          # shellcheck exits 1 ("No files specified") instead of passing on an
+          # empty set — a green step that checked nothing is the bug being fixed.
+          #
+          # -S error: two SC2088 (tilde-in-quotes) *warnings* exist today in
+          # plugins/adam-coding-local/skills/migrate-claude-memory/scripts/memory-migrate.sh
+          # (lines 90, 93) — pre-existing, out of scope for this change. Errors still fail CI.
+          #
+          # Extensionless shell files matched NEITHER find when this step
+          # globbed only '*.sh'. A git hook cannot carry an extension, so
+          # hooks/pre-push - which this repo's own setup.sh installs as a
+          # global pre-push hook in every clone - was linted nowhere at all.
+          # Same coverage bug as the paragraph above, one layer down. Match
+          # them by SHEBANG rather than by name, and keep them in their own
+          # list so they can be held to a stricter bar without moving the
+          # bar for the existing *.sh files.
+          hooks=/tmp/shellcheck-extensionless.txt
+          find . -path ./.git -prune -o -type f ! -name '*.*' -print0 > /tmp/noext.z
+          while IFS= read -r -d '' f; do
+            case "$(head -n 1 "$f")" in
+              '#!'*sh|'#!'*sh[[:space:]]*) echo "$f" ;;
+            esac
+          done < /tmp/noext.z | sort -u > "$hooks"
+
+          targets=/tmp/shellcheck-targets.txt
+          find . -path ./.git -prune -o -name '*.sh' -print > /tmp/sh.txt
+          cat /tmp/sh.txt "$hooks" | sort -u > "$targets"
+
+          echo "shellcheck will lint:"
+          cat "$targets"
+          xargs -a "$targets" shellcheck -S error
+
+          # The extensionless hooks additionally at WARNING level. SC2034
+          # (assigned but never used) is a warning, so -S error alone would
+          # have kept missing the pre-push defect even once the file was in
+          # scope: the lane missed it twice over. Deliberately NOT applied
+          # to *.sh - the repo is not warning-clean there (the SC2088s noted
+          # above), and a lane that fails on unrelated pre-existing warnings
+          # gets muted rather than fixed.
+          if [ -s "$hooks" ]; then
+            echo "shellcheck (warning level, extensionless hooks only):"
+            cat "$hooks"
+            xargs -a "$hooks" shellcheck -S warning
+          fi
+
+  # ADR 0013: this registry replaced one whose git history carried personal
+  # data, so a denylist of personal details is checked on every push and pull
+  # request. The list itself is the PRIVACY_DENYLIST repository secret and is
+  # never in the repo; it reaches the script through `env:` only — never
+  # interpolated into `run:`, whose rendered text is echoed to a public log —
+  # and the script prints file:line and a pattern NUMBER, never the match.
+  #
+  # FAILS CLOSED without the secret (CI=true): a privacy job that scanned for
+  # nothing must not go green. That includes a pull request from a fork, which
+  # GitHub runs without repository secrets.
+  #
+  # Full history, because on a push or pull request it also scans every commit
+  # in the range (messages and added lines): a detail added and then deleted
+  # is gone from the tree and still public in the history.
+  privacy:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@1af3b93b6815bc44a9784bd300feb67ff0d1eeb3
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
+        with:
+          python-version: '3.12'
+      - name: Scan for denylisted personal details
+        env:
+          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${PR_BASE:-${PUSH_BEFORE:-}}"
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ] \
+              && git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            python3 scripts/check_privacy_denylist.py --base "$base"
+          else
+            echo "No usable base commit for this event; scanning the tree only."
+            python3 scripts/check_privacy_denylist.py
+          fi

@@ -1,0 +1,61 @@
+# Registries covered by the skills conformance census (agentskills#55).
+# `path:` is resolved relative to the repo root unless absolute; override at runtime with
+# --registry NAME=PATH. A registry that cannot be resolved is an ERROR unless optional+reason.
+#
+# `payload_dirs:` feeds the dangling-payload-ref check, which deliberately trades RECALL
+# for PRECISION: only a path token inside a FENCED code block can fail the build. Prose
+# mentions a payload path for plenty of reasons that are not "this skill ships this file"
+# — naming another skill's script, a path in a different repo, an illustrative example —
+# and gating on those ran a ~4-in-5 false-positive rate, which is how a lint gets muted.
+# Nothing is hidden by the trade: every candidate given up is listed by
+# `check_skills.py --list-findings` under "prose-only (not in a fenced block)", so the
+# recall gap stays inspectable.
+required_fields: [name, description]
+name_pattern: "^[a-z0-9]+(-[a-z0-9]+)*$"
+max_lengths:
+  name: 64
+  description: 1024
+  compatibility: 500
+# Source of truth: https://agentskills.io/specification — the Agent Skills spec, which
+# `anthropics/skills`' own `spec/agent-skills-spec.md` now redirects to and which
+# agent-plugins.org §7.1 defers to entirely for "the SKILL.md format, frontmatter fields,
+# and directory layout". It recognises EXACTLY these six frontmatter fields; anything else
+# is a `non-spec-field` finding here.
+#
+# Claude Code's *loader* is laxer — it recognises roughly two dozen keys and silently
+# ignores the rest — but this gate is deliberately authored to the stricter spec
+# (agentskills#55's explicit instruction). A skill that only validates against one vendor's
+# permissive loader is not portable, and a key that vendor ignores is a key that does
+# nothing: the gate's job is to say so out loud rather than let it accumulate.
+known_fields: [name, description, license, compatibility, metadata, allowed-tools]
+# Value shapes for the same six fields. `str` = the parsed YAML value must be a string;
+# `map-of-str` = a mapping whose keys and values are all strings. A field omitted here is
+# not type-checked. Note `allowed-tools` is a SPACE-SEPARATED STRING per the spec, not a
+# YAML list — the shape most often got wrong.
+field_types:
+  name: str
+  description: str
+  license: str
+  compatibility: str
+  allowed-tools: str
+  metadata: map-of-str
+payload_dirs: [scripts, references, assets, templates, hooks, tests, examples]
+registries:
+  - name: adam-agentskills
+    path: .
+    layout: "plugins/*/skills/*/SKILL.md"
+  - name: cms-platform
+    path: ../cms-platform
+    layout: "skills/*/SKILL.md"
+    optional: true
+    reason: "not checked out in every environment; CI clones it explicitly"
+  - name: adamdaniel.ai
+    path: ../adamdaniel.ai
+    layout: ".claude/skills/*/SKILL.md"
+    optional: true
+    reason: "not checked out in every environment; CI clones it explicitly"
+  - name: adam-agentskills-private
+    path: ../adam-agentskills-private
+    layout: "plugins/*/skills/*/SKILL.md"
+    optional: true
+    reason: "private repo; public-repo CI has no token to clone it"

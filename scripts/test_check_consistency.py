@@ -484,7 +484,9 @@ def _link_repo(tmp_path, text):
 ])
 def test_a_link_into_the_retired_registry_is_reported(tmp_path, url):
     found = _link_repo(tmp_path, "intro\nsee [#157](" + url + ") for why\n")
-    assert len(found) == 1 and found[0].startswith(("doc.md:2 ", "doc.md:2")), found
+    # The fixture repo is outside REPO_ROOT, so the location is absolute.
+    assert len(found) == 1, found
+    assert found[0].split(" ", 1)[0].replace("\\", "/").endswith("/doc.md:2"), found
 
 
 @pytest.mark.parametrize("text", [

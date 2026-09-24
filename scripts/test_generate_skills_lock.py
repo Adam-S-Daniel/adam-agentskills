@@ -5186,7 +5186,8 @@ def _hand_broken_lock(field, value=None):
         # that shape's registry must hold (and drift) a DEFAULT bundle — with
         # the fixture bundle, the fallback would read nothing and report the
         # tree as current, which is not the shape under test.
-        builder = _drifted_default_bundle if field == "bundles" else _drifted_plain
+        builder = (_drifted_default_bundle if field == "bundles" and value is None
+                   else _drifted_plain)
         primary, out, extra_args = builder(tmp_path)
         document = json.loads(out.read_text(encoding="utf-8"))
         if value is None:

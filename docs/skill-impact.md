@@ -47,6 +47,18 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: none run yet. Fixture `evals/vendor-release-impact-issues/` is in [skills-evals#197](https://github.com/Adam-S-Daniel/skills-evals/pull/197); objective-only scoring passes 7/7 on a workspace that follows the skill and fails 6/6 trap checks on one that doesn't. The graduation gate's green `with_skill` arm needs a paid run, or the owner's waiver recorded here, before merge.
 - Outcome: pending merge.
 
+## 2026-09-24 — adam-coding-anywhere/skills-doctor, adam-coding-local/sync-skills, adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
+
+- Motivation: the retired registry is being made private, so every link into
+  it (issues, PRs) would 404 for a public reader (ADR 0013; adversarial
+  review of the new repo).
+- Change: links into the retired registry and bare `#N` references to its
+  issues and PRs rewritten as plain text ("old-registry issue 157");
+  `account-skills.txt` comments name the new plugins; no behaviour change.
+  `adam-coding-anywhere` and `adam-coding-local` bumped to 1.0.1.
+- Eval: none run — wording only.
+- Outcome: pending merge.
+
 ## 2026-09-24 — all skills — rename (re-homed into `adam-agentskills`)
 
 - Motivation: [ADR 0013](decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)
@@ -76,7 +88,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: example filenames contained real personal details; a public
   repo must not.
 - Change: replaced them with fictional examples; no behaviour change (PR
-  [#190](https://github.com/Adam-S-Daniel/agentskills/pull/190)).
+  old-registry PR 190).
 - Eval: an eval exists (`evals/rename-pdfs/` in skills-evals, issue #82,
   Class A "workspace transforms"), but it lives in a separate repo and
   could not be run from this worktree/task.
@@ -91,7 +103,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: both launchers escape `;` as `\;` for `wt.exe`; the `.ps1` also
   quotes each argument, since `Start-Process -ArgumentList <array>` does not;
   dry-run hooks plus regression tests; one SKILL.md gotcha bullet
-  ([#188](https://github.com/Adam-S-Daniel/agentskills/pull/188)).
+  (old-registry PR 188).
 - Eval: exempt (DESIGN.md non-coverage table) — "defer: machine-bound
   (WSL/WPF/browser surfaces)".
 - Outcome: open as of 2026-09-24.
@@ -104,7 +116,7 @@ no backfill is planned; the file adds the fields git does not capture.
   `plugins/fastmail`) and would zip and upload it through that second path.
 - Change: `_skill_dir` and `get_all_skills` skip symlinked skill entries;
   script only, SKILL.md unchanged
-  ([#177](https://github.com/Adam-S-Daniel/agentskills/pull/177)).
+  (old-registry PR 177).
 - Eval: exempt (DESIGN.md non-coverage table) — "defer: machine-bound
   (WSL/WPF/browser surfaces)".
 - Outcome: open as of 2026-09-24.
@@ -115,7 +127,7 @@ no backfill is planned; the file adds the fields git does not capture.
   retiring Windows laptop in two places, the same host-specific text b2a3a5b took
   out of windows-elevation-from-wsl.
 - Change: both passages say "a Windows host" instead; nothing else changes
-  ([#173](https://github.com/Adam-S-Daniel/agentskills/pull/173)).
+  (old-registry PR 173).
 - Eval: exempt (DESIGN.md non-coverage table) — "defer: machine-bound
   (WSL/WPF/browser surfaces)".
 - Outcome: open as of 2026-09-23.
@@ -125,9 +137,9 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: correcting entry for the four 2026-09-18 entries below, which
   had no PR numbers because their session could not open PRs.
 - Change: none. Those entries landed as
-  [#162](https://github.com/Adam-S-Daniel/agentskills/pull/162) (bucket
+  old-registry PR 162 (bucket
   layout, sync-skills and skills-doctor) and
-  [#163](https://github.com/Adam-S-Daniel/agentskills/pull/163) (ADR 0010,
+  old-registry PR 163 (ADR 0010,
   both skills).
 - Eval: one paid A/B run of skills-evals
   `evals/skills-doctor/bucketed-account-store`,
@@ -149,14 +161,14 @@ no backfill is planned; the file adds the fields git does not capture.
   and the README table entry dropped, ADR 0011 records the decision); the
   claude.ai account copy was deleted by hand in the UI on 2026-09-23 and
   confirmed gone from the laptop's synced account manifest.
-  PR #172.
+  old-registry PR #172.
 - Eval: exempt (DESIGN.md non-coverage table — "skip, wall-clock/calendar-bound;
   low value to freeze").
 - Outcome: pending merge.
 
 ## 2026-09-22 — adam-local/sync-cc-settings-between-wsl-and-windows — edit
 
-- Motivation: review [#170](https://github.com/Adam-S-Daniel/agentskills/issues/170)
+- Motivation: review old-registry issue 170
   found three data-corrupting merge bugs: arrays collapsed (`["x"]` to `"x"`,
   `[]` to `null`), `[s]kip` deleted the key from both files, and OS-bound keys
   such as `hooks` were copied across OSes without asking.
@@ -166,7 +178,7 @@ no backfill is planned; the file adds the fields git does not capture.
   `permissions.additionalDirectories`) is never copied across;
   `permissions.ask` is unioned; `-DryRun` prints key names and markers, never
   values. SKILL.md corrected and its known limitations documented; first
-  pytest tests, driven through `pwsh` (PR #171).
+  pytest tests, driven through `pwsh` (old-registry PR #171).
 - Eval: exempt (DESIGN.md non-coverage table: defer, machine-bound)
 - Outcome: pending merge
 
@@ -176,7 +188,7 @@ no backfill is planned; the file adds the fields git does not capture.
   2.1.273+, so the drifting channel reaches every surface rather than only the
   ones with no lock coverage, and ADR 0010's answer makes a laptop and a cloud
   session load different sets on purpose
-  ([#158](https://github.com/Adam-S-Daniel/agentskills/issues/158)).
+  (old-registry issue 158).
 - Change: new `--account-channel` mode reporting the settings-chain verdict for
   `syncClaudeAiSkills`/`syncClaudeAiPlugins` (only the boolean `false` counts
   as an opt-out; absent is reported as still syncing), every account skill
@@ -196,7 +208,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: the documented `CLAUDE_CODE_SYNC_SKILLS=1 claude -p 'ok'` refresh
   is wrong on both branches of ADR 0010 — a syncing terminal refreshes itself,
   and a converged laptop has no mirror to refresh
-  ([#158](https://github.com/Adam-S-Daniel/agentskills/issues/158)).
+  (old-registry issue 158).
 - Change: the verify and record steps move to a cloud session, which always has
   the mirror and cannot opt out, and say why; the same correction lands in the
   freshness error, the `--record-account-state` refusal, `--report-issue`'s
@@ -214,8 +226,8 @@ no backfill is planned; the file adds the fields git does not capture.
   `synced/<organizationUuid>_<accountUuid>/`, so `--account-drift` read the
   flat path, found nothing, and printed "holds no skills — nothing to
   compare … 0 drifted" at exit 0 over 21 skills on disk — a false clean, and
-  the shadow comparison (#122) went silent the same way
-  ([#157](https://github.com/Adam-S-Daniel/agentskills/issues/157)).
+  the shadow comparison (old-registry #122) went silent the same way
+  (old-registry issue 157).
 - Change: `resolve_account_store()` finds the bucket and refuses rather than
   guessing on a multi-account machine; `DriftReport.blocked` keeps "could not
   run" (exit 2) distinct from "0 drifted"; SKILL.md's account-store recipe and
@@ -236,7 +248,7 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-09-18 — adam-local/sync-skills — edit
 
 - Motivation: same bucket move
-  ([#157](https://github.com/Adam-S-Daniel/agentskills/issues/157)).
+  (old-registry issue 157).
   `--verify` exited 1 naming a manifest path no current CLI has, and told the
   operator to refresh a mirror that was already there; `--record-account-state`
   read the same constant, so the account half of ADR 0006's drift loop could
@@ -262,7 +274,7 @@ no backfill is planned; the file adds the fields git does not capture.
   base.md, and _agent-guidance#114 assessed it against ADR 0002 as a skill
   (conditional on one host, loud failure mode, nothing enforces it).
 - Change: new skill, adam-local 1.1.0 -> 1.2.0
-  ([#152](https://github.com/Adam-S-Daniel/agentskills/pull/152))
+  (old-registry PR 152)
 - Eval: skills-evals `evals/windows-elevation-from-wsl`
   ([skills-evals#59](https://github.com/Adam-S-Daniel/skills-evals/pull/59)),
   3 trials per arm on claude-sonnet-5, run exit 0 each time — with_skill
@@ -271,7 +283,7 @@ no backfill is planned; the file adds the fields git does not capture.
   the first rubric, 7.2 / 7.4 after it was capped on the export). The
   delta is the export-before-overwrite step; the baseline already stops at
   one denial and hands over an elevated-prompt line.
-- Outcome: opened 2026-09-04 as #152; merge is a human step (skill
+- Outcome: opened 2026-09-04 as old-registry #152; merge is a human step (skill
   graduation), so the merge date is not recorded here
 
 ---
@@ -279,10 +291,10 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-08-29 — adam/disarm-inherited-reach — create
 
 - Motivation: a fleet incident during the guidance-centralization work
-  surfaced a procedure worth packaging (per PR #144: "the procedure a fleet
+  surfaced a procedure worth packaging (per old-registry PR #144: "the procedure a fleet
   incident turned out to need").
 - Change: new skill
-  ([#144](https://github.com/Adam-S-Daniel/agentskills/pull/144))
+  (old-registry PR 144)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-29
 
@@ -291,7 +303,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: account-store drift was judged by timestamps, which reports
   false drift; content is the fact of the matter.
 - Change: account drift became a content check, not a timestamp one
-  ([#142](https://github.com/Adam-S-Daniel/agentskills/pull/142))
+  (old-registry PR 142)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-25
 
@@ -300,16 +312,16 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: the hosted-session OR rule was stated outside the surface
   table, where readers had already stopped reading.
 - Change: the OR moved into the surface table
-  ([#141](https://github.com/Adam-S-Daniel/agentskills/pull/141))
+  (old-registry PR 141)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-25
 
 
 - Motivation: a fleet incident during the guidance-centralization work
-  surfaced a procedure worth packaging (per PR #144: "the procedure a fleet
+  surfaced a procedure worth packaging (per old-registry PR #144: "the procedure a fleet
   incident turned out to need").
 - Change: new skill
-  ([#144](https://github.com/Adam-S-Daniel/agentskills/pull/144))
+  (old-registry PR 144)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-29
 
@@ -318,7 +330,7 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: account-store drift was judged by timestamps, which reports
   false drift; content is the fact of the matter.
 - Change: account drift became a content check, not a timestamp one
-  ([#142](https://github.com/Adam-S-Daniel/agentskills/pull/142))
+  (old-registry PR 142)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-25
 
@@ -327,6 +339,6 @@ no backfill is planned; the file adds the fields git does not capture.
 - Motivation: the hosted-session OR rule was stated outside the surface
   table, where readers had already stopped reading.
 - Change: the OR moved into the surface table
-  ([#141](https://github.com/Adam-S-Daniel/agentskills/pull/141))
+  (old-registry PR 141)
 - Eval: none — no eval exists yet
 - Outcome: merged 2026-08-25

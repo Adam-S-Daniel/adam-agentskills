@@ -61,7 +61,7 @@ per token. Read from
 The three duplicates are `adam-writing-style` (~175), `finding-unknowns` (~176)
 and `writing-adrs` (~146). The per-skill spread matters more than the average
 ADR 0002 used: `docx` alone is ~255 tokens, more than the three duplicates'
-smallest two combined, and #54 records that at the default budget the
+smallest two combined, and old-registry #54 records that at the default budget the
 least-used descriptions are silently dropped — so the cost is not only tokens,
 it is which descriptions survive.
 
@@ -77,7 +77,7 @@ it is which descriptions survive.
    above.
 3. **The mirror is no longer laptop-only.** A cloud session always has it and
    cannot opt out, so `--verify` and `--record-account-state` can run there now
-   that #157 has landed — measured in that PR: `Recorded 10/10 declared skills`
+   that old-registry #157 has landed — measured in that PR: `Recorded 10/10 declared skills`
    from a cloud session. The record half of ADR 0006's loop stops needing the
    laptop.
 
@@ -86,22 +86,23 @@ it is which descriptions survive.
 **Pinned channels own the terminal; the account channel owns the surfaces that
 have nothing else.**
 
-- On a durable machine that runs `setup.sh`: converge `syncClaudeAiSkills:
-  false` into `~/.claude/settings.json`, in the same deep-merge block that
+- On a durable machine that runs `setup.sh` (since ADR 0013, only with
+  `--owner-machine`: the owner's machines, never a stranger's): converge
+  `syncClaudeAiSkills: false` into `~/.claude/settings.json`, in the same deep-merge block that
   converges the marketplace registration, and converge
   `"adam-local@agentskills": true` beside `"adam@agentskills": true` so the
   machine-bound bundle arrives pinned from the marketplace, where it has been
   drifting on the account.
-- `fastmail` and the school bell-schedule skill stay account-only **on purpose**: the first
+- `fastmail` and `bell-schedule` stay account-only **on purpose**: the first
   says "do NOT use in the Claude Code CLI", the second is descoped by ADR 0002.
   Opting the terminal out is what makes that split real rather than nominal.
 - **Leave `syncClaudeAiPlugins` alone** until E6
-  ([#160](https://github.com/Adam-S-Daniel/agentskills/issues/160)) answers what
+  (old-registry issue 160) answers what
   the plugin channel reaches. The bucket under `~/.claude/plugins/synced/` is
   empty today — nothing is enabled — so the switch costs nothing to leave
   alone and would be decided on no evidence.
 - **Cloud sessions: unchanged**, because they cannot opt out. E5 already shows
-  the hook copy wins the short name there, and #157 has made the account arm
+  the hook copy wins the short name there, and old-registry #157 has made the account arm
   readable from one, which is a gain rather than a cost.
 
 ## Consequences
@@ -140,7 +141,7 @@ description per terminal session, of which ~497 buys a second copy of three
 skills the machine already has pinned, and it leaves a measured-stale
 `anthropic-skills:sync-skills` reachable by its long name in every laptop
 session. The short-name rule protects which copy is *read*; it does nothing
-about what is *listed*, and #54 is about the listing.
+about what is *listed*, and old-registry #54 is about the listing.
 
 Worth recording that this alternative is the right answer for a machine that
 does NOT run `setup.sh` — the account channel is the only channel there, and
@@ -148,7 +149,7 @@ the argument above depends entirely on the pinned copy already being present.
 
 **Opt out of `syncClaudeAiPlugins` at the same time**, for symmetry.
 **Rejected** as a decision taken on no evidence: the plugin bucket is empty, so
-nothing was measured and E6 (#160) exists to measure it.
+nothing was measured and E6 (old-registry #160) exists to measure it.
 
 ## How to verify
 
@@ -163,10 +164,10 @@ nothing was measured and E6 (#160) exists to measure it.
 
 ## References
 
-- [#158](https://github.com/Adam-S-Daniel/agentskills/issues/158) — the issue this answers
-- [#157](https://github.com/Adam-S-Daniel/agentskills/issues/157) — the bucket-layout fix this depends on
-- [#160](https://github.com/Adam-S-Daniel/agentskills/issues/160) — E6, the account plugin channel
-- [#54](https://github.com/Adam-S-Daniel/agentskills/issues/54) — descriptions dropped at the default budget
+- old-registry issue 158 — the issue this answers
+- old-registry issue 157 — the bucket-layout fix this depends on
+- old-registry issue 160 — E6, the account plugin channel
+- old-registry issue 54 — descriptions dropped at the default budget
 - [ADR 0002](0002-limit-account-store-to-repo-independent-skills.md) — account-store membership, and the ~185 tok/skill estimate this table refines
 - [ADR 0006](0006-drive-the-account-store-drift-loop-from-one-published-artifact.md) — the drift loop whose record half stops needing the laptop
 - [E5](../experiments/E5-account-store-vs-hook-precedence.md) — precedence, and the measured `sync-skills` staleness

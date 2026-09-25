@@ -44,7 +44,7 @@ base directory.
 `doc-coauthoring`, `docx`, `fastmail`, `learn`, `ocr-pdfs`, `pdf`,
 `pdf-ocr-audit`, `pptx`, `rename-pdfs`, `skill-creator`,
 `sync-cc-settings-between-wsl-and-windows`, `sync-skills`, `theme-factory`,
-`web-artifacts-builder`, the school bell-schedule skill, `xlsx`.
+`web-artifacts-builder`, `bell-schedule`, `xlsx`.
 
 **Present but from neither the hook nor `synced/`:**
 `session-start-hook` — see the discrepancy note in §2.

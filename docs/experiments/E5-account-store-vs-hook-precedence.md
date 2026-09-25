@@ -37,13 +37,13 @@ normalisation, **except one**.
 |---|---|---|---|---|
 | `sync-skills` | `adam-local` | **DIFFERS — account behind** | 2026-08-18 | 2026-08-20 |
 | `pdf-ocr-audit` | `adam-local` | same | 2026-04-05 | 2026-08-13 |
-| the school bell-schedule skill | `adam-local` | same | 2026-05-11 | 2026-08-10 |
+| `bell-schedule` | `adam-local` | same | 2026-05-11 | 2026-08-10 |
 | other 7 | adam / adam-local / fastmail | same | — | — |
 
 **The timestamp heuristic is not a drift signal on its own.** `pdf-ocr-audit`
-and the school bell-schedule skill both carry an `updatedAt` months older than their last
+and `bell-schedule` both carry an `updatedAt` months older than their last
 registry commit and are nevertheless byte-identical — those commits moved the
-skill into git (PR #62) without changing its bytes. Comparing `updatedAt`
+skill into git (old-registry PR #62) without changing its bytes. Comparing `updatedAt`
 against `git log` flags three skills here and two of them are false positives.
 Only the content comparison is load-bearing; treat the timestamp as a
 pre-filter, never a verdict.
@@ -53,7 +53,7 @@ pre-filter, never a verdict.
 | Bundle | Names also in the account store | Shipped by a lock today |
 |---|---|---|
 | `adam` | 3 — `adam-writing-style`, `finding-unknowns`, `writing-adrs` | yes — all 10 lock-carrying repos |
-| `adam-local` | 6 — `ocr-pdfs`, `pdf-ocr-audit`, `rename-pdfs`, `sync-cc-settings-between-wsl-and-windows`, `sync-skills`, the school bell-schedule skill | **no** |
+| `adam-local` | 6 — `ocr-pdfs`, `pdf-ocr-audit`, `rename-pdfs`, `sync-cc-settings-between-wsl-and-windows`, `sync-skills`, `bell-schedule` | **no** |
 | `fastmail` | 1 — `fastmail` | **no** |
 | `cms-platform` | 0 | yes — 2 repos |
 
@@ -67,7 +67,7 @@ machine-bound, so no digest ever re-verifies it, while the account store is the
 only channel carrying it. The bundle with no lock coverage is the bundle that
 rots.
 
-## 4. The hook does not fire in a multi-repo session (#84, confirmed live)
+## 4. The hook does not fire in a multi-repo session (old-registry #84, confirmed live)
 
 The parent session had 12 repos attached. It carried no
 `~/.claude/skills/.skills-bootstrap-installed.json` and none of the `adam`
@@ -142,7 +142,7 @@ read; both saw `--report-issue`, which the account copy does not contain at all.
 
 The probe lock (`adam` + `adam-local`, pinned at main's existing commit) was
 never merged. It lives on the throwaway branch
-[`claude/e5-probe-adam-local`](https://github.com/Adam-S-Daniel/agentskills/tree/claude/e5-probe-adam-local)
+`claude/e5-probe-adam-local` (a branch of the old registry)
 (commit `7e63423`), which is what the two probe sessions actually ran against
 — `main` never carried `adam-local` in its lock, and should not.
 

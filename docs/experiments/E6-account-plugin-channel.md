@@ -21,8 +21,8 @@ switch this points to is [ADR 0012](../decisions/0012-serve-the-account-skills-a
 its phase 2 measures the remaining surfaces and removal before anything is
 retired.
 
-Tracked in [#160](https://github.com/Adam-S-Daniel/agentskills/issues/160).
-[#158](https://github.com/Adam-S-Daniel/agentskills/issues/158) waits on the
+Tracked in old-registry issue 160.
+old-registry issue 158 waits on the
 `syncClaudeAiPlugins` recommendation in §6. What was done on the account to
 produce this document was throwaway probes only: an uploaded test plugin,
 since deleted, and a separate probe marketplace added, enabled and later
@@ -51,7 +51,7 @@ account.
 
 "Plugins are available to all paid plans (Pro, Max, Team, Enterprise)"
 ([Use plugins in Claude](https://support.claude.com/en/articles/13837440-use-plugins-in-claude)).
-The org article #160 cites
+The org article old-registry #160 cites
 ([Manage plugins for your organization](https://support.claude.com/en/articles/13837433))
 covers a different thing, the Team/Enterprise library. A personal account has
 two ways in, both under **Customize → Plugins → Personal plugins → "+"**:
@@ -87,7 +87,7 @@ account.
 This is the strongest argument for the channel. With a marketplace synced from
 this repo, deleting a skill directory in git would delete the skill everywhere.
 Today it leaves an orphan on the account, which is what
-[PR #62](https://github.com/Adam-S-Daniel/agentskills/pull/62) had to clean up.
+old-registry PR 62 had to clean up.
 
 "Required by your org" plugins, which cannot be turned off, need a Team or
 Enterprise owner. This account has none, so every plugin on it stays disableable.
@@ -114,7 +114,7 @@ Code loads that plugin and reports the synced copy as not loaded"
 ([synced plugins](https://code.claude.com/docs/en/plugins-reference#synced-plugins)).
 Synced *skills* do the opposite: both copies stay loaded
 ([skills](https://code.claude.com/docs/en/skills#when-a-synced-skill-name-matches-another-command)).
-That doubling is the problem in #158. So a bundle enabled on the account would
+That doubling is the problem in old-registry #158. So a bundle enabled on the account would
 cost nothing extra in a repo that already installs the same bundle.
 
 ## 3. What was measured
@@ -128,7 +128,7 @@ measures, it says so.
 | 2026-09-20 | laptop, WSL, CLI 2.1.278 | **Six plugins syncing from the account**: `pdf-viewer`, `productivity`, `design`, `finance`, `engineering`, `data`. All six are Anthropic's, from the default `knowledge-work-plugins` marketplace. |
 | 2026-09-22 | laptop, Windows 2.1.278 and WSL 2.1.280 | The same six. Five had been updated on the account on 2026-09-21 without their own version numbers changing. |
 | 2026-09-22 | laptop, Windows | `claude plugin marketplace list` shows a claude.ai-hosted **`My Uploads`** marketplace ("not added"). **Adam checked the claude.ai UI the same day and it shows no "My Uploads" or anything similar.** So the CLI lists something the UI does not show. What it is remains unknown. |
-| 2026-09-22 | laptop | Four uploaded skills now carry a `backingPluginId` in the synced-skills manifest: the school bell-schedule skill, `pdf-ocr-audit`, `writing-adrs`, `sync-cc-settings-between-wsl-and-windows`. None of them was re-uploaded. **Inferred:** claude.ai may be moving uploads onto plugins behind the scenes. The UI shows nothing of it. |
+| 2026-09-22 | laptop | Four uploaded skills now carry a `backingPluginId` in the synced-skills manifest: `bell-schedule`, `pdf-ocr-audit`, `writing-adrs`, `sync-cc-settings-between-wsl-and-windows`. None of them was re-uploaded. **Inferred:** claude.ai may be moving uploads onto plugins behind the scenes. The UI shows nothing of it. |
 | 2026-09-22 | laptop, Windows | `~/.claude/plugins/.trash/` holds 8 old versions of the six plugins, and nothing was turned off. So updates write to `.trash` too, and "something is in `.trash`" is not proof of a removal. |
 
 ### 3.1 The six Anthropic plugins cost context in every session
@@ -408,9 +408,9 @@ control *is* found. Otherwise the result is void.
    amends ADR 0002's "one-way door" consequence only after its phase 2 has
    measured removal.
 3. **Do not enable this repo's bundles on the account** (§3.2).
-4. **For #158: leave `syncClaudeAiPlugins` unset, but not because it is free.**
+4. **For old-registry #158: leave `syncClaudeAiPlugins` unset, but not because it is free.**
    [ADR 0010](../decisions/0010-let-pinned-channels-own-the-terminal.md)
-   settled #158 for *skills*: laptops that `setup.sh` manages set
+   settled old-registry #158 for *skills*: laptops that `setup.sh` manages set
    `syncClaudeAiSkills: false`. It left plugins to this experiment because "the
    bucket … is empty today", which stopped being true on 2026-09-20. Setting
    `syncClaudeAiPlugins` to `false` would also block any personal plugin this

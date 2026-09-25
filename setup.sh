@@ -43,12 +43,39 @@
 # Codex discovers skills in ~/.agents/skills, so that link is what makes
 # these skills installable to Codex.
 #
-# Also registers the sync-skills pre-push reminder hook.
+# OWNER-MACHINE STEPS ARE OPT-IN. Run as `bash setup.sh`, this script only
+# links skills into the per-agent homes above. Two more steps configure a
+# machine the way the registry's OWNER runs it, and they are wrong on anyone
+# else's: registering the global sync-skills pre-push hook (a GLOBAL git
+# config entry, fired in every repo on the machine), and converging
+# ~/.claude/settings.json — which registers the owner's PRIVATE marketplace,
+# enables the owner's plugins and sets `syncClaudeAiSkills: false`, turning
+# off that user's claude.ai account skills in their terminals (ADR 0010, ADR
+# 0013). Both run only with `--owner-machine` or AGENTSKILLS_OWNER_MACHINE=1.
 #
 # Safe to re-run (idempotent). On Windows (Git Bash) it uses `mklink /J`
 # directory junctions — no admin required. Run on Windows AND in WSL
 # separately; each has its own filesystem and its own $HOME.
 set -u
+
+OWNER_MACHINE="${AGENTSKILLS_OWNER_MACHINE:-0}"
+for arg in "$@"; do
+  case "$arg" in
+    --owner-machine) OWNER_MACHINE=1 ;;
+    -h|--help)
+      echo "usage: bash setup.sh [--owner-machine]"
+      echo "  (default)        link every skill into ~/.agents/skills, ~/.agent/skills, ~/.cursor/skills"
+      echo "  --owner-machine  also register the global sync-skills pre-push hook and converge"
+      echo "                   ~/.claude/settings.json for the registry owner's own machines"
+      echo "                   (same as AGENTSKILLS_OWNER_MACHINE=1)"
+      exit 0 ;;
+    *) echo "ERROR: unknown argument: $arg (see --help)" >&2; exit 2 ;;
+  esac
+done
+if [[ "$OWNER_MACHINE" != 1 ]]; then
+  OWNER_MACHINE=0
+fi
+export OWNER_MACHINE
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLUGINS_DIR="$REPO_ROOT/plugins"
@@ -340,6 +367,7 @@ for rel in "${HOMES[@]}"; do
   done
 done
 
+if [[ "$OWNER_MACHINE" == 1 ]]; then
 echo ""
 echo "=== Registering sync-skills pre-push hook ==="
 # Resolve the sync-skills setup script by glob so this file doesn't hardcode
@@ -358,10 +386,16 @@ if [[ -z "$SYNC_SKILLS_SETUP" ]]; then
   exit 1
 fi
 bash "$SYNC_SKILLS_SETUP"
+fi
 
 # >>> settings-convergence
 # scripts/test_setup_settings_convergence.py runs this section, as shipped, in
 # a throwaway HOME. Keep both marker lines.
+if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
+  echo ""
+  echo "Skipped the owner-machine steps (global pre-push hook, ~/.claude/settings.json)."
+  echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
+else
 echo ""
 echo "=== Converging ~/.claude/settings.json (marketplace + plugin enablement) ==="
 # The interpreter is chosen by RUNNING it, not by `command -v`. On Windows,
@@ -442,9 +476,26 @@ TARGET_MARKETPLACES = {
 # tab reads too, so the synced copies are off there as well — the Desktop
 # app's Chat and Cowork tabs are enabled separately, in its own plugin settings.
 #
-# Keys an earlier version of this script wrote for the retired `agentskills`
-# marketplace are NOT removed here: which machines still carry them is a
-# migration step (ADR 0013, "Consequences"), not something to guess at.
+# THE RETIRED REGISTRY'S PLUGINS ARE WRITTEN OFF BY NAME. A machine converged
+# by an earlier version of this script has them enabled, and they carry the
+# same skills under the same basenames as the plugins above — left on, every
+# skill would load twice (ADR 0013). `false` for a plugin that was never
+# installed is inert, so this is safe on a machine that never had them.
+#
+# Their `extraKnownMarketplaces` entries (`agentskills`,
+# `agentskills-private`) are deliberately LEFT in place: deep_merge only adds
+# and overwrites, nothing here deletes a key, and removing a marketplace the
+# CLI still has installed plugins from is not a documented, tested operation.
+# With every plugin from them disabled they deliver nothing; removing them is
+# the manual migration step ADR 0013 names (`claude plugin marketplace
+# remove`).
+RETIRED_PLUGINS = (
+    "adam@agentskills",
+    "adam-local@agentskills",
+    "fastmail@agentskills",
+    "adam-personal@agentskills",
+    "adam-private@agentskills-private",
+)
 TARGET_ENABLED_PLUGINS = {
     "adam-anything-anywhere@adam-agentskills": True,
     "adam-coding-anywhere@adam-agentskills": True,
@@ -453,6 +504,7 @@ TARGET_ENABLED_PLUGINS = {
     "adam-anything-anywhere@synced": False,
     "adam-private-anything-anywhere@synced": False,
 }
+TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
 
 # ADR 0010: pinned channels own the terminal.
 #
@@ -558,6 +610,7 @@ converge_rc=$?
 if [[ $converge_rc -ne 0 ]]; then
   echo "ERROR    settings.json convergence failed (exit $converge_rc); ~/.claude/settings.json was NOT converged" >&2
   exit "$converge_rc"
+fi
 fi
 # <<< settings-convergence
 

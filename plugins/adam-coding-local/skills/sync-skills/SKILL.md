@@ -518,7 +518,7 @@ wrote `~/.claude/skills/synced/manifest.json` flat. `sync_skills.py` reads
 whichever this machine has and needs no flag for it; on a machine signed in to
 two accounts over time it picks the bucket matching `oauthAccount` in
 `~/.claude.json`, then `$CLAUDE_CODE_ACCOUNT_UUID`, and **refuses** if neither
-resolves rather than guessing (issue #157).
+resolves rather than guessing (old-registry issue #157).
 
 **How you refresh it depends on the machine, and on ADR 0010.** The old
 `CLAUDE_CODE_SYNC_SKILLS=1 claude -p 'ok'` line is now wrong on both branches:
@@ -529,7 +529,7 @@ resolves rather than guessing (issue #157).
 | **A laptop `setup.sh` has converged** | nothing can. ADR 0010 sets `syncClaudeAiSkills: false` there, so there is no mirror to refresh and the env var has nothing to act on. **Run the verify from a cloud session instead.** |
 
 That second row is why the verify and record steps moved: since
-[#157](https://github.com/Adam-S-Daniel/agentskills/issues/157) a cloud session
+old-registry issue 157 a cloud session
 reads the bucketed mirror correctly, and a cloud session cannot opt out of the
 sync, so it is the surface that always has one. The upload half still needs the
 laptop — it needs a browser — but the checking half no longer does.
@@ -857,7 +857,7 @@ and the phone can only take the first:
   the account instead of taking your word for it:
 
   ```bash
-  # From a CLOUD session: it always has the mirror, and since #157 it reads the
+  # From a CLOUD session: it always has the mirror, and since old-registry #157 it reads the
   # bucketed layout. This step no longer needs the laptop at all.
   python3 "$SKILL_DIR/sync_skills.py" --record-account-state   # re-record
   ```

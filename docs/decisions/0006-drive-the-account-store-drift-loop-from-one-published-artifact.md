@@ -246,7 +246,7 @@ The decisions above are asserted rather than described:
 
 ## References
 
-- [PR #118](https://github.com/Adam-S-Daniel/agentskills/pull/118) / commit
+- old-registry PR 118 / commit
   `f65df0d` — the implementation this records.
 - [`.github/workflows/account-skill-zips.yml`](../../.github/workflows/account-skill-zips.yml)
   and [`scripts/account_zip_selection.py`](../../scripts/account_zip_selection.py).

@@ -356,7 +356,7 @@ def write_stub(bin_dir: Path, name: str, body: str) -> None:
 STORE_STUB = 'echo "Python was not found; run without arguments to install from the Microsoft Store" >&2\nexit 49'
 
 
-def run_section(home: Path, bin_dir: Path) -> subprocess.CompletedProcess:
+def run_section(home: Path, bin_dir: Path, owner: bool = True) -> subprocess.CompletedProcess:
     """The shipped section followed by the shipped tail, with PATH holding
     ONLY bin_dir — so the stubs placed there are the only interpreters found,
     on a Linux runner with a real python3 in /usr/bin as much as on Windows."""
@@ -368,7 +368,10 @@ def run_section(home: Path, bin_dir: Path) -> subprocess.CompletedProcess:
     script = home / "section.sh"
     # `set -u` first: the section runs under setup.sh's own options (its line
     # `set -u`), so an unset variable fails here exactly as it would there.
-    script.write_text("set -u\n" + section() + tail(), encoding="utf-8", newline="\n")
+    # OWNER_MACHINE is what setup.sh sets from `--owner-machine` before the
+    # section runs; without it the section converges nothing (tests below).
+    prefix = "set -u\n" + ("OWNER_MACHINE=1\n" if owner else "")
+    script.write_text(prefix + section() + tail(), encoding="utf-8", newline="\n")
     return subprocess.run([bash, script.as_posix()],
                           env={"HOME": str(home), "USERPROFILE": str(home),
                                "PATH": str(bin_dir)},
@@ -513,3 +516,61 @@ def test_the_adr_that_named_these_plugins_is_on_disk_and_accepted():
     assert "adam-coding-local@adam-agentskills" in adr
     index = (REPO / "docs" / "decisions" / "README.md").read_text(encoding="utf-8")
     assert "0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md" in index
+
+
+# --- the retired registry's plugins (ADR 0013) --------------------------------
+
+RETIRED = ["adam@agentskills", "adam-local@agentskills", "fastmail@agentskills",
+           "adam-personal@agentskills", "adam-private@agentskills-private"]
+
+
+def test_the_retired_registrys_plugins_end_disabled(tmp_path):
+    """A machine converged under the old names has those plugins ON, and they
+    carry the same skills as the new ones — so each would load twice."""
+    old_marketplaces = {
+        "agentskills": {"source": {"source": "github", "repo": "Adam-S-Daniel/agentskills"}},
+        "agentskills-private": {"source": {"source": "github",
+                                           "repo": "Adam-S-Daniel/agentskills-private"}},
+    }
+    settings = converge(tmp_path, {
+        "extraKnownMarketplaces": old_marketplaces,
+        "enabledPlugins": {name: True for name in RETIRED},
+    })
+    for name in RETIRED:
+        assert settings["enabledPlugins"][name] is False, name
+    # Left in place on purpose (see setup.sh): nothing here deletes a key.
+    for name, entry in old_marketplaces.items():
+        assert settings["extraKnownMarketplaces"][name] == entry
+
+
+def test_a_fresh_machine_gets_the_retired_names_as_inert_falses(tmp_path):
+    settings = converge(tmp_path)
+    assert all(settings["enabledPlugins"][name] is False for name in RETIRED)
+    assert not {"agentskills", "agentskills-private"} & set(settings["extraKnownMarketplaces"])
+
+
+# --- the owner-machine gate ----------------------------------------------------
+
+def test_without_the_owner_flag_the_section_converges_nothing(tmp_path):
+    """A stranger running `bash setup.sh` must not get the owner's private
+    marketplace, the owner's plugins, or `syncClaudeAiSkills: false`."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    real_python_stub(bin_dir, "python3")
+    path = tmp_path / ".claude" / "settings.json"
+    path.parent.mkdir(parents=True)
+    path.write_text('{"model": "claude-opus-5"}\n', encoding="utf-8")
+    proc = run_section(tmp_path, bin_dir, owner=False)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert "--owner-machine" in proc.stdout
+    assert "Setup complete." in proc.stdout
+    assert path.read_text(encoding="utf-8") == '{"model": "claude-opus-5"}\n'
+
+
+def test_without_the_owner_flag_no_settings_file_is_created(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    real_python_stub(bin_dir, "python3")
+    proc = run_section(tmp_path, bin_dir, owner=False)
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    assert not (tmp_path / ".claude" / "settings.json").exists()

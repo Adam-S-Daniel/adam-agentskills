@@ -154,8 +154,8 @@ whose directory also exists in the primary, which would hard-fail an honest bund
 migration.
 
 Two further defects were **deferred, not fixed**: orphaned skills persisting when a skill
-leaves the lock (#71), and `BASH_ENV` breaking the always-exit-0 contract (#72). Both
-pre-date this change and neither is amplified by it. #72 is really a documentation defect —
+leaves the lock (old-registry #71), and `BASH_ENV` breaking the always-exit-0 contract (old-registry #72). Both
+pre-date this change and neither is amplified by it. old-registry #72 is really a documentation defect —
 the header states an *absolute* guarantee that is not absolute.
 
 ## What this changes

@@ -109,11 +109,13 @@ that enabled it loses it.
 
 **Migrating from the retired `agentskills` registry:** re-pin each consumer
 repo's `skills.lock` to `Adam-S-Daniel/adam-agentskills` and the new plugin
-names, then on each durable machine re-run `bash setup.sh` (in each home,
-Windows Git Bash and WSL) and uninstall the old marketplace's plugins.
-`setup.sh` registers the new marketplaces and enables the new plugins, but
-does not remove the keys an older `setup.sh` wrote for the old marketplace.
-Re-running it also re-registers the global sync-skills pre-push hook, which
+names, then on each of the owner's durable machines re-run
+`bash setup.sh --owner-machine` (in each home, Windows Git Bash and WSL).
+That registers the new marketplaces, enables the new plugins and writes
+`false` for the retired registry's plugins (`adam`, `adam-local`, `fastmail`,
+`adam-personal`, `adam-private`), so nothing loads twice; it leaves the old
+marketplace entries themselves in place — remove those with
+`claude plugin marketplace remove`. Re-running it also re-registers the global sync-skills pre-push hook, which
 otherwise points at the old path and **blocks every `git push` from any repo**.
 
 Available skills:
@@ -155,7 +157,7 @@ separate `$HOME`s):
 bash setup.sh
 ```
 
-It links every skill under `plugins/*/skills/*` into the standard skill homes:
+That is all anyone else needs. It links every skill under `plugins/*/skills/*` into the standard skill homes:
 
 - `~/.agents/skills/` — Codex (and the generic agents dir)
 - `~/.agent/skills/`
@@ -185,6 +187,25 @@ is idempotent and migrates the old whole-directory links left by earlier version
 
 After running `setup.sh`, you don't need to restart an open Claude Code session —
 run `/reload-skills` to re-scan the skill directories in place.
+
+### Owner machines only: `--owner-machine`
+
+`bash setup.sh --owner-machine` (or `AGENTSKILLS_OWNER_MACHINE=1 bash setup.sh`)
+additionally configures a machine the way the registry's owner runs it, and
+is **not** for anyone else's machine:
+
+- registers the sync-skills pre-push reminder as a **global** git hook
+  (`git config --global`), so it fires in every repo on the machine;
+- converges `~/.claude/settings.json`: registers this marketplace and the
+  owner's **private** one, enables the owner's plugins
+  (`adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`,
+  `adam-private-anything-anywhere`), writes `false` for the account-synced
+  copies and for the retired registry's plugins, and sets
+  `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
+  that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
+  [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
+
+Without the flag neither step runs, and the script says how to opt in.
 
 > Codex reads `~/.agents/skills`; that link is what makes these skills available in
 > Codex. See the [Codex skills docs](https://developers.openai.com/codex/skills).
@@ -297,7 +318,7 @@ write is the delivery channel for ephemeral surfaces. What works where:
   on Claude Code 2.1.273+ (a `.bucket-<organizationUuid>_<accountUuid>` marker
   file sits beside it; older CLIs wrote `~/.claude/skills/synced/` flat, and the
   tools here read whichever a machine has — see
-  [#157](https://github.com/Adam-S-Daniel/agentskills/issues/157)), populated by
+  old-registry issue 157), populated by
   uploading skills as ZIPs via Settings → Capabilities. This is the *only*
   channel that reaches claude.ai chat, Cowork, Claude in Chrome, and mobile —
   and it loads in Claude Code on the web / cloud sessions too, alongside
@@ -372,7 +393,7 @@ I put the following in Claude desktop app -> Settings -> Cowork -> Global instru
 > scaffolds into `.claude/skills`, which is not this repo's marketplace layout.
 > Never rename skill directories or plugins. Open a PR against `main` in
 > https://github.com/Adam-S-Daniel/adam-agentskills. Then fetch and pull in WSL and Windows
-> under `~/repos` and `%USERPROFILE%\repos`, and run `bash setup.sh` in both WSL and
+> under `~/repos` and `%USERPROFILE%\repos`, and run `bash setup.sh --owner-machine` in both WSL and
 > Windows Git Bash so the skills are linked into the standard locations
 > (`.agents/skills/`, `.agent/skills/`, `.cursor/skills/`) — Claude Code itself
 > uses the marketplace, not `.claude/skills`. Run `/reload-skills` to pick up changes

@@ -64,9 +64,17 @@ plugins start at version 1.0.0. The marketplace has **no `renames` map**: it
 is a new marketplace, and the old names never existed in it. Invocation is
 `/<plugin>:<skill>`, e.g. `/adam-anything-anywhere:finding-unknowns`.
 
-`setup.sh` registers `adam-agentskills` → `Adam-S-Daniel/adam-agentskills`
-and `adam-agentskills-private` → `Adam-S-Daniel/adam-agentskills-private`,
-and converges user `enabledPlugins` to:
+Anyone may run `bash setup.sh`; by default it only links skills into the
+per-agent homes (`~/.agents/skills` and friends). The owner-machine steps —
+the GLOBAL sync-skills pre-push hook and the `~/.claude/settings.json`
+convergence below — run only with `bash setup.sh --owner-machine` (or
+`AGENTSKILLS_OWNER_MACHINE=1`), because on anyone else's machine they would
+register the owner's private marketplace, enable the owner's plugins and turn
+off that user's claude.ai account skills.
+
+With `--owner-machine`, `setup.sh` registers `adam-agentskills` →
+`Adam-S-Daniel/adam-agentskills` and `adam-agentskills-private` →
+`Adam-S-Daniel/adam-agentskills-private`, and converges user `enabledPlugins` to:
 
 - `true`: `adam-anything-anywhere@adam-agentskills`,
   `adam-coding-anywhere@adam-agentskills`,
@@ -74,7 +82,15 @@ and converges user `enabledPlugins` to:
   `adam-private-anything-anywhere@adam-agentskills-private`;
 - `false`: `adam-anything-anywhere@synced` and
   `adam-private-anything-anywhere@synced` — terminals take these from the
-  marketplace, pinned, not from the account.
+  marketplace, pinned, not from the account;
+- `false`, too: the retired registry's `adam@agentskills`,
+  `adam-local@agentskills`, `fastmail@agentskills`,
+  `adam-personal@agentskills` and `adam-private@agentskills-private`, so a
+  machine converged under the old names does not load every skill twice
+  (`false` for a plugin never installed is inert). The old
+  `extraKnownMarketplaces` entries are left in place: nothing in the
+  convergence deletes a key, and removing a marketplace is a manual
+  `claude plugin marketplace remove`.
 
 `syncClaudeAiSkills: false` stays ([ADR 0010](0010-let-pinned-channels-own-the-terminal.md)).
 
@@ -98,10 +114,9 @@ The old repo is made private and archived once consumers have migrated.
 
 - **Every consumer migrates by hand.** Each consumer repo's `skills.lock` is
   re-pinned to `Adam-S-Daniel/adam-agentskills` and the new plugin names.
-  Durable machines re-run `bash setup.sh` and remove the old marketplace's
-  plugins. `setup.sh` does not delete keys an older `setup.sh` wrote for the
-  old `agentskills` marketplace, so a machine that ran it keeps them until
-  migrated.
+  The owner's durable machines re-run `bash setup.sh --owner-machine`,
+  which disables the old marketplace's plugins by name; the old marketplace
+  entries stay registered until removed by hand.
 - **One-way doors.** A plugin name, once enabled anywhere, and a skill
   directory basename (keys for `setup.sh` symlinks and the account store) are
   permanent in practice. With no `renames` map, renaming a plugin means every

@@ -60,7 +60,7 @@ finding, not a pass.
 `skills-bootstrap.sh` installs on any of those three readings, so a diagnostic
 that recognises fewer of them disagrees with the hook silently: it answers
 `unsure`, which is the quiet reading, on a surface the hook has just installed
-onto. That is how #85's headline defect survived its own fix.
+onto. That is how old-registry #85's headline defect survived its own fix.
 
 **The second arm is a PREFIX, not the exact string `remote`.** Claude Code's
 entrypoint allowlist has 26 legal values and seven of them begin with `remote`
@@ -348,7 +348,7 @@ PATH was last touched by any commit — **including a commit that only moved it*
 The two clocks measure different things, so every repo-wide restructure re-flags
 every skill it touched, whether or not a byte changed.
 
-Measured 2026-08-25 on this registry: `pdf-ocr-audit` and the school bell-schedule skill both
+Measured 2026-08-25 on this registry: `pdf-ocr-audit` and `bell-schedule` both
 read STALE that way against commit `88526d1` ("Prune skills that left the
 lock…"), which moved paths across the whole tree — and a content comparison
 showed both byte-identical to the registry. Two false positives out of ten
@@ -408,7 +408,7 @@ modelled: only `false` is honoured and it is honoured from any of them, so
 "does some file in the chain say false" is the whole question.
 
 `syncClaudeAiPlugins` is reported but no decision has been made about it —
-[#160](https://github.com/Adam-S-Daniel/agentskills/issues/160) (E6) is the
+old-registry issue 160 (E6) is the
 experiment that would.
 
 ### Missing payloads
@@ -492,7 +492,7 @@ figure. No remediation is performed — recommend, do not do.
   reads exactly like an account with no uploads. `check_provenance.py` resolves
   the bucket itself (`oauthAccount` in `~/.claude.json`, then
   `$CLAUDE_CODE_ACCOUNT_UUID`) and refuses rather than guessing when a machine
-  has more than one; when you look by hand, glob the bucket. Issue #157 is
+  has more than one; when you look by hand, glob the bucket. Old-registry issue #157 is
   where both tools were measured reporting a false clean over 21 skills.
 - **`~/.claude/skills/synced/` cannot be seeded or simulated.** It is
   manifest-gated: writing a directory there does nothing at all. You can only

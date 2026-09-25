@@ -609,7 +609,7 @@ EXPECTED_LAYOUT = {
         "debug-github-workflows", "disarm-inherited-reach", "github-actions-repo-settings",
         "review-bash-ci-reliability", "skills-doctor", "workflow-path-audit"}),
     "adam-coding-local": (False, {
-        "sync-skills", "sync-cc-settings-between-wsl-and-windows", "launch-wsl-claude-session",
+        "sync-skills", "sync-cc-settings-between-wsl-and-windows", "launch-top-level-claude-session",
         "migrate-claude-memory", "windows-elevation-from-wsl"}),
     "adam-non-coding-local": (False, {
         "ocr-pdfs", "pdf-ocr-audit", "rename-pdfs", "compare-pdfpairs", "fastmail",

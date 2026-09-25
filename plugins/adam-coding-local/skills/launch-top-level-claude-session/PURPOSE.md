@@ -1,4 +1,4 @@
-# Purpose — launch-wsl-claude-session
+# Purpose — launch-top-level-claude-session
 
 Maintenance context only; never loaded at inference.
 

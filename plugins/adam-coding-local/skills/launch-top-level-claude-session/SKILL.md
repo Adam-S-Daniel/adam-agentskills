@@ -1,5 +1,5 @@
 ---
-name: launch-wsl-claude-session
+name: launch-top-level-claude-session
 description: >-
   Launch a new, top-level, interactive Claude Code session in a new Windows
   Terminal tab — native Windows or inside WSL — in a chosen folder, optionally

@@ -43,8 +43,8 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-09-25 — adam-coding-anywhere/vendor-release-impact-issues — create
 
 - Motivation: filing 32 vendor-release impact issues hit every trap the skill names ([_agent-guidance#171](https://github.com/Adam-S-Daniel/_agent-guidance/pull/171)).
-- Change: new skill (SKILL.md + PURPOSE.md); `adam-coding-anywhere` 1.1.0 (PR link added when opened).
-- Eval: none run yet. Fixture `evals/vendor-release-impact-issues/` is in a companion skills-evals PR. The graduation gate's green `with_skill` arm needs a paid run, or the owner's waiver recorded here, before merge.
+- Change: new skill (SKILL.md + PURPOSE.md); `adam-coding-anywhere` 1.1.0 ([#22](https://github.com/Adam-S-Daniel/adam-agentskills/pull/22)).
+- Eval: none run yet. Fixture `evals/vendor-release-impact-issues/` is in [skills-evals#197](https://github.com/Adam-S-Daniel/skills-evals/pull/197); objective-only scoring passes 7/7 on a workspace that follows the skill and fails 6/6 trap checks on one that doesn't. The graduation gate's green `with_skill` arm needs a paid run, or the owner's waiver recorded here, before merge.
 - Outcome: pending merge.
 
 ## 2026-09-24 — all skills — rename (re-homed into `adam-agentskills`)

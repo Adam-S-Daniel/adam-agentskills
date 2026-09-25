@@ -13,21 +13,21 @@ record rather than inferring, and it **reports, never repairs**.
 
 ## The incidents it packages
 
-- **#122 — the silent shadow.** Three locked skills in this repo's own cloud
+- **old-registry #122 — the silent shadow.** Three locked skills in this repo's own cloud
   sessions arrived from BOTH the hook and the account store under one bare
   name. The listing shows the name once and nothing says which copy the model
   read. The doctor called such a session clean. Matching copies are now a NOTE
   and divergent ones a FINDING — the split matters, because reddening the
   ordinary case is how a diagnostic gets skipped.
-- **#84 — every file correct, nothing ever runs.** The lock and the hook were
+- **old-registry #84 — every file correct, nothing ever runs.** The lock and the hook were
   both right; what was missing was a settings file at a level the hook chain
   actually reads (ADR 0005, ADR 0007).
 - **False drift from timestamps.** Account drift was judged by `updatedAt`
   against `git log`, so a repo-wide path move re-flagged every skill it
-  touched: `pdf-ocr-audit` and the school bell-schedule skill both read STALE while being
+  touched: `pdf-ocr-audit` and `bell-schedule` both read STALE while being
   byte-identical once CRLF was folded. Content is the verdict now and the
   timestamp is not consulted at all.
-- **#157 — a false clean over 21 skills.** Claude Code 2.1.273+ buckets the
+- **old-registry #157 — a false clean over 21 skills.** Claude Code 2.1.273+ buckets the
   account store at `synced/<organizationUuid>_<accountUuid>/`. Reading the flat
   path found nothing, and this script's answer to nothing was "this is what an
   account with no uploads looks like … 0 drifted", exit 0 — while the bucket
@@ -36,7 +36,7 @@ record rather than inferring, and it **reports, never repairs**.
   and REFUSES with exit 2 when a machine has several and nothing says which is
   this session's.
 
-- **#158 — the drifting channel reached the terminal.** Claude Code 2.1.273+
+- **old-registry #158 — the drifting channel reached the terminal.** Claude Code 2.1.273+
   syncs the account store into every terminal session signed in with the
   account. E5 §7 had called the exposure "the exact inverse of the delivery" —
   the channel that drifts served the surfaces with no lock coverage — and that
@@ -66,6 +66,6 @@ that reason.
 
 ## Eval status
 
-No eval existed when #157 was fixed. `DESIGN.md` names `skills-doctor` as a
+No eval existed when old-registry #157 was fixed. `DESIGN.md` names `skills-doctor` as a
 Class B (diagnosis/triage) candidate with no fixture yet; the first fixture
 is `evals/skills-doctor/` in skills-evals.

@@ -5,7 +5,7 @@ This document declares how skills and agent guidance are organized across the
 a skill live, and which repo wins when they disagree?"
 
 It implements Phase 1 of the consolidation plan in
-[issue #18](https://github.com/Adam-S-Daniel/agentskills/issues/18). Background:
+old-registry issue 18. Background:
 [`docs/2026-06-05-skill-discovery-and-centralized-strategy.md`](docs/2026-06-05-skill-discovery-and-centralized-strategy.md).
 
 ## The rule, in one line
@@ -22,7 +22,7 @@ bloats the other:
 | Layer | What it is | Canonical home |
 | --- | --- | --- |
 | **Skills** | Reusable `SKILL.md` capabilities, packaged as Claude Code plugins + a marketplace, and as cross-agent skills (agentskills.io spec). | **`adam-agentskills`** (this repo) — public — and **`adam-agentskills-private`** for the sensitive subset. |
-| **Guidance / sync** | `AGENTS.md` + global instructions + the mechanism that propagates them (and selected skills) into consumer repos, with drift detection. | **`_agent-guidance`** (to move to `Adam-S-Daniel` — see issue #18, Phase 3). |
+| **Guidance / sync** | `AGENTS.md` + global instructions + the mechanism that propagates them (and selected skills) into consumer repos, with drift detection. | **`_agent-guidance`** (to move to `Adam-S-Daniel` — see old-registry issue #18, Phase 3). |
 
 This repo owns the **skills** layer only. It deliberately does not carry
 `AGENTS.md`/behavioral guidance — that belongs to `_agent-guidance`, which consumes
@@ -42,7 +42,7 @@ A skill's repo is decided by **sensitivity, not by how personal it is**:
 Both repos use the **same** plugin + marketplace structure
 (`plugins/<plugin>/skills/<skill>/`, `.claude-plugin/marketplace.json`,
 `defaultEnabled`, the `setup.sh` de-dup), so the installer and `sync-skills`
-behave identically across them (Phase 2 in issue #18). Plugins are named by
+behave identically across them (Phase 2 in old-registry issue #18). Plugins are named by
 audience and runtime, `[adam|adam-private]-[coding|non-coding|anything]-[local|anywhere]`.
 The public registry has four: `adam-anything-anywhere` and
 `adam-coding-anywhere` (default-enabled), `adam-coding-local` and
@@ -177,5 +177,5 @@ Policy for repos in this ecosystem:
 ## Out of scope (for now)
 
 - Using `GHA-bench` as an eval harness — evals get a dedicated `skills-evals` repo
-  (issue #18, Phase 5). `GHA-bench` is treated only as a source of skills to
+  (old-registry issue #18, Phase 5). `GHA-bench` is treated only as a source of skills to
   extract (Phase 4).

@@ -40,7 +40,7 @@ identical `(name, digest)` rows from different locks as interchangeable, so a
 colliding directory becomes a way for one lock to supply the bytes for another
 repo's skill name at a matching digest.
 
-Reported by the isolation/integrity lens of the adversarial round on #131, and
+Reported by the isolation/integrity lens of the adversarial round on old-registry #131, and
 independently graded UNDERSTATED by a skeptic instructed to refute it.
 
 ## Decision
@@ -62,7 +62,7 @@ not descend into a symlinked directory, so one test placed before the
 
 ## Why this doesn't break X
 
-The obvious objection is the one #132 raised against fixing it inside a feature
+The obvious objection is the one old-registry #132 raised against fixing it inside a feature
 PR: changing the digest **algorithm** changes every digest in every committed
 `skills.lock` in the fleet, which needs a coordinated re-pin and hits the same
 forward/backward-compatibility trap the `sha256:` prefix rollout had to be
@@ -102,7 +102,7 @@ and reporting it as this one.
 - `scripts/test_generate_skills_lock.py::test_the_generator_refuses_a_symlink_in_a_skill_directory`
   — parametrised over all three shapes, because the two that were invisible to
   the old walk are the two a single-shape test would most likely have omitted.
-- `…::test_the_collision_a_symlink_used_to_buy_is_gone` — asserts #132's actual
+- `…::test_the_collision_a_symlink_used_to_buy_is_gone` — asserts old-registry #132's actual
   claim (two trees, one digest) directly, with a control that keeps it from
   passing against an implementation that simply refused everything.
 - `…::test_both_digest_implementations_refuse_a_symlink` — binds the hook and

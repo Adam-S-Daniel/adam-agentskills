@@ -1,6 +1,6 @@
 # 0001. Consolidate single-skill plugins into three bundles
 
-- **Status:** Accepted
+- **Status:** Superseded by [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)
 - **Date:** 2026-07-16
 - **Deciders:** Adam Daniel
 
@@ -45,7 +45,7 @@ version.
   install step.
 - **Lost per-skill enable granularity.** Enabling `adam-local` is
   all-or-nothing: you cannot install `rename-pdfs` without also getting
-  the school bell-schedule skill. If a skill ever needs independent enablement, it must move
+  `bell-schedule`. If a skill ever needs independent enablement, it must move
   to its own plugin (via a new `renames` entry).
 - **The `renames` map is a permanent, growing artifact.** Every future plugin
   rename or removal adds an entry; none may ever be deleted.
@@ -109,7 +109,7 @@ rather than assuming settings-driven fleet delivery.
 - Restructure commits on `claude/bundle-restructure` (pure-rename commit,
   metadata commit, setup.sh relink commit, this docs commit).
 - [`STRATEGY.md`](../../STRATEGY.md) — registry rules and the graduation path.
-- [Issue #18](https://github.com/Adam-S-Daniel/agentskills/issues/18) — the
+- Old-registry issue 18 — the
   consolidation plan this restructure extends.
 - anthropics/claude-code#32606, anthropics/claude-code#13096 — cloud sessions
   ignoring repo-declared marketplaces/plugins.

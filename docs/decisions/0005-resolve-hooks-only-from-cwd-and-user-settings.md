@@ -17,7 +17,7 @@ directory set to the parent of eleven repos: every repo carried a correct
 verdict was printed by anything. `~/.claude/skills/` held one directory and no
 install record. From inside any single repo there was nothing to find — every
 file it owns is present and right — which is why this took an investigation
-(#84) rather than a glance.
+(old-registry #84) rather than a glance.
 
 Two prior beliefs had to go. The first was that `--add-dir` widens the settings
 chain the way it widens skill and command discovery; it does not. The second
@@ -41,7 +41,7 @@ next session to re-derive:
 > file" log line proves only that the file exists. Consequence: in a
 > multi-repo-parent session, **no** repo's SessionStart hook can fire, whatever
 > its command string. This needs a `cwd`-level or user-level settings file, which
-> only the environment can place. (#84, measured 2026-08-16.)
+> only the environment can place. (old-registry #84, measured 2026-08-16.)
 
 Two consequences are adopted with it:
 
@@ -105,7 +105,7 @@ Measured: `CLAUDE_PROJECT_DIR=/home/user/rss-inator` — no lock, not allowliste
 lock-bearing project dir silently converts the fleet's stated *"deliberate
 per-repo decision and not a fleet default"* into a fleet default. The
 `DEGRADED — no skills.lock` path it was assumed to fail into is **unreachable**
-under that invocation. This is also why a user-scope hook — the obvious #84 fix
+under that invocation. This is also why a user-scope hook — the obvious old-registry #84 fix
 — is unsafe until the fallback gains an explicit-lock mode.
 
 The ordering that follows: a user-scope settings file placed today would make
@@ -181,12 +181,12 @@ fix it from inside a repo.
 
 ## References
 
-- [#84](https://github.com/Adam-S-Daniel/agentskills/issues/84) — the
+- old-registry issue 84 — the
   investigation; measurements dated 2026-08-16.
-- [#85](https://github.com/Adam-S-Daniel/agentskills/issues/85) — this record's
+- old-registry issue 85 — this record's
   §2, the two open questions (§3) and the two footnotes (§4), plus the
   `skills-doctor` changes that name the state.
-- [#86](https://github.com/Adam-S-Daniel/agentskills/issues/86) — the install
+- old-registry issue 86 — the install
   loop no longer deletes what it did not install, which is what lifted the
   ordering constraint on the user-scope direction.
 - `plugins/adam-coding-anywhere/skills/skills-doctor/scripts/check_provenance.py` —
@@ -195,7 +195,7 @@ fix it from inside a repo.
 
 ## Note on the quotation
 
-The block quote above is reproduced from #85 §2 verbatim, with one repair: the
+The block quote above is reproduced from old-registry #85 §2 verbatim, with one repair: the
 issue's rendered text reads `/.claude/settings.local.json` and
 `/.claude/settings.json`, having lost an angle-bracket placeholder to Markdown
 rendering (the same stripping that left `$PROJECT_DIR/.claude/skills//SKILL.md`

@@ -35,12 +35,12 @@ usually reached for first. Precedence could be engineered around by renaming.
 This cannot.
 
 **The channel silently accumulated orphans.** `ocr-pdfs` and `pdf-ocr-audit`
-existed *only* on claude.ai from April until PR #62, with zero git history;
+existed *only* on claude.ai from April until old-registry PR #62, with zero git history;
 `pdf-ocr-audit/scripts/check_ocr.py` was ~5 KB of working Python one deletion
 away from being unrecoverable. Nothing surfaced them, because nothing compared
 the account store to the registry. The uploader made it worse: `sync-skills`
 §6's single-file fallback truncated multi-file skills to just `SKILL.md` and
-returned no error, so a lossy upload looked like a successful one. PR #61 fixed
+returned no error, so a lossy upload looked like a successful one. old-registry PR #61 fixed
 the fallback and added `--verify`.
 
 **Nothing removes a skill from the account.** The API `sync-skills` drives
@@ -66,8 +66,8 @@ Cowork, mobile — that do not depend on a particular repo, and everything on it
 version-controlled in this registry first. Repo-scoped and platform-scoped skills
 are never pushed there.
 
-Under that rule two open questions are settled (#63): the PDF trio — `ocr-pdfs`,
-`pdf-ocr-audit`, `rename-pdfs` — is kept in full, and the school bell-schedule skill is descoped
+Under that rule two open questions are settled (old-registry #63): the PDF trio — `ocr-pdfs`,
+`pdf-ocr-audit`, `rename-pdfs` — is kept in full, and `bell-schedule` is descoped
 without being deleted.
 
 ## Consequences
@@ -79,19 +79,19 @@ without being deleted.
   `ocr-pdfs`"), the "natural follow-up to `ocr-pdfs`" line, the `*-needsocr.pdf`
   backup rule, and the branch that acts on a `pdf-ocr-audit` verdict — so
   dropping two while keeping it would leave it documenting a workflow that no
-  longer exists. All three are now version-controlled (#62), `--verify`-covered
-  (#61) and in the conformance census (#55).
+  longer exists. All three are now version-controlled (old-registry #62), `--verify`-covered
+  (old-registry #61) and in the conformance census (old-registry #55).
 
 - **A known-broken skill stays live on the account, and that is the accepted
   cost.** Owner directive, 2026-08-14: "Forget the [school] bell schedule skill" — no
-  payload research, no rewrite. the school bell-schedule skill tells the agent to run
+  payload research, no rewrite. `bell-schedule` tells the agent to run
   `scripts/next_break.py` and `scripts/test_next_break.py`, neither of which has
   ever existed in its directory, and it stays that way. Anyone who activates it
   from chat or mobile gets an agent reaching for a script that isn't there. It is
   not deleted from git because deleting it there would not delete the account
-  copy — it would only unversion it, re-creating the exact condition PR #62 just
+  copy — it would only unversion it, re-creating the exact condition old-registry PR #62 just
   cleared. Its two code-block payload references are declared in
-  `scripts/skills_waivers.yml` against #63 (the third, `references/bell_schedules.json`,
+  `scripts/skills_waivers.yml` against old-registry #63 (the third, `references/bell_schedules.json`,
   is prose-only and does not gate), so the census prints them under WAIVED on
   every run instead of hiding them.
 
@@ -102,7 +102,7 @@ without being deleted.
   (~185/skill), and account-synced skills feed the same per-session skill
   listing. A platform bundle on the account would be paid in every unrelated
   session while being outranked by the marketplace bundle in the repos it was
-  written for — and #54 records the further risk that at the default context
+  written for — and old-registry #54 records the further risk that at the default context
   budget the least-used descriptions are silently dropped, so noise on the
   account can make a genuinely useful skill untriggerable.
 
@@ -127,11 +127,11 @@ one surface this channel exists to serve, and dropping it would also require
 stripping four `ocr-pdfs` / `pdf-ocr-audit` references out of `rename-pdfs`.
 
 **Drop `ocr-pdfs` + `pdf-ocr-audit` and keep `rename-pdfs`.** Rejected
-explicitly — #63 names this as the one option that should not be taken. The
+explicitly — old-registry #63 names this as the one option that should not be taken. The
 rescue has already happened, so it saves nothing, and it leaves `rename-pdfs`
 describing a two-step workflow whose first step is gone.
 
-**Delete the school bell-schedule skill from the registry.** Rejected: the account copy would
+**Delete `bell-schedule` from the registry.** Rejected: the account copy would
 survive the deletion and become unversioned, so the "cleanup" would recreate the
 orphan class this ADR exists to prevent.
 
@@ -139,33 +139,33 @@ orphan class this ADR exists to prevent.
 
 - **Registry arm:** `python3 scripts/check_skills.py` — the cross-registry
   census. It fails on a dangling payload reference or an undeclared duplicate,
-  and a waiver matching nothing is itself an error, so the two the school bell-schedule skill
+  and a waiver matching nothing is itself an error, so the two `bell-schedule`
   waivers cannot rot: repairing the skill makes them stale and CI then forces
   their deletion.
 - **Account arm:** refresh the local mirror with
   `CLAUDE_CODE_SYNC_SKILLS=1 claude -p 'ok'`, then run
-  `plugins/adam-coding-local/skills/sync-skills/sync_skills.py --verify` (PR #61). It
+  `plugins/adam-coding-local/skills/sync-skills/sync_skills.py --verify` (old-registry PR #61). It
   compares each account copy's file set against what the uploader would send and
   exits non-zero on any `MISMATCH` — the check that would have caught the
   truncation. It needs Adam's laptop; CI cannot reach the account store.
 
 ## References
 
-- [Issue #63](https://github.com/Adam-S-Daniel/agentskills/issues/63) — the two
+- Old-registry issue 63 — the two
   rulings recorded here.
-- [Issue #54](https://github.com/Adam-S-Daniel/agentskills/issues/54) §6 (what we
+- Old-registry issue 54 §6 (what we
   deliberately will not do) and §9 (record C8 in an ADR).
-- [PR #61](https://github.com/Adam-S-Daniel/agentskills/pull/61) — fallback
+- old-registry PR 61 — fallback
   truncation fix plus `--verify`.
-- [PR #62](https://github.com/Adam-S-Daniel/agentskills/pull/62) — the two
+- old-registry PR 62 — the two
   orphaned PDF skills brought under version control.
-- [Issue #55](https://github.com/Adam-S-Daniel/agentskills/issues/55) — the
+- Old-registry issue 55 — the
   conformance + cross-registry census.
 - [`docs/experiments/E2-sessionstart-skill-bootstrap.md`](../experiments/E2-sessionstart-skill-bootstrap.md)
   — C3 (precedence), C6 (token cost), C8 (structural non-scopability).
 - [`scripts/skills_waivers.yml`](../../scripts/skills_waivers.yml) — the declared
-  the school bell-schedule skill exemptions.
-- [ADR 0001](0001-consolidate-plugins-into-bundles.md) — the bundle split. #54 §9
+  `bell-schedule` exemptions.
+- [ADR 0001](0001-consolidate-plugins-into-bundles.md) — the bundle split. old-registry #54 §9
   asked for C8 "in ADR 0001"; ADRs here are append-only, so it lands as a new one.
 - [cms-platform#249](https://github.com/Adam-S-Daniel/cms-platform/issues/249) —
   where the `CLAUDE_CODE_SYNC_SKILLS` pruning question came from.

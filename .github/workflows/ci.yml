@@ -22,9 +22,10 @@ on:
   # dispatching is a probe, not a way to open issues.
   #
   # SAFE ONLY BECAUSE THIS WORKFLOW HAS NO `concurrency:` BLOCK, and that is a
-  # standing constraint rather than an observation. `pytest-windows` is a
-  # REQUIRED status check on this repo's default branch (declared in
-  # repo-settings' fleet.yml — the only one in that fleet), and a dispatch can
+  # standing constraint rather than an observation. `pytest-windows` becomes a
+  # REQUIRED status check on this repo's default branch once the repo-settings
+  # ruleset for it lands (declared in repo-settings' fleet.yml; until then this
+  # repo has no ruleset and nothing is required), and a dispatch can
   # re-fire on a head sha a PR is already using, producing a second run for the
   # same context + sha. That is only harmless while nothing can CANCEL one of
   # them: GitHub picks non-deterministically between a cancelled run and a
@@ -290,7 +291,7 @@ jobs:
           # consistency job above needs it. Do not shorten this.
           fetch-depth: 0
       # DOCS-ONLY EARLY SKIP, in-job on purpose. `pytest-windows` is a REQUIRED
-      # status check, so a `paths:` filter on the trigger would leave that
+      # status check once the repo-settings ruleset lands, so a `paths:` filter on the trigger would leave that
       # context missing — pending forever — on any PR the filter excludes;
       # test_ci_reports_on_every_pull_request guards the trigger, and this step
       # is where the salience decision is allowed to live instead. The check
@@ -408,9 +409,9 @@ jobs:
   # the ruleset in repo-settings is updated to match. This adds a context, it
   # renames none.
   #
-  # That hypothetical is now this job's own situation: `pytest-windows` IS a
-  # required status check on this repo's default branch (declared in
-  # repo-settings' fleet.yml, the only one in that fleet). So the job id below
+  # That hypothetical is this job's own situation: `pytest-windows` is a
+  # required status check on this repo's default branch once the repo-settings
+  # ruleset lands (declared in repo-settings' fleet.yml). So the job id below
   # is a published contract, and this job must stay free of anything that
   # renames its context — a `name:`, a `matrix` — or that could leave the
   # context unreported on a PR: a `paths:` filter on the trigger, or a

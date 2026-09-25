@@ -14,7 +14,7 @@ or by prompt, and leaves the per-OS keys alone.
 
 ## What shaped it
 
-- **Review [#170](https://github.com/Adam-S-Daniel/agentskills/issues/170)
+- **Review old-registry issue 170
   (2026-09).** Measured against fixtures and copies of real files, it found
   that the merge corrupted what it touched: one-element arrays became strings
   and empty arrays `null` (PowerShell unrolls an array returned by an `if`

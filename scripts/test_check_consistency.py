@@ -458,6 +458,57 @@ def test_no_symlink_error_for_an_ordinary_tree(plugins_dir):
     assert found == []
 
 
+# Built by concatenation, like the checker's own constant, so this file is not
+# itself a link into the retired registry.
+_OLD = "github.com/" + "Adam-S-Daniel/" + "agentskills"
+
+
+def _link_repo(tmp_path, text):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "doc.md").write_text(text, encoding="utf-8")
+    _git(tmp_path, "init", "-q", str(repo))
+    _git(repo, "add", "-A")
+    found = []
+    cc.check_no_retired_registry_links(found, repo_root=repo)
+    return found
+
+
+@pytest.mark.parametrize("url", [
+    "https://" + _OLD + "/issues/157",
+    "https://" + _OLD + "/pull/62",
+    "https://" + _OLD + "/blob/main/README.md",
+    "https://" + _OLD.upper(),
+    "git@" + _OLD.replace("github.com/", "github.com:") + ".git",
+    "https://" + _OLD + "-private/issues/3",
+])
+def test_a_link_into_the_retired_registry_is_reported(tmp_path, url):
+    found = _link_repo(tmp_path, "intro\nsee [#157](" + url + ") for why\n")
+    # The fixture repo is outside REPO_ROOT, so the location is absolute.
+    assert len(found) == 1, found
+    assert found[0].split(" ", 1)[0].replace("\\", "/").endswith("/doc.md:2"), found
+
+
+@pytest.mark.parametrize("text", [
+    "https://github.com/Adam-S-Daniel/adam-agentskills/issues/1\n",
+    "https://github.com/Adam-S-Daniel/adam-agentskills-private\n",
+    "see old-registry issue 157\n",
+    "https://agentskills.io/specification\n",
+])
+def test_the_new_registry_and_plain_text_references_pass(tmp_path, text):
+    assert _link_repo(tmp_path, text) == []
+
+
+def test_an_untracked_file_is_not_checked(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(tmp_path, "init", "-q", str(repo))
+    (repo / "scratch.md").write_text("https://" + _OLD + "/issues/1\n", encoding="utf-8")
+    found = []
+    cc.check_no_retired_registry_links(found, repo_root=repo)
+    assert found == []
+
+
 def test_a_skill_in_two_plugins_is_a_duplicate_basename(plugins_dir):
     write_skill(plugins_dir, "alpha", "one")
     write_skill(plugins_dir, "beta", "one")

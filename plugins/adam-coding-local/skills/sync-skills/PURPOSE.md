@@ -18,7 +18,7 @@ The upload needs a browser session on Adam's machine. ADR 0013's layout puts
 machine-bound coding skills in `adam-coding-local`; `adam-coding-anywhere` is
 the cloud-safe one.
 The `--verify`, `--record-account-state` and `--account-drift` halves are not
-machine-bound in the same way, which is the thread issue #157 pulled on.
+machine-bound in the same way, which is the thread old-registry issue #157 pulled on.
 
 ## The failure shapes it was hardened against
 
@@ -40,7 +40,7 @@ is the index.
 - **`..` as a skill name.** It resolved to the mirror's PARENT, rglobbed the
   tree above it, returned a payload and so counted as PRESENT — the guard
   produced the one verdict it exists to withhold.
-- **A moved mirror read as an empty account** — issue #157, the change this
+- **A moved mirror read as an empty account** — old-registry issue #157, the change this
   file arrived with. Claude Code 2.1.273+ buckets the mirror at
   `synced/<organizationUuid>_<accountUuid>/`; the flat path still resolved, to
   nothing, so `--verify` errored with a path no current CLI has and
@@ -50,7 +50,7 @@ is the index.
   everything above exists: a confident wrong answer costs more here than an
   error does.
 
-- **Refresh advice that could not work on either branch** — issue #158 and
+- **Refresh advice that could not work on either branch** — old-registry issue #158 and
   ADR 0010. `CLAUDE_CODE_SYNC_SKILLS=1 claude -p 'ok'` was the documented way
   to refresh the mirror. From CLI 2.1.273 a syncing terminal refreshes itself,
   making the line a no-op dressed as a prerequisite; and on a machine

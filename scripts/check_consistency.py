@@ -20,6 +20,8 @@ hardcoded):
     120000): every skill lives in exactly one plugin folder as a real
     directory (ADR 0013);
   - every plugins/*/skills/*/ directory contains a SKILL.md;
+  - no tracked file links to the retired registry, which is being made
+    private (ADR 0013) — see check_no_retired_registry_links;
   - if marketplace.json has a "renames" map ({old-name: new-name-or-null},
     append-only forever — users may update from any old version), every
     value is a string or null, and every chain of values terminates at an
@@ -244,6 +246,42 @@ def check_no_symlinks(errors: List[str], plugins_dir: Path = PLUGINS_DIR) -> Non
             f"{rel} is committed as a symlink (mode 120000); every skill lives in "
             "exactly one plugin folder as a real directory (ADR 0013)"
         )
+
+
+# The retired registry (ADR 0013), which is made private once consumers have
+# migrated: every link into it turns into a 404 for a public reader. Spelled
+# by concatenation so this file does not itself contain what it forbids.
+RETIRED_REGISTRY = "Adam-S-Daniel/" + "agentskills"
+_RETIRED_LINK_RE = re.compile(
+    r"github\.com[/:]" + re.escape(RETIRED_REGISTRY) + r"(?:-private)?(?![A-Za-z0-9_-])",
+    re.IGNORECASE,
+)
+
+
+def check_no_retired_registry_links(errors: List[str], repo_root: Path = REPO_ROOT) -> None:
+    """No tracked file links to the retired registry (or its old private
+    sibling). A reference to its history is written as plain text instead —
+    "old-registry issue 157" — and a link to one of this repo's own files is
+    a relative link."""
+    listing = _git_out(repo_root, "ls-files", "-z")
+    if listing is not None:
+        paths = [repo_root / raw.decode("utf-8", "replace")
+                 for raw in listing.split(b"\0") if raw]
+    else:  # outside git the filesystem is the only answer
+        paths = [p for p in sorted(repo_root.rglob("*"))
+                 if p.is_file() and ".git" not in p.relative_to(repo_root).parts]
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            continue
+        text = path.read_bytes().decode("utf-8", "replace")
+        for number, line in enumerate(text.splitlines(), start=1):
+            if _RETIRED_LINK_RE.search(line):
+                errors.append(
+                    f"{_rel(path)}:{number} links to the retired registry, which is "
+                    "being made private (ADR 0013); write the reference as plain text "
+                    "(e.g. 'old-registry issue 157'), or link this repo's own file "
+                    "relatively"
+                )
 
 
 def check_local_plugin_closed(name: str, errors: List[str], plugins_dir: Path = PLUGINS_DIR) -> None:
@@ -518,6 +556,7 @@ def main() -> None:
     errors: List[str] = []
     check_marketplace_entries(marketplace, errors)
     check_no_symlinks(errors)
+    check_no_retired_registry_links(errors)
     check_skill_md_present(errors)
     check_renames(marketplace, errors)
     check_unique_skill_basenames(errors)

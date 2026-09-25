@@ -127,8 +127,9 @@ it is enabled anywhere.
   and the retired `agentskills` registry's plugin names never existed here.
   Adding one would be a one-way door (Claude Code keeps following it,
   append-only), so do not add one to paper over a rename — do not rename.
-- After any plugin restructure, re-run `bash setup.sh` on every machine right
-  away. A stale global sync-skills pre-push hook keeps pointing at the old
+- After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
+  owner machine right away (a plain `bash setup.sh` only links skills and
+  registers no hook). A stale global sync-skills pre-push hook keeps pointing at the old
   plugin path and fails every `git push` from every repo until re-registered.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is base.md's "Prove the verifier can fail before you trust it" — the

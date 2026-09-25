@@ -54,6 +54,10 @@ Each skill lives in exactly one real directory; no plugin contains a symlink.
 | `adam-coding-local` | opt-in | sync-skills, sync-cc-settings-between-wsl-and-windows, launch-wsl-claude-session, migrate-claude-memory, windows-elevation-from-wsl | Claude Code on the owner's machines |
 | `adam-non-coding-local` | opt-in | ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs, fastmail, add-from-address, add-received-from-addresses | the Desktop app's local Cowork |
 
+> Later change (2026-09-25): `launch-wsl-claude-session` was renamed
+> `launch-top-level-claude-session` before it shipped; the table above is left
+> as decided.
+
 `cms-platform` stays a federated, opt-in marketplace entry sourced from
 `Adam-S-Daniel/cms-platform`. The private repo holds
 `adam-private-anything-anywhere`, which now carries `adam-writing-style`; that

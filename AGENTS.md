@@ -101,7 +101,12 @@ Skills are grouped into four plugins by audience and runtime —
 cloud-safe, default-enabled), `plugins/adam-coding-local/` and
 `plugins/adam-non-coding-local/` (machine-bound, opt-in) — each holding real
 `skills/<skill>/` dirs, never symlinks. Skill directory basenames must stay
-unique and never change (they key `setup.sh` symlinks and claude.ai uploads).
+unique and never change once a skill has shipped — uploaded to the claude.ai
+account store, or locked by a consumer `skills.lock` (they key `setup.sh`
+symlinks and claude.ai uploads). Before either, a rename is a reviewed change:
+`launch-wsl-claude-session` became `launch-top-level-claude-session` on
+2026-09-25, before it had been uploaded or locked; `setup.sh` removes the
+links it made for a skill that no longer exists.
 This marketplace has no `renames` map, so a plugin name is a one-way door once
 it is enabled anywhere.
 
@@ -200,7 +205,7 @@ it is enabled anywhere.
 
 - The irreversible surfaces in this repo are plugin names once enabled
   anywhere (there is no `renames` map to migrate them), skill directory
-  basenames (they key `setup.sh` symlinks and claude.ai uploads), and an upload to the claude.ai account
+  basenames once shipped (they key `setup.sh` symlinks and claude.ai uploads), and an upload to the claude.ai account
   store — which has no delete in the upload path (ADR 0002). A change that
   touches one of them gets an **independent adversarial round before merge**:
   a separately prompted agent whose job is to break the change, not to

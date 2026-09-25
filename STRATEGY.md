@@ -93,8 +93,9 @@ When a skill graduates:
    the matching `adam-private-*` plugin in `adam-agentskills-private` instead.
    No new plugin.json or marketplace entry is needed — the plugin already has
    both. Skill directory basenames must be unique across the repo and must
-   never change afterwards (they key `setup.sh` symlinks and claude.ai
-   uploads).
+   never change once the skill has shipped — uploaded to the claude.ai
+   account store, or locked by a consumer `skills.lock` (they key `setup.sh`
+   symlinks and claude.ai uploads).
 2. Creating a **new plugin** is the rare, deliberate exception — only for a
    combination of the naming scheme that has no plugin yet. It means a new
    `plugins/<plugin>/` folder with both manifests and a new marketplace

@@ -18,7 +18,9 @@
 param(
   [Parameter(Mandatory = $true)] [string] $Dir,   # WSL path, e.g. /home/<user>/repos/GHA-bench
   [string] $Prompt,                               # optional initial prompt -> initial-prompt mode
+  [string] $PromptFile,                           # optional WSL path; the session is told to read it
   [string] $Distro = 'Ubuntu',                    # WSL distro
+  [switch] $RemoteControl,                        # optional: adds --remote-control (no name)
   [string] $RemoteControlName,                    # optional: adds --remote-control <name>
   [switch] $NoWindowsTerminal,                    # fallback: bare wsl.exe (malformed TTY — avoid)
   [switch] $PrintArgs                             # test hook: print the final command line(s)
@@ -87,6 +89,16 @@ if (-not $claude) {
   exit 1
 }
 
+if ($Prompt -and $PromptFile) {
+  [Console]::Error.WriteLine('Pass -Prompt or -PromptFile, not both.')
+  exit 2
+}
+if ($PromptFile) {
+  # A long prompt travels as a path the session reads, not as argv text that
+  # wt.exe, Win32 quoting and wsl.exe each get a chance to re-split.
+  $Prompt = "Read the file $PromptFile and follow the instructions in it."
+}
+
 # Build the claude argument list.
 $claudeArgs = @()
 if ($RemoteControlName) { $claudeArgs += @('--remote-control', $RemoteControlName) }
@@ -102,6 +114,9 @@ else {
   $claudeArgs += @('--session-id', [guid]::NewGuid().ToString())
   $mode = 'session-id'
 }
+# `--remote-control [name]` takes an OPTIONAL value, so a bare flag goes LAST:
+# anywhere earlier it would swallow the prompt as the session's name.
+if ($RemoteControl -and -not $RemoteControlName) { $claudeArgs += '--remote-control' }
 
 # Give the new session the FULL login PATH (/snap/bin -> pwsh, ~/.bun/bin -> bun,
 # ~/.npm-global/bin, ~/.dotnet, ~/.local/bin, ...) so the agent's subprocesses don't fail
@@ -112,7 +127,14 @@ else {
 # so claude stays a direct child holding the ConPTY (like the working bare-claude launch).
 $loginPath = (wsl.exe -d $Distro -- bash -lic 'printf %s "$PATH"' 2>$null | Select-Object -First 1)
 $pathArg = if ($loginPath) { "PATH=$loginPath" } else { "PATH=$env:PATH" }
-$wslArgs = @('-d', $Distro, '--cd', $Dir, '--', 'env', $pathArg, $claude) + $claudeArgs
+# The same `env` also clears CLAUDE_CODE_CHILD_SESSION and sets
+# CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1, in the launched process itself: a
+# claude started from another Claude Code session's shell tool inherits the
+# child marker, is classified as nested, and is left out of --resume,
+# --continue, history and `claude agents`. Never rely on the parent's
+# environment for this - WSLENV or Windows Terminal decide what crosses.
+$wslArgs = @('-d', $Distro, '--cd', $Dir, '--', 'env', '-u', 'CLAUDE_CODE_CHILD_SESSION',
+  'CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1', $pathArg, $claude) + $claudeArgs
 
 if ($NoWindowsTerminal) {
   # Bare wsl.exe gets a malformed TTY; initial-prompt sessions exit immediately here.

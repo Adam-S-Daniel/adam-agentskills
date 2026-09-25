@@ -333,6 +333,33 @@ sweep_retired_homes() {
   done
 }
 
+# sweep_orphan_links <home-skills-dir> — remove the links this script made for
+# a skill that no longer exists under plugins/*/skills/ (renamed or removed —
+# e.g. launch-wsl-claude-session -> launch-top-level-claude-session). link_one
+# only ever repairs the link at a CURRENT skill's name, so without this an old
+# name's link would dangle in every agent home forever. Same conservative rule
+# as sweep_retired_homes: only a link whose target lies under $PLUGINS_DIR and
+# no longer exists is removed; a real file or directory, a link pointing
+# anywhere else, or a live link into plugins/ is left alone.
+sweep_orphan_links() {
+  local dir="$1" link target
+  [[ -d "$dir" ]] || return 0
+  for link in "$dir"/*; do
+    target="$(retired_link_target "$link")" || continue
+    case "$target" in
+      "$PLUGINS_DIR"/*) ;;
+      *) continue ;;
+    esac
+    [[ -e "$target" ]] && continue
+    if [[ "$PLATFORM" = "windows" ]]; then
+      win_remove_link "$link"
+    else
+      rm "$link"
+    fi
+    echo "  UNLINK   $(basename "$link") (skill no longer in plugins/)"
+  done
+}
+
 dedup_claude_code_dir() {
   local cc="$HOME/.claude/skills"
   migrate_legacy "$cc"            # legacy whole-directory link at ~/.claude/skills
@@ -362,6 +389,7 @@ for rel in "${HOMES[@]}"; do
   echo "=== $home_skills ==="
   migrate_legacy "$home_skills"
   mkdir -p "$home_skills"
+  sweep_orphan_links "$home_skills"
   for sd in "${SKILL_DIRS[@]}"; do
     link_one "$home_skills/$(basename "$sd")" "$sd"
   done

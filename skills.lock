@@ -1,6 +1,6 @@
 {
   "registry": "Adam-S-Daniel/adam-agentskills",
-  "ref": "559ceb7fea5b0875511dfeb3eae4907823427d7e",
+  "ref": "b5f4eb0151c78bb6c43006307522669b0513a21b",
   "bundles": [
     "adam-anything-anywhere",
     "adam-coding-anywhere"
@@ -13,7 +13,8 @@
     "adam-coding-anywhere/github-actions-repo-settings": "sha256:31f3ec7dc4ed2132c4fd6651cc534f66c744c24e760616488fece8ad54c74aeb",
     "adam-coding-anywhere/review-bash-ci-reliability": "sha256:1e1c2993689cfe79b6f1345de09101ff7d3b4b902a34ae5b458ee86e3f28f8b9",
     "adam-coding-anywhere/skills-doctor": "sha256:0c7f9ada7d2a68ca5af8e9c6d09e55bc0df779855181989acc0c253a06542cd0",
+    "adam-coding-anywhere/vendor-release-impact-issues": "sha256:b7bc6f17c002a05b5c5c517ddf598c717820ef808d5d240a5e8e9d6e68a7c426",
     "adam-coding-anywhere/workflow-path-audit": "sha256:8a7c57bcd890bbab38c42473d8705f0b2521954385f03bf5289e3ec84d3fcdde"
   },
-  "generated_from": "559ceb7fea5b0875511dfeb3eae4907823427d7e"
+  "generated_from": "b5f4eb0151c78bb6c43006307522669b0513a21b"
 }

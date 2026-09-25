@@ -40,7 +40,9 @@ here.
 
 from __future__ import annotations
 
+import base64
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -74,8 +76,19 @@ TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 # launch-wsl-claude.sh
 # ---------------------------------------------------------------------------
 
-def _make_executable_stub(path: Path) -> None:
-    path.write_text("#!/usr/bin/env bash\necho stub\n")
+# A stub claude that reports the two session-persistence variables and its
+# argv, so a test can EXECUTE the launched command and see what the new
+# session's process would really get.
+_ENV_REPORTING_CLAUDE_SH = (
+    "#!/usr/bin/env bash\n"
+    'echo "CHILD=[${CLAUDE_CODE_CHILD_SESSION-unset}]"\n'
+    'echo "FORCE=[${CLAUDE_CODE_FORCE_SESSION_PERSISTENCE-unset}]"\n'
+    "printf 'ARG:%s\\n' \"$@\"\n"
+)
+
+
+def _make_executable_stub(path: Path, body: str = "#!/usr/bin/env bash\necho stub\n") -> None:
+    path.write_text(body, newline="\n")
     mode = path.stat().st_mode
     path.chmod(mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -92,7 +105,7 @@ def sh_argv(tmp_path):
     home_dir = tmp_path / "home"
     bin_dir.mkdir()
     home_dir.mkdir()
-    _make_executable_stub(bin_dir / "claude")
+    _make_executable_stub(bin_dir / "claude", _ENV_REPORTING_CLAUDE_SH)
     _make_executable_stub(bin_dir / "wt.exe")
     # `bash -lic` (used by the script to capture the login PATH) is an
     # interactive login shell: without these it either prints a "no
@@ -134,6 +147,16 @@ def sh_argv(tmp_path):
             raise AssertionError(proc.stdout + proc.stderr)
         return proc.stdout.splitlines()
 
+    def raw(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [BASH, str(SH_SCRIPT), *args],
+            env=env, capture_output=True, timeout=30, **TEXT,
+        )
+
+    run.raw = raw
+    run.env = env
+    run.bin_dir = bin_dir
+    run.tmp = tmp_path
     return run
 
 
@@ -172,6 +195,69 @@ def test_sh_dir_is_passed_through_as_a_single_arg(sh_argv):
     assert argv[argv.index("--cd") + 1] == "/home/x/repo"
 
 
+# Session persistence: a claude launched from a Claude Code tool shell inherits
+# CLAUDE_CODE_CHILD_SESSION=1 and is classified as nested (no --resume, no
+# history, no `claude agents`). The launched process must clear it and force
+# persistence itself.
+
+_PERSIST = ["env", "-u", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1"]
+
+
+def test_sh_launched_env_clears_child_marker_and_forces_persistence(sh_argv):
+    argv = sh_argv("--dir", "/home/x/repo", "--prompt", "hi")
+    i = argv.index("--")
+    assert argv[i + 1 : i + 5] == _PERSIST
+    assert argv[i + 5].startswith("PATH=")
+    # claude is handed over as a resolved, absolute path, never bare.
+    claude = argv[i + 6]
+    assert claude.startswith("/") and claude.endswith("/claude")
+
+
+def test_sh_launched_command_really_runs_without_the_child_marker(sh_argv):
+    if sys.platform.startswith("win"):
+        pytest.skip("executes the WSL-side argv; needs a POSIX userland")
+    argv = sh_argv("--dir", "/home/x/repo", "--prompt", "stand by")
+    launched = argv[argv.index("--") + 1 :]
+    env = dict(sh_argv.env, CLAUDE_CODE_CHILD_SESSION="1")
+    env.pop("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", None)
+    proc = subprocess.run(launched, env=env, capture_output=True, timeout=30, **TEXT)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    lines = proc.stdout.splitlines()
+    assert "CHILD=[unset]" in lines
+    assert "FORCE=[1]" in lines
+    assert lines[-1] == "ARG:stand by"
+
+
+def test_sh_bare_remote_control_goes_after_the_prompt(sh_argv):
+    argv = sh_argv("--dir", "/home/x/repo", "--remote-control", "--prompt", "stand by")
+    # Before the prompt it would take the prompt as its optional name.
+    assert argv[-2:] == ["stand by", "--remote-control"]
+
+
+def test_sh_remote_control_with_a_name(sh_argv):
+    argv = sh_argv("--dir", "/home/x/repo", "--remote-control", "rc-one", "--prompt", "hi")
+    idx = argv.index("--remote-control")
+    assert argv[idx + 1] == "rc-one"
+    assert argv[-1] == "hi"
+    assert argv.count("--remote-control") == 1
+
+
+def test_sh_prompt_file_becomes_an_instruction_to_read_it(sh_argv):
+    handoff = sh_argv.tmp / "handoff.md"
+    handoff.write_text("a long prompt; with \"quotes\" and 'more'\n")
+    argv = sh_argv("--dir", "/home/x/repo", "--prompt-file", str(handoff))
+    assert argv[-1].startswith("Read the file ")
+    assert argv[-1].endswith("handoff.md and follow the instructions in it.")
+    assert not any("long prompt" in a for a in argv)
+
+
+def test_sh_prompt_and_prompt_file_are_mutually_exclusive(sh_argv):
+    handoff = sh_argv.tmp / "handoff.md"
+    handoff.write_text("x\n")
+    proc = sh_argv.raw("--dir", "/home/x/repo", "--prompt", "hi", "--prompt-file", str(handoff))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+
+
 # ---------------------------------------------------------------------------
 # launch-wsl-claude.ps1
 # ---------------------------------------------------------------------------
@@ -188,7 +274,9 @@ _WRAPPER_PS1 = textwrap.dedent(
     param(
       [string] $Dir,
       [string] $Prompt,
+      [string] $PromptFile,
       [string] $Distro = 'Ubuntu',
+      [switch] $RemoteControl,
       [string] $RemoteControlName,
       [switch] $NoWindowsTerminal,
       [switch] $PrintArgs
@@ -293,3 +381,204 @@ def test_ps1_no_windows_terminal_fallback_does_not_escape_semicolons(ps1_argv):
     )
     assert cmdline.endswith("a;b")
     assert r"a\;b" not in cmdline
+
+
+_PS1_PERSIST = " -- env -u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 PATH="
+
+
+@pytest.mark.parametrize("extra", [[], ["-NoWindowsTerminal"]])
+def test_ps1_launched_env_clears_child_marker_and_forces_persistence(ps1_argv, extra):
+    cmdline = ps1_argv("-Dir", "/home/x/repo", "-Prompt", "hi", *extra, "-PrintArgs")
+    assert _PS1_PERSIST in cmdline
+    # claude follows the PATH assignment as its resolved absolute path.
+    after = cmdline.split(_PS1_PERSIST, 1)[1]
+    assert " /fake/claude/bin/claude " in after
+
+
+def test_ps1_bare_remote_control_goes_after_the_prompt(ps1_argv):
+    cmdline = ps1_argv("-Dir", "/home/x/repo", "-Prompt", "stand by", "-RemoteControl", "-PrintArgs")
+    assert cmdline.endswith('"stand by" --remote-control')
+
+
+def test_ps1_prompt_file_becomes_an_instruction_to_read_it(ps1_argv):
+    cmdline = ps1_argv("-Dir", "/home/x/repo", "-PromptFile", "/home/x/handoff.md", "-PrintArgs")
+    assert cmdline.endswith('"Read the file /home/x/handoff.md and follow the instructions in it."')
+
+
+# ---------------------------------------------------------------------------
+# launch-claude-session.ps1 — native Windows Terminal tab
+# ---------------------------------------------------------------------------
+#
+# Run for real under pwsh with -PrintArgs: line 1 is the wt.exe command line,
+# the rest is the script the tab's shell runs. That script travels to wt as
+# -EncodedCommand (UTF-16LE base64), so the tests decode it from the command
+# line itself and check it matches — then EXECUTE it against a stub claude
+# found first on PATH, so the environment assertions are about what a real
+# process gets, not about text.
+
+NATIVE_PS1 = SKILL_DIR / "scripts" / "launch-claude-session.ps1"
+WINDOWS_POWERSHELL = shutil.which("powershell") if sys.platform.startswith("win") else None
+
+
+def _write_claude_stub(bin_dir: Path) -> Path:
+    if sys.platform.startswith("win"):
+        stub = bin_dir / "claude.cmd"
+        stub.write_text(
+            "@echo off\r\n"
+            "echo CHILD=[%CLAUDE_CODE_CHILD_SESSION%]\r\n"
+            "echo FORCE=[%CLAUDE_CODE_FORCE_SESSION_PERSISTENCE%]\r\n",
+            newline="",
+        )
+        return stub
+    stub = bin_dir / "claude"
+    _make_executable_stub(stub, _ENV_REPORTING_CLAUDE_SH)
+    return stub
+
+
+def _decode_encoded_command(cmdline: str) -> str:
+    tokens = cmdline.split()
+    b64 = tokens[tokens.index("-EncodedCommand") + 1]
+    return base64.b64decode(b64).decode("utf-16-le")
+
+
+@pytest.fixture()
+def native(tmp_path):
+    if not PWSH:
+        pytest.skip("pwsh (PowerShell 7+) is not on PATH")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    stub = _write_claude_stub(bin_dir)
+    work = tmp_path / "work dir"
+    work.mkdir()
+    env = dict(os.environ)
+    env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
+    env.pop("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", None)
+
+    class Native:
+        pass
+
+    n = Native()
+    n.tmp, n.stub, n.work, n.env = tmp_path, stub, work, env
+
+    def raw(*args: str, shell: list[str] | None = None) -> subprocess.CompletedProcess:
+        cmd = (shell or [PWSH, "-NoProfile", "-File"]) + [str(NATIVE_PS1), *args]
+        return subprocess.run(cmd, env=env, capture_output=True, timeout=60, **TEXT)
+
+    def run(*args: str, shell: list[str] | None = None) -> tuple[str, str]:
+        proc = raw(*args, "-PrintArgs", shell=shell)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        lines = proc.stdout.splitlines()
+        cmdline, script = lines[0], "\n".join(lines[1:]).strip()
+        assert _decode_encoded_command(cmdline) == script
+        return cmdline, script
+
+    n.raw, n.run = raw, run
+    return n
+
+
+def _call_line(script: str) -> str:
+    return [ln for ln in script.splitlines() if ln.startswith("& ")][-1]
+
+
+def test_native_wt_command_opens_a_tab_in_the_directory(native):
+    cmdline, _ = native.run("-Dir", str(native.work))
+    assert cmdline.startswith("new-tab -d ")
+    assert "work dir" in cmdline
+    assert " -NoExit -EncodedCommand " in cmdline
+
+
+def test_native_tab_script_clears_child_marker_then_forces_persistence(native):
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "hi")
+    lines = script.splitlines()
+    clear = lines.index("Remove-Item -Path Env:CLAUDE_CODE_CHILD_SESSION -ErrorAction SilentlyContinue")
+    force = lines.index("$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'")
+    call = lines.index(_call_line(script))
+    assert clear < call and force < call
+    assert lines[call - 1].startswith("Set-Location -LiteralPath '")
+    assert lines[call - 1].endswith("work dir'")
+
+
+def test_native_claude_is_a_resolved_full_path(native):
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "hi")
+    call = _call_line(script)
+    resolved = call[len("& '"):].split("'", 1)[0]
+    assert os.path.isabs(resolved)
+    assert os.path.samefile(resolved, native.stub)
+
+
+def test_native_tab_script_really_runs_without_the_child_marker(native):
+    cmdline, _ = native.run("-Dir", str(native.work), "-Prompt", "stand by; it's fine")
+    b64 = cmdline.split()[cmdline.split().index("-EncodedCommand") + 1]
+    env = dict(native.env, CLAUDE_CODE_CHILD_SESSION="1")
+    proc = subprocess.run(
+        [PWSH, "-NoProfile", "-NonInteractive", "-EncodedCommand", b64],
+        env=env, capture_output=True, timeout=60, **TEXT,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    lines = proc.stdout.splitlines()
+    assert any(ln in ("CHILD=[]", "CHILD=[unset]") for ln in lines), proc.stdout
+    assert "FORCE=[1]" in lines
+    if not sys.platform.startswith("win"):
+        # The whole prompt, quote and ';' included, is ONE argv element.
+        assert lines[-1] == "ARG:stand by; it's fine"
+
+
+def test_native_prompt_is_one_quoted_literal(native):
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "it's; a test")
+    assert _call_line(script).endswith(" 'it''s; a test'")
+
+
+def test_native_without_a_prompt_opens_by_session_id(native):
+    _, script = native.run("-Dir", str(native.work))
+    assert re.search(r" '--session-id' '[0-9a-f-]{36}'$", _call_line(script))
+
+
+def test_native_bare_remote_control_goes_after_the_prompt(native):
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "stand by", "-RemoteControl")
+    assert _call_line(script).endswith(" 'stand by' '--remote-control'")
+
+
+def test_native_remote_control_with_a_name(native):
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "hi", "-RemoteControlName", "rc-one")
+    call = _call_line(script)
+    assert " '--remote-control' 'rc-one' 'hi'" in call
+    assert call.count("--remote-control") == 1
+
+
+def test_native_prompt_file_becomes_an_instruction_to_read_it(native):
+    handoff = native.tmp / "handoff.md"
+    handoff.write_text("a long prompt; with \"quotes\" and 'more'\n")
+    _, script = native.run("-Dir", str(native.work), "-PromptFile", str(handoff))
+    call = _call_line(script)
+    assert call.endswith("handoff.md and follow the instructions in it.'")
+    assert "' 'Read the file " in call
+    assert "long prompt" not in script
+
+
+def test_native_semicolon_in_dir_is_escaped_for_wt(native):
+    odd = native.tmp / "a;b"
+    odd.mkdir()
+    cmdline, script = native.run("-Dir", str(odd))
+    assert "a\\;b" in cmdline
+    # The tab script is not re-parsed by wt, so it keeps the real name.
+    assert "a;b'" in script and "a\\;b" not in script
+
+
+def test_native_prompt_and_prompt_file_are_mutually_exclusive(native):
+    handoff = native.tmp / "handoff.md"
+    handoff.write_text("x\n")
+    proc = native.raw("-Dir", str(native.work), "-Prompt", "hi", "-PromptFile", str(handoff))
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+
+
+def test_native_missing_directory_fails_before_launching(native):
+    proc = native.raw("-Dir", str(native.tmp / "nope"), "-PrintArgs")
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "new-tab" not in proc.stdout
+
+
+@pytest.mark.skipif(not WINDOWS_POWERSHELL, reason="Windows PowerShell 5.1 is Windows-only")
+def test_native_runs_under_windows_powershell_5_1(native):
+    shell = [WINDOWS_POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
+    _, script = native.run("-Dir", str(native.work), "-Prompt", "hi", shell=shell)
+    assert "$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'" in script.splitlines()

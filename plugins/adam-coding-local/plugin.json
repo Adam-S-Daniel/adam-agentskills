@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "adam-coding-local",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Adam's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows homes): skill sync, Claude Code settings, session and memory management, and elevation from WSL.",
   "author": { "name": "Adam Daniel" },
   "repository": "https://github.com/Adam-S-Daniel/adam-agentskills",

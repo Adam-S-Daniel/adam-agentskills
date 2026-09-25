@@ -40,6 +40,24 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-25 — adam-coding-local/launch-wsl-claude-session — edit
+
+- Motivation: a "new top-level session" launched from Claude's own shell tool
+  inherited `CLAUDE_CODE_CHILD_SESSION=1` and was classified as nested —
+  excluded from `--resume`, history and `claude agents`, transcript unsaved;
+  and a new `wt.exe` tab could not find bare `claude` (`0x80070002`).
+- Change: every launcher (new native `scripts/launch-claude-session.ps1`,
+  plus both WSL launchers) clears `CLAUDE_CODE_CHILD_SESSION` and sets
+  `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` in the launched process, runs
+  claude by a runtime-resolved full path, and supports a bare or named
+  `--remote-control` and `--prompt-file`; SKILL.md description broadened to
+  "start a new Claude Code session" requests, with a verify-via-`--resume`
+  step. `adam-coding-local` bumped to 1.1.0.
+- Eval: exempt (DESIGN.md non-coverage table: `launch-wsl-claude-session`,
+  "defer", machine-bound). Script behaviour is covered by pytest dry-run and
+  execute-the-tab-script tests in the skill's `tests/`.
+- Outcome: pending merge.
+
 ## 2026-09-24 — adam-coding-anywhere/skills-doctor, adam-coding-local/sync-skills, adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
 
 - Motivation: the retired registry is being made private, so every link into

@@ -1,49 +1,81 @@
 ---
 name: launch-wsl-claude-session
 description: >-
-  Launch a detached, interactive Claude Code session inside WSL from a Windows
-  Claude Code session — in a specific repo/folder, optionally remote-controllable
-  and optionally seeded with an initial prompt. Use this WHENEVER the user wants
-  to open / launch / spawn / start / fire off a separate (or background, detached,
-  standalone, "and ignore it") Claude session in WSL, in a given directory,
-  especially so it shows up in their remote Claude sessions list, even if they
-  don't name every detail. It handles the Windows→WSL launch quirks that silently
-  break naive attempts: ConPTY via Windows Terminal, PowerShell path passing,
-  session-id vs initial-prompt openers, prompt quoting, and the workspace-trust gate.
+  Launch a new, top-level, interactive Claude Code session in a new Windows
+  Terminal tab — native Windows or inside WSL — in a chosen folder, optionally
+  remote-controllable and optionally seeded with an initial prompt or a handoff
+  file. Use this WHENEVER the user asks to start / open / launch / spawn a new
+  (top-level, separate, fresh, detached, background) Claude Code session, hand
+  off to a fresh session, or launch Claude in a new terminal, tab or window, on
+  Windows or in WSL, even if they don't name every detail. It clears the
+  nested-session marker a launch from Claude's own shell tool would inherit (so
+  the session is saved and shows in --resume), resolves claude's full path, and
+  handles the quirks that silently break naive attempts: ConPTY via Windows
+  Terminal, wt.exe's ';' splitting, prompt quoting, session-id vs initial-prompt
+  openers, and the workspace-trust gate.
 compatibility: >-
-  Requires a Windows PC with WSL and Windows Terminal. Works whether Claude runs on the
-  Windows host (via PowerShell) or inside the WSL distro (via bash + Windows interop).
-  Not applicable on Claude.ai web, the mobile app, headless/remote sandboxes, macOS, or
-  plain Linux without Windows underneath.
+  Requires a Windows PC with Windows Terminal (and WSL for the WSL launchers). Works
+  whether Claude runs on the Windows host (via PowerShell) or inside the WSL distro
+  (via bash + Windows interop). Not applicable on Claude.ai web, the mobile app,
+  headless/remote sandboxes, macOS, or plain Linux without Windows underneath.
 ---
 
-# Launch a detached Claude session in WSL
+# Launch a new top-level Claude Code session (Windows Terminal tab or WSL)
 
 ## Environment requirement (read first)
 
-This skill only applies on a **Windows PC that has WSL** — and it works the same
-whether the Claude you're using right now is running **on the Windows host** or
-**inside that WSL distro**. Either way the result is identical: a new interactive
-Claude session in the chosen WSL directory.
+This skill only applies on a **Windows PC with Windows Terminal** (plus WSL for a WSL
+session) — and it works the same whether the Claude you're using right now is running
+**on the Windows host** or **inside a WSL distro**. The result is a new interactive,
+top-level Claude session in the chosen directory, native or in WSL.
 
-It does **not** apply, and you should not use it, when there's no local Windows+WSL to
+It does **not** apply, and you should not use it, when there's no local Windows to
 drive: Claude.ai web, the mobile app, a remote/headless sandbox, a Mac, or a plain
 Linux box without Windows underneath. In those environments, stop and tell the user the
-skill needs a Windows machine with WSL.
+skill needs a Windows machine.
 
-**Pick the launcher for your host:**
-- **Claude running on Windows** (PowerShell available; platform is `win32`) → use
+**Pick the launcher for where the NEW session should run:**
+- **A native Windows session** (a Windows folder like `C:\src\example-repo`), launched
+  from Windows PowerShell or pwsh → `scripts\launch-claude-session.ps1`. It opens
+  `wt.exe new-tab -d <dir> <pwsh|powershell> ...` and runs claude there.
+- **A WSL session, Claude running on Windows** (platform `win32`) →
   `scripts\launch-wsl-claude.ps1`.
-- **Claude running inside WSL / Linux** (bash; `/proc/version` mentions `microsoft`) →
-  use `scripts/launch-wsl-claude.sh`.
+- **A WSL session, Claude running inside WSL / Linux** (`/proc/version` mentions
+  `microsoft`) → `scripts/launch-wsl-claude.sh`.
 
-Both scripts produce the same window via the same underlying command
-(`wt.exe wsl.exe --cd <dir> -- <claude> ...`); they differ only in how the host shell
-spawns it.
+The two WSL scripts produce the same window via the same underlying command
+(`wt.exe wsl.exe --cd <dir> -- env ... <claude> ...`); they differ only in how the host
+shell spawns it.
+
+## Why the environment is set (every launcher does this)
+
+When you launch from your own Bash/PowerShell tool, that shell carries
+`CLAUDE_CODE_CHILD_SESSION=1`, and a `claude` started from it inherits it. The
+[env-vars reference](https://code.claude.com/docs/en/env-vars) says of
+`CLAUDE_CODE_CHILD_SESSION`: *"A nested interactive claude TUI started this way is
+automatically excluded from --resume, --continue, up-arrow history, and the claude agents
+list… Set CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 to override"*; and of
+`CLAUDE_CODE_FORCE_SESSION_PERSISTENCE`: *"Set to 1 to force transcript persistence,
+prompt history, and claude agents registration even when this claude was launched from
+inside another Claude Code session…"*. Left alone, the "new top-level session" the user
+asked for is a nested one whose transcript is not saved.
+
+So each launcher, **in the launched process itself**, removes `CLAUDE_CODE_CHILD_SESSION`
+and sets `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` — never relying on the parent's
+environment, because Windows Terminal may give a new tab its own environment and WSL
+passes only what `WSLENV` names:
+
+- native tab: the tab's shell runs `Remove-Item -Path Env:CLAUDE_CODE_CHILD_SESSION`
+  then `$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'` before `& '<full path to claude>'`;
+- WSL: `wsl.exe ... -- env -u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 PATH=... <claude>`.
+
+Every launcher also runs claude by its **full path, resolved at launch time**
+(`Get-Command claude` on Windows, `command -v claude` in WSL) — a new `wt.exe` tab could
+not find bare `claude` (error `0x80070002`). Never hard-code a user's home path.
 
 ## What this does
 
-Opens a new terminal window running an **interactive** `claude` session inside WSL,
+Opens a new terminal window or tab running an **interactive** `claude` session (native or in WSL),
 rooted at a directory you choose, and leaves it running for the user to drive (or to
 control remotely from the Claude mobile/web app). The session is independent — it
 shares no context with the current one.
@@ -60,7 +92,27 @@ Two ways to open the session:
 
 ## The fastest path: use the bundled script
 
-**On a Windows host** (PowerShell):
+**A native Windows session in a new Windows Terminal tab** (PowerShell 7 or Windows
+PowerShell 5.1):
+
+```powershell
+# Default (session-id opener), in a folder:
+& "<skill-dir>\scripts\launch-claude-session.ps1" -Dir C:\src\example-repo
+
+# Hand off a long task: write it to a file, and the session is told to read it.
+& "<skill-dir>\scripts\launch-claude-session.ps1" -Dir C:\src\example-repo -PromptFile C:\src\example-repo\handoff.md -RemoteControl
+
+# Dry run: print the wt.exe command line and the tab's script, launch nothing.
+& "<skill-dir>\scripts\launch-claude-session.ps1" -Dir C:\src\example-repo -Prompt "Stand by." -PrintArgs
+```
+
+Parameters: `-Dir` (Windows path; default the current directory), `-Prompt` or
+`-PromptFile` (not both), `-RemoteControl` (bare `--remote-control`) or
+`-RemoteControlName <name>`, `-Shell` (default `pwsh`, else `powershell`), `-PrintArgs`.
+The tab's script travels as `-EncodedCommand`, so no prompt text passes through
+`wt.exe`'s tokenizer.
+
+**A WSL session, from a Windows host** (PowerShell):
 
 ```powershell
 # Default (session-id opener):
@@ -70,11 +122,12 @@ Two ways to open the session:
 & "<skill-dir>\scripts\launch-wsl-claude.ps1" -Dir /home/<user>/repos/GHA-bench -Prompt "Stand by for instructions."
 ```
 
-Parameters: `-Dir` (required, the **WSL** path), `-Prompt` (optional initial prompt),
-`-Distro` (default `Ubuntu`), `-RemoteControlName` (optional, adds `--remote-control <name>`),
-`-NoWindowsTerminal` (switch; avoid — see the ConPTY gotcha).
+Parameters: `-Dir` (required, the **WSL** path), `-Prompt` (optional initial prompt) or
+`-PromptFile` (a **WSL** path the session is told to read), `-Distro` (default `Ubuntu`),
+`-RemoteControl` (bare `--remote-control`) or `-RemoteControlName <name>`,
+`-NoWindowsTerminal` (switch; avoid — see the ConPTY gotcha), `-PrintArgs` (dry run).
 
-**Inside WSL / Linux** (bash) — same behavior, flag-style args:
+**A WSL session, from inside WSL / Linux** (bash) — same behavior, flag-style args:
 
 ```bash
 # Default (session-id opener):
@@ -84,12 +137,34 @@ bash "<skill-dir>/scripts/launch-wsl-claude.sh" --dir /home/<user>/repos/GHA-ben
 bash "<skill-dir>/scripts/launch-wsl-claude.sh" --dir /home/<user>/repos/GHA-bench --prompt "Stand by for instructions."
 ```
 
-Args: `--dir` (required), `--prompt` (optional), `--distro` (default `Ubuntu`),
-`--remote-control-name` (optional).
+Args: `--dir` (required), `--prompt` or `--prompt-file <path>` (optional, not both),
+`--distro` (default `Ubuntu`), `--remote-control [name]` (name optional; or
+`--remote-control-name <name>`). `LAUNCH_WSL_CLAUDE_DRY_RUN=1` prints the argv instead.
 
-Both scripts resolve the `claude` binary path, generate the session UUID, pass an
-initial prompt as a single argument (so the quoting is always correct), and launch a
-Windows Terminal window — so you don't have to reconstruct any of it by hand.
+All three scripts resolve the `claude` binary path, set the session environment (above),
+generate the session UUID, pass an initial prompt as a single argument (so the quoting is
+always correct), and launch a Windows Terminal window or tab — so you don't have to
+reconstruct any of it by hand.
+
+**Prefer `--prompt-file` / `-PromptFile` for anything longer than a sentence.** Write the
+handoff to a file; the session's first message becomes *"Read the file <path> and follow
+the instructions in it."* A long prompt on the command line is where quoting breaks.
+
+A bare `--remote-control` goes **last** on claude's command line: it takes an optional
+name, so placed before the prompt it would swallow the prompt as that name. The scripts
+order it for you.
+
+## Verify the session is persisted (do this, then tell the user)
+
+After the launch, confirm the new session is a real top-level one:
+
+1. In the new tab, the session should start normally (no trust dialog left waiting).
+2. From a **fresh** terminal (not one of your tool shells, which carry the child marker)
+   in the same directory, run `claude --resume`: the new session must be in the list once
+   it has had its first message. `claude agents` should also show it while it runs.
+3. Tell the user how to check it themselves: "open a new terminal in `<dir>` and run
+   `claude --resume` — the session should be listed." If it is missing, the child marker
+   leaked: re-check the launched command with `-PrintArgs` / `LAUNCH_WSL_CLAUDE_DRY_RUN=1`.
 
 ## Prerequisites (check these — they cause silent failures)
 
@@ -160,26 +235,40 @@ the script encodes them:
 
 ## Manual one-liners (fallback if the script isn't available)
 
+Native Windows tab (PowerShell) — the tab's shell clears the marker itself:
+
+```powershell
+$claude = (Get-Command claude -CommandType Application | Select-Object -First 1).Source
+$tab = "Remove-Item Env:CLAUDE_CODE_CHILD_SESSION -ErrorAction SilentlyContinue`n" +
+       "`$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'`n& '$claude' --session-id $([guid]::NewGuid())"
+$enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($tab))
+Start-Process wt.exe -ArgumentList "new-tab -d `"C:\src\example-repo`" pwsh -NoExit -EncodedCommand $enc"
+```
+
+WSL, from a Windows host (PowerShell):
+
 ```powershell
 # Default — new session by id:
 $sid = [guid]::NewGuid().ToString()
 $claude = (wsl.exe -d Ubuntu -- bash -lc 'command -v claude').Trim()
-Start-Process wt.exe -ArgumentList @('wsl.exe','-d','Ubuntu','--cd','/home/<user>/repos/GHA-bench','--',$claude,'--session-id',$sid)
+Start-Process wt.exe -ArgumentList @('wsl.exe','-d','Ubuntu','--cd','/home/<user>/repos/GHA-bench','--','env','-u','CLAUDE_CODE_CHILD_SESSION','CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',$claude,'--session-id',$sid)
 
 # Initial-prompt — note the prompt is a single quoted argument:
 $claude = (wsl.exe -d Ubuntu -- bash -lc 'command -v claude').Trim()
-Start-Process wt.exe -ArgumentList @('wsl.exe','-d','Ubuntu','--cd','/home/<user>/repos/GHA-bench','--',$claude,'Stand by for instructions.')
+Start-Process wt.exe -ArgumentList @('wsl.exe','-d','Ubuntu','--cd','/home/<user>/repos/GHA-bench','--','env','-u','CLAUDE_CODE_CHILD_SESSION','CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',$claude,'"Stand by for instructions."')
 ```
 
 Inside WSL / Linux (bash, via Windows interop):
 
 ```bash
 # Default — new session by id:
-wt.exe wsl.exe -d Ubuntu --cd /home/<user>/repos/GHA-bench -- "$(command -v claude)" \
+wt.exe wsl.exe -d Ubuntu --cd /home/<user>/repos/GHA-bench -- env -u CLAUDE_CODE_CHILD_SESSION \
+  CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 "$(command -v claude)" \
   --session-id "$(cat /proc/sys/kernel/random/uuid)" &
 
 # Initial-prompt — the whole prompt is a single quoted argument:
-wt.exe wsl.exe -d Ubuntu --cd /home/<user>/repos/GHA-bench -- "$(command -v claude)" \
+wt.exe wsl.exe -d Ubuntu --cd /home/<user>/repos/GHA-bench -- env -u CLAUDE_CODE_CHILD_SESSION \
+  CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 "$(command -v claude)" \
   "Stand by for instructions." &
 ```
 

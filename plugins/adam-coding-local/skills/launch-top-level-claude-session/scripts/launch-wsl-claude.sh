@@ -10,17 +10,31 @@
 #   ./launch-wsl-claude.sh --dir /home/<user>/repos/GHA-bench --prompt "Stand by for instructions."
 set -euo pipefail
 
-DIR=""; PROMPT=""; DISTRO="Ubuntu"; RC_NAME=""
+DIR=""; PROMPT=""; PROMPT_FILE=""; DISTRO="Ubuntu"; RC_NAME=""; RC_BARE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --dir)                 DIR="$2"; shift 2;;
     --prompt)              PROMPT="$2"; shift 2;;
+    --prompt-file)         PROMPT_FILE="$2"; shift 2;;
     --distro)              DISTRO="$2"; shift 2;;
     --remote-control-name) RC_NAME="$2"; shift 2;;
+    --remote-control)
+      # Optional value, like claude's own `--remote-control [name]`.
+      if [ $# -ge 2 ] && [ "${2#--}" = "$2" ]; then RC_NAME="$2"; shift 2
+      else RC_BARE=1; shift; fi;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
 [ -n "$DIR" ] || { echo "--dir is required (a WSL path, e.g. /home/<user>/repos/GHA-bench)" >&2; exit 2; }
+if [ -n "$PROMPT" ] && [ -n "$PROMPT_FILE" ]; then
+  echo "pass --prompt or --prompt-file, not both" >&2; exit 2
+fi
+if [ -n "$PROMPT_FILE" ]; then
+  [ -f "$PROMPT_FILE" ] || { echo "prompt file not found: $PROMPT_FILE" >&2; exit 2; }
+  # A long prompt travels as a path the session reads, not as argv text that
+  # wt.exe re-parses.
+  PROMPT="Read the file $(realpath "$PROMPT_FILE") and follow the instructions in it."
+fi
 
 # Resolve the absolute claude binary. command -v usually works in-context here, but a
 # non-login shell may lack ~/.local/bin on PATH, so fall back to known install paths.
@@ -62,6 +76,9 @@ else
   claude_args+=(--session-id "$(cat /proc/sys/kernel/random/uuid)")
   MODE="session-id"
 fi
+# `--remote-control [name]` takes an OPTIONAL value, so a bare flag goes LAST:
+# anywhere earlier it would swallow the prompt as the session's name.
+[ -n "$RC_BARE" ] && [ -z "$RC_NAME" ] && claude_args+=(--remote-control)
 
 # Give the new session the FULL login PATH (/snap/bin -> pwsh, ~/.bun/bin -> bun,
 # ~/.npm-global/bin, ~/.dotnet, ~/.local/bin, ...) so the agent's own subprocesses don't
@@ -73,8 +90,14 @@ fi
 # the ConPTY (exactly like the bare-claude launch that works) — just with the right PATH.
 LOGIN_PATH="$(bash -lic 'printf %s "$PATH"' 2>/dev/null)"
 
+# The same `env` clears CLAUDE_CODE_CHILD_SESSION and sets
+# CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in the launched process itself: this
+# shell is often a Claude Code tool shell, whose child marker would make the
+# new claude a nested session, left out of --resume, --continue, history and
+# `claude agents`. Never rely on what crosses wt.exe/wsl.exe on its own.
 wt_args=(
   "$WT" wsl.exe -d "$(wt_escape "$DISTRO")" --cd "$(wt_escape "$DIR")" -- env \
+  -u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 \
   "PATH=$(wt_escape "${LOGIN_PATH:-$PATH}")" "$(wt_escape "$CLAUDE")" "${claude_args[@]}"
 )
 

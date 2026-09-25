@@ -610,7 +610,7 @@ EXPECTED_LAYOUT = {
         "review-bash-ci-reliability", "skills-doctor", "vendor-release-impact-issues",
         "workflow-path-audit"}),
     "adam-coding-local": (False, {
-        "sync-skills", "sync-cc-settings-between-wsl-and-windows", "launch-wsl-claude-session",
+        "sync-skills", "sync-cc-settings-between-wsl-and-windows", "launch-top-level-claude-session",
         "migrate-claude-memory", "windows-elevation-from-wsl"}),
     "adam-non-coding-local": (False, {
         "ocr-pdfs", "pdf-ocr-audit", "rename-pdfs", "compare-pdfpairs", "fastmail",

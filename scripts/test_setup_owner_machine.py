@@ -90,3 +90,35 @@ def test_an_unknown_argument_is_refused_before_anything_runs(tmp_path):
     assert proc.returncode == 2
     assert "unknown argument" in proc.stderr
     assert not (tmp_path / "home" / ".agents").exists()
+
+
+def test_links_to_skills_that_no_longer_exist_are_swept_from_every_home(tmp_path):
+    # A skill renamed or removed leaves its old link behind in each agent home;
+    # link_one only repairs links at CURRENT skill names. setup.sh must reap
+    # the orphans it made, and only those.
+    home = tmp_path / "home"
+    plugins = REPO / "plugins"
+    user_target = tmp_path / "users-own-skill"
+    user_target.mkdir()
+    for rel in (".agents/skills", ".agent/skills", ".cursor/skills"):
+        d = home / rel
+        d.mkdir(parents=True)
+        # Ours, dangling: the old name of a renamed skill.
+        (d / "launch-wsl-claude-session").symlink_to(
+            plugins / "adam-coding-local" / "skills" / "launch-wsl-claude-session")
+        # The user's own: a live link elsewhere, a dangling link elsewhere,
+        # and a real directory. None may be touched.
+        (d / "mine-live").symlink_to(user_target)
+        (d / "mine-dangling").symlink_to(tmp_path / "gone")
+        (d / "mine-real").mkdir()
+    proc = run_setup(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    for rel in (".agents/skills", ".agent/skills", ".cursor/skills"):
+        d = home / rel
+        assert not os.path.lexists(d / "launch-wsl-claude-session"), rel
+        assert (d / "mine-live").is_symlink(), rel
+        assert (d / "mine-dangling").is_symlink(), rel
+        assert (d / "mine-real").is_dir(), rel
+        # The current name is linked, live.
+        assert (d / "launch-top-level-claude-session" / "SKILL.md").is_file(), rel
+    assert proc.stdout.count("UNLINK   launch-wsl-claude-session") == 3

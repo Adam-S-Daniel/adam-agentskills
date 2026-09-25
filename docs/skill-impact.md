@@ -47,6 +47,30 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: none run yet. Fixture `evals/vendor-release-impact-issues/` is in [skills-evals#197](https://github.com/Adam-S-Daniel/skills-evals/pull/197); objective-only scoring passes 7/7 on a workspace that follows the skill and fails 6/6 trap checks on one that doesn't. The graduation gate's green `with_skill` arm needs a paid run, or the owner's waiver recorded here, before merge.
 - Outcome: pending merge.
 
+## 2026-09-25 — adam-coding-local/launch-top-level-claude-session — edit, rename (was `launch-wsl-claude-session`)
+
+- Motivation: a "new top-level session" launched from Claude's own shell tool
+  inherited `CLAUDE_CODE_CHILD_SESSION=1` and was classified as nested —
+  excluded from `--resume`, history and `claude agents`, transcript unsaved;
+  and a new `wt.exe` tab could not find bare `claude` (`0x80070002`).
+- Change: every launcher (new native `scripts/launch-claude-session.ps1`,
+  plus both WSL launchers) clears `CLAUDE_CODE_CHILD_SESSION` and sets
+  `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` in the launched process, runs
+  claude by a runtime-resolved full path, and supports a bare or named
+  `--remote-control` and `--prompt-file`; SKILL.md description broadened to
+  "start a new Claude Code session" requests, with a verify-via-`--resume`
+  step. `adam-coding-local` bumped to 1.1.0. Renamed
+  `launch-wsl-claude-session` → `launch-top-level-claude-session` (owner
+  approved, 2026-09-25): the skill now launches native Windows sessions too,
+  and the rename lands before the skill was ever uploaded to the claude.ai
+  account store or locked by a consumer `skills.lock` (this repo's lock pins
+  only the two `*-anywhere` bundles). Script file names are unchanged.
+- Eval: exempt (DESIGN.md non-coverage table, `defer`, machine-bound; its
+  row renamed in a companion skills-evals PR). Script behaviour is covered
+  by pytest dry-run and execute-the-launched-command tests in the skill's
+  `tests/`.
+- Outcome: pending merge.
+
 ## 2026-09-24 — adam-coding-anywhere/skills-doctor, adam-coding-local/sync-skills, adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
 
 - Motivation: the retired registry is being made private, so every link into

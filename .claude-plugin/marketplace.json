@@ -14,9 +14,9 @@
     {
       "name": "adam-coding-anywhere",
       "source": "./plugins/adam-coding-anywhere",
-      "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, and disarming inherited reach.",
+      "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, disarming inherited reach, and filing vendor release-impact issues.",
       "category": "development",
-      "keywords": ["github-actions", "ci-cd", "debugging", "security", "supply-chain", "settings-as-code", "bash", "code-review", "skills"],
+      "keywords": ["github-actions", "ci-cd", "debugging", "security", "supply-chain", "settings-as-code", "bash", "code-review", "skills", "changelog", "release-notes"],
       "defaultEnabled": true
     },
     {

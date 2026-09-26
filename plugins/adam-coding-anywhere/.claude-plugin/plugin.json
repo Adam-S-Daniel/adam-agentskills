@@ -1,6 +1,6 @@
 {
   "name": "adam-coding-anywhere",
-  "version": "1.0.1",
-  "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, and disarming inherited reach.",
+  "version": "1.1.0",
+  "description": "Adam's coding skills for Claude Code terminals and Claude Code cloud sessions: GitHub Actions debugging and hardening, settings-as-code, bash CI reliability review, skill provenance, disarming inherited reach, and filing vendor release-impact issues.",
   "author": { "name": "Adam Daniel" }
 }

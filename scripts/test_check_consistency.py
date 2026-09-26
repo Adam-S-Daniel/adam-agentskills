@@ -607,7 +607,8 @@ EXPECTED_LAYOUT = {
     "adam-anything-anywhere": (True, {"finding-unknowns", "writing-adrs"}),
     "adam-coding-anywhere": (True, {
         "debug-github-workflows", "disarm-inherited-reach", "github-actions-repo-settings",
-        "review-bash-ci-reliability", "skills-doctor", "workflow-path-audit"}),
+        "review-bash-ci-reliability", "skills-doctor", "vendor-release-impact-issues",
+        "workflow-path-audit"}),
     "adam-coding-local": (False, {
         "sync-skills", "sync-cc-settings-between-wsl-and-windows", "launch-top-level-claude-session",
         "migrate-claude-memory", "windows-elevation-from-wsl"}),

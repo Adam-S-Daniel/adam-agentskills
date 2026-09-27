@@ -297,3 +297,121 @@ def test_the_gate_treats_skill_markdown_as_salient(tmp_path):
 def test_the_gate_fails_open_off_pull_request_events(tmp_path):
     out = _run_salience_body(tmp_path, ["docs/guide.md"], "workflow_dispatch")
     assert "run=true" in out and "run=false" not in out
+
+
+# --- The Claude Code install step (adam-agentskills#28) ----------------------
+#
+# Harness CLIs are unpinned (fleet rule, _agent-guidance "Dependency updates"):
+# the step uses the CLI already on the runner, else installs npm `latest`, and
+# records the version that ran. These pin the shape, and then execute the real
+# step body against fake `claude` / `npm` binaries.
+
+INSTALL_STEP = "Install Claude Code"
+
+
+def _install_step() -> dict:
+    job = load_ci()["jobs"]["plugin-validate"]
+    return next(s for s in job["steps"] if s.get("name") == INSTALL_STEP)
+
+
+def test_the_install_step_pins_no_claude_code_version():
+    import re
+    assert not re.search(r"claude-code@\d", _install_step()["run"])
+
+
+def test_the_install_step_installs_latest_only_when_none_is_usable():
+    run = _install_step()["run"]
+    else_at = run.index("else")
+    assert run.index("@anthropic-ai/claude-code@latest") > else_at
+    assert '-x "$(command -v claude)"' in run
+
+
+def test_the_install_step_bounds_version_and_records_it():
+    run = _install_step()["run"]
+    assert "timeout 60 claude --version" in run
+    assert '"::error::claude --version failed"' in run
+    assert '"::error::claude --version printed no version"' in run
+    assert '"$GITHUB_STEP_SUMMARY"' in run
+    assert "${{" not in run
+
+
+def test_the_plugin_validate_job_has_a_timeout():
+    minutes = load_ci()["jobs"]["plugin-validate"].get("timeout-minutes")
+    assert isinstance(minutes, int) and 0 < minutes <= 30
+
+
+def _run_install_step(tmp_path, claude_body, npm_body="exit 1",
+                      claude_executable=True):
+    """Run the real step body with fake `claude` and `npm` first on PATH."""
+    import os
+    import shutil
+    import subprocess
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("fake executables on PATH need a POSIX shell")
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash on PATH to execute the step body")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    for name, body, executable in (("claude", claude_body, claude_executable),
+                                   ("npm", npm_body, True)):
+        if body is None:
+            continue
+        path = bindir / name
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        path.chmod(0o755 if executable else 0o644)
+    summary = tmp_path / "summary.md"
+    summary.write_text("", encoding="utf-8")
+    env = {"PATH": f"{bindir}:/usr/bin:/bin",
+           "GITHUB_STEP_SUMMARY": str(summary)}
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c",
+         _install_step()["run"]],
+        env=env, capture_output=True, text=True, timeout=120)
+    return result, summary.read_text(encoding="utf-8")
+
+
+def test_a_usable_preinstalled_cli_is_recorded(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, 'echo "2.1.283 (Claude Code)"')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "Claude Code `2.1.283 (Claude Code)` (preinstalled)" in summary
+
+
+def test_a_failing_version_fails_the_step_loudly(tmp_path):
+    result, _ = _run_install_step(tmp_path, "exit 3")
+    assert result.returncode != 0
+    assert "::error::claude --version failed" in result.stdout
+
+
+def test_an_empty_version_fails_the_step_loudly(tmp_path):
+    result, _ = _run_install_step(tmp_path, "true")
+    assert result.returncode != 0
+    assert "::error::claude --version printed no version" in result.stdout
+
+
+def test_markdown_in_the_version_cannot_reach_the_summary(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, 'echo "1\\` [x](https://example.com) \\`"')
+    assert result.returncode == 0, result.stdout + result.stderr
+    line = summary.splitlines()[-1]
+    assert line.count("`") == 2 and "[" not in line and "]" not in line
+
+
+def test_a_huge_version_line_is_capped(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, "printf '%0200000d' 0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(summary.splitlines()[-1]) < 200
+
+
+def test_a_non_executable_cli_falls_back_to_npm_latest(tmp_path):
+    npm = ('cat > "$(dirname "$0")/claude" <<\'X\'\n'
+           '#!/bin/sh\necho "9.9.9 (Claude Code)"\nX\n'
+           'chmod 755 "$(dirname "$0")/claude"')
+    result, summary = _run_install_step(
+        tmp_path, 'echo "stale"', npm_body=npm, claude_executable=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "`9.9.9 (Claude Code)` (npm latest)" in summary

@@ -70,8 +70,12 @@ jobs:
             npm install -g @anthropic-ai/claude-code@latest
             source="npm latest"
           fi
-          version="$(claude --version)"
+          version="$(claude --version)" || { echo "::error::claude --version failed"; exit 1; }
+          # First line only, and only characters a version string needs: this
+          # lands in a markdown code span in the step summary.
           version="${version%%$'\n'*}"
+          version="${version//[^A-Za-z0-9._() -]/}"
+          [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
           echo "harness: Claude Code ${version} (${source})"
           { echo "### Harness"; echo "Claude Code \`${version}\` (${source})"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins

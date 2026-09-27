@@ -59,9 +59,11 @@ jobs:
         # Pinned: the CLI version is sometimes the variable under test (see
         # docs/experiments/), so validation results must be reproducible rather
         # than silently re-baselined by whatever `latest` resolves to today.
-        # 2.1.223 is the `stable` dist-tag, published 2026-08-05 — old enough to
-        # satisfy this repo's 7-day dependency cooling-off as of 2026-08-14.
-        run: npm install -g @anthropic-ai/claude-code@2.1.223
+        # Model harnesses are exempt from the 7-day dependency cooling-off
+        # (fleet rule, _agent-guidance base.md "Dependency updates"): bump to
+        # the newest release, still pinned exact. 2.1.283 is `latest`,
+        # published 2026-09-25.
+        run: npm install -g @anthropic-ai/claude-code@2.1.283
       - name: Validate marketplace and plugins
         run: claude plugin validate . --strict
 

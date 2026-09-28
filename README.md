@@ -157,6 +157,11 @@ separate `$HOME`s):
 bash setup.sh
 ```
 
+On Windows, run it from Git Bash, or from PowerShell by full path:
+`& 'C:\Program Files\Git\bin\bash.exe' setup.sh`. A bare `bash`
+in PowerShell is WSL's launcher (`C:\Windows\System32\bash.exe`), so it sets up
+the WSL home and leaves the Windows one untouched.
+
 That is all anyone else needs. It links every skill under `plugins/*/skills/*` into the standard skill homes:
 
 - `~/.agents/skills/` — Codex (and the generic agents dir)

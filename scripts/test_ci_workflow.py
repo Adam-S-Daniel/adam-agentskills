@@ -325,7 +325,7 @@ def test_the_install_step_always_installs_the_resolved_latest():
     assert "command -v claude" not in run, "a preinstalled CLI must not be reused"
     assert 'latest="$(npm view @anthropic-ai/claude-code version)"' in run
     assert 'npm install -g "@anthropic-ai/claude-code@${latest}"' in run
-    assert '[[ "$version" == "$latest"* ]]' in run
+    assert '[[ "${version%% *}" == "$latest" ]]' in run
 
 
 def test_the_install_step_bounds_version_and_records_it():
@@ -425,10 +425,33 @@ def test_a_stale_cli_earlier_on_path_fails_the_step(tmp_path):
 
 
 def test_an_unresolvable_latest_fails_the_step(tmp_path):
-    for view in ("exit 1", "true", "echo '<html>'"):
+    cases = {"exit 1": "could not resolve the latest Claude Code version",
+             "true": "npm reported no usable latest Claude Code version",
+             "echo '<html>'": "npm reported no usable latest Claude Code version",
+             "echo 2.2.0-beta.1": "npm reported no usable latest Claude Code version",
+             "printf '2.1.3\\n2.1.4\\n'": "npm reported no usable latest Claude Code version"}
+    for view, message in cases.items():
         result, summary = _run_install_step(_fresh(tmp_path), npm_view=view)
         assert result.returncode != 0, view
+        assert f"::error::{message}" in result.stdout, (view, result.stdout)
         assert summary == "", view
+
+
+def test_a_shadowing_cli_whose_version_extends_latest_fails(tmp_path):
+    # A prefix match would take 2.1.30 for 2.1.3.
+    result, summary = _run_install_step(
+        tmp_path, npm_view='echo "2.1.3"',
+        shadow_body='echo "2.1.30 (Claude Code)"')
+    assert result.returncode != 0
+    assert "::error::claude on PATH is not the npm latest" in result.stdout
+    assert summary == ""
+
+
+def test_multi_line_version_output_keeps_the_first_line(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, claude_body='printf "@@VER@@ (Claude Code)\\nnoise\\n"')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"`{LATEST} (Claude Code)` (npm latest)" in summary
 
 
 def test_a_failed_install_fails_the_step(tmp_path):
@@ -474,7 +497,7 @@ def test_markdown_in_the_version_cannot_reach_the_summary(tmp_path):
 
 def test_a_huge_version_line_is_capped(tmp_path):
     result, summary = _run_install_step(
-        tmp_path, claude_body="printf \"@@VER@@%0200000d\" 0")
+        tmp_path, claude_body="printf \"@@VER@@ (Claude Code) %0200000d\" 0")
     assert result.returncode == 0, result.stdout + result.stderr
     assert len(summary.splitlines()[-1]) < 200
 

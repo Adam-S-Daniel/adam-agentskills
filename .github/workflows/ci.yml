@@ -70,8 +70,9 @@ jobs:
         run: |
           set -euo pipefail
           latest="$(npm view @anthropic-ai/claude-code version)" || { echo "::error::could not resolve the latest Claude Code version"; exit 1; }
-          latest="${latest//[^0-9.]/}"
-          [[ -n "$latest" ]] || { echo "::error::npm reported no latest Claude Code version"; exit 1; }
+          # Reject, never rewrite: a prerelease, junk or several lines is not
+          # a version to install.
+          [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::npm reported no usable latest Claude Code version"; exit 1; }
           npm install -g "@anthropic-ai/claude-code@${latest}"
           version="$(timeout -k 10 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
           # First line only, and only characters a version string needs: this
@@ -80,7 +81,7 @@ jobs:
           version="${version:0:80}"
           version="${version//[^A-Za-z0-9._() -]/}"
           [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
-          [[ "$version" == "$latest"* ]] || { echo "::error::claude on PATH is not the npm latest just installed"; exit 1; }
+          [[ "${version%% *}" == "$latest" ]] || { echo "::error::claude on PATH is not the npm latest just installed"; exit 1; }
           echo "harness: Claude Code ${version} (npm latest)"
           { echo "### Harness"; echo "Claude Code \`${version}\` (npm latest)"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins

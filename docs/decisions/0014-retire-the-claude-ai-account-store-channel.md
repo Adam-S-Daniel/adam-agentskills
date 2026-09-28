@@ -74,9 +74,8 @@ the uploaded skills from the account and checked they were gone.
 ## Alternatives considered
 
 - **Keep the channel for the surfaces that "have nothing else"** (ADR 0010's
-  position). Rejected by the owner: the plugin channel now reaches those
-  surfaces, and the upload machinery was the cost being paid to avoid
-  nothing.
+  position). Not pursued: the plugin channel now reaches those surfaces, so
+  the upload machinery was a cost paid for no remaining reach.
 - **Keep the uploader and drop only the drift loop.** Not pursued: the
   uploader was the bulk of the machinery, and its hooks were the part that
   broke pushes.

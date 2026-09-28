@@ -330,6 +330,7 @@ def test_the_install_step_always_installs_the_resolved_latest():
 
 def test_the_install_step_bounds_version_and_records_it():
     run = _install_step()["run"]
+    assert run.splitlines()[0] == "set -euo pipefail"
     assert 'version="$(timeout -k 10 60 claude --version)"' in run
     assert '"::error::claude --version failed"' in run
     assert '"::error::claude --version printed no version"' in run
@@ -405,7 +406,9 @@ def _run_install_step(tmp_path, npm_view=f'echo "{LATEST}"', install_ok=True,
         assert "timeout -k 10 60 " in body
         body = body.replace("timeout -k 10 60 ", f"timeout {timeout_args} ")
     result = subprocess.run(
-        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", body],
+        # GitHub's default for a step with no `shell:` is `bash -e {0}`;
+        # anything stricter must come from the body's own `set` line.
+        [bash, "--noprofile", "--norc", "-e", "-c", body],
         env=env, capture_output=True, text=True, timeout=120)
     return result, summary.read_text(encoding="utf-8")
 
@@ -420,7 +423,8 @@ def test_a_stale_cli_earlier_on_path_fails_the_step(tmp_path):
     result, summary = _run_install_step(
         tmp_path, shadow_body='echo "2.1.100 (Claude Code)"')
     assert result.returncode != 0
-    assert "::error::claude on PATH is not the npm latest" in result.stdout
+    assert (f"::error::claude on PATH reports '2.1.100 (Claude Code)', "
+            f"not npm latest {LATEST}") in result.stdout
     assert summary == ""
 
 
@@ -429,7 +433,9 @@ def test_an_unresolvable_latest_fails_the_step(tmp_path):
              "true": "npm reported no usable latest Claude Code version",
              "echo '<html>'": "npm reported no usable latest Claude Code version",
              "echo 2.2.0-beta.1": "npm reported no usable latest Claude Code version",
-             "printf '2.1.3\\n2.1.4\\n'": "npm reported no usable latest Claude Code version"}
+             "printf '2.1.3\\n2.1.4\\n'": "npm reported no usable latest Claude Code version",
+             "echo 2x1y3": "npm reported no usable latest Claude Code version",
+             "echo ..": "npm reported no usable latest Claude Code version"}
     for view, message in cases.items():
         result, summary = _run_install_step(_fresh(tmp_path), npm_view=view)
         assert result.returncode != 0, view
@@ -443,7 +449,7 @@ def test_a_shadowing_cli_whose_version_extends_latest_fails(tmp_path):
         tmp_path, npm_view='echo "2.1.3"',
         shadow_body='echo "2.1.30 (Claude Code)"')
     assert result.returncode != 0
-    assert "::error::claude on PATH is not the npm latest" in result.stdout
+    assert "::error::claude on PATH reports '2.1.30 (Claude Code)', not npm latest 2.1.3" in result.stdout
     assert summary == ""
 
 

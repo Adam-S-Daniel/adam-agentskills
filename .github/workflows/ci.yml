@@ -81,7 +81,7 @@ jobs:
           version="${version:0:80}"
           version="${version//[^A-Za-z0-9._() -]/}"
           [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
-          [[ "${version%% *}" == "$latest" ]] || { echo "::error::claude on PATH is not the npm latest just installed"; exit 1; }
+          [[ "${version%% *}" == "$latest" ]] || { echo "::error::claude on PATH reports '${version}', not npm latest ${latest}"; exit 1; }
           echo "harness: Claude Code ${version} (npm latest)"
           { echo "### Harness"; echo "Claude Code \`${version}\` (npm latest)"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins

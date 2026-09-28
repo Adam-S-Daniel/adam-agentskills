@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-28 — adam-coding-anywhere/vendor-release-impact-issues — create (eval result; corrects the 2026-09-25 entry)
+
+- Motivation: the 2026-09-25 entry says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.
+- Change: none to skill content. The owner chose to merge before the eval, because the paid run reads the skill from the registry's default branch ([#22](https://github.com/Adam-S-Daniel/adam-agentskills/pull/22) merged 2026-09-26, then the eval ran).
+- Eval: [run 36263643613](https://github.com/Adam-S-Daniel/skills-evals/actions/runs/36263643613), exit 0 ([report](https://github.com/Adam-S-Daniel/skills-evals/blob/eval-results/results/vendor-release-impact-issues/20260926T184529Z/report.md)). `with_skill`: objective 6/7, judge 7.2 (Correctness 5, Hygiene 9, Restraint 10). `without_skill`: objective 4/7, judge 5.4. The skill fixed the upstream-backlink and title-placeholder failures. Both arms failed the publish-time check; the check itself was at fault (it required all three releases' times, in the attribution form only), and is fixed in [skills-evals#204](https://github.com/Adam-S-Daniel/skills-evals/pull/204). The rubric now scores coverage. The `with_skill` arm filed 2 of the 5 planted findings.
+- Outcome: merged 2026-09-26.
+
 ## 2026-09-25 — adam-coding-anywhere/vendor-release-impact-issues — create
 
 - Motivation: filing 32 vendor-release impact issues hit every trap the skill names ([_agent-guidance#171](https://github.com/Adam-S-Daniel/_agent-guidance/pull/171)).

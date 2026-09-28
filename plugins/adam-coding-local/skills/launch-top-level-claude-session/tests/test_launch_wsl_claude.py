@@ -66,9 +66,8 @@ PS1_SCRIPT = Path(
 BASH = shutil.which("bash")
 PWSH = os.environ.get("LAUNCH_WSL_CLAUDE_PWSH") or shutil.which("pwsh")
 
-# Decode subprocess output explicitly and never die on a stray byte — see
-# sync-skills' tests for why `text=True` alone (locale-decoded, cp1252 on
-# Windows) is not safe here.
+# Decode subprocess output explicitly and never die on a stray byte:
+# `text=True` alone is locale-decoded (cp1252 on Windows) and not safe here.
 TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
 

@@ -119,7 +119,7 @@ it is enabled anywhere.
   form). Don't assume the in-repo pattern resolves identically on every
   machine just because repos "live at `~/repos/<name>` everywhere" — see
   Workstation layout above for the counterexample. That exact assumption once
-  broke sync-skills: it guessed `~/repos/<name>` ahead of the checkout it was
+  broke sync-skills (since retired, ADR 0014): it guessed `~/repos/<name>` ahead of the checkout it was
   actually running from, a decoy outranked the real clone, and `--all`
   enumerated nothing. Check the resolved path on the machine in front of you;
   never encode a repo location as a constant.
@@ -206,9 +206,7 @@ it is enabled anywhere.
 
 - The irreversible surfaces in this repo are plugin names once enabled
   anywhere (there is no `renames` map to migrate them), skill directory
-  basenames once shipped (they key `setup.sh` symlinks and the consumer `skills.lock`), and any
-  future upload to the claude.ai account store — which has no delete in the upload
-  path (ADR 0002, superseded by ADR 0014). A change that
+  basenames once shipped (they key `setup.sh` symlinks and the consumer `skills.lock`). A change that
   touches one of them gets an **independent adversarial round before merge**:
   a separately prompted agent whose job is to break the change, not to
   approve it, run against the diff and — where the change is one-way — against

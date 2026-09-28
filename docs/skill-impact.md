@@ -40,6 +40,22 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-28 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: the claude.ai account-store channel was retired ([ADR 0014](decisions/0014-retire-the-claude-ai-account-store-channel.md)), so the account-drift comparison has nothing to compare against.
+- Change: removed the `--account-drift` option from SKILL.md, PURPOSE.md and `check_provenance.py`, with its tests; shadowing checks and `--account-channel` stay; `adam-coding-anywhere` 1.2.0 ([#35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35)).
+- Eval: none — no eval exists yet.
+- Outcome: pending merge.
+
+## 2026-09-28 — adam-coding-local/sync-skills — remove
+
+- Motivation: the owner retired the claude.ai account-store (upload-skill API) channel on 2026-09-28; every surface now takes skills from the marketplace plugins, and the uploads are deleted ([ADR 0014](decisions/0014-retire-the-claude-ai-account-store-channel.md)).
+- Change: deleted the skill (SKILL.md, PURPOSE.md, `sync_skills.py`, `account-skills.txt`, hooks, tests); `setup.sh --owner-machine` now removes its two global pre-push hook sections; `adam-coding-local` 1.2.0 ([#35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35)).
+- Eval: exempt (DESIGN.md non-coverage table, machine-bound).
+- Outcome: pending merge.
+
+---
+
 ## 2026-09-28 — adam-coding-anywhere/vendor-release-impact-issues — create (eval result; corrects the 2026-09-25 entry)
 
 - Motivation: the 2026-09-25 entry says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.

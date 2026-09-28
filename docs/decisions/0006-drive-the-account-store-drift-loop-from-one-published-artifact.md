@@ -1,6 +1,6 @@
 # 0006. Drive the account-store drift loop from one published artifact, read by two repos on their own schedules
 
-- **Status:** Accepted
+- **Status:** Superseded by [0014](0014-retire-the-claude-ai-account-store-channel.md)
 - **Date:** 2026-08-21
 - **Deciders:** Adam Daniel
 

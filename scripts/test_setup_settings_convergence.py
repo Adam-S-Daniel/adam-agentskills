@@ -121,7 +121,7 @@ def test_the_machine_bound_bundle_is_enabled_from_the_marketplace(tmp_path):
     """ADR 0010: the machine-bound plugin (now `adam-coding-local`, ADR 0013)
     comes from the marketplace, pinned, where it had been drifting on the account. Enabling it is half the decision — the other
     half is the opt-out below, and neither is safe alone: opting out without
-    enabling would take sync-skills off the laptop entirely."""
+    enabling would take the machine-bound skills off the laptop entirely."""
     settings = converge(tmp_path)
     assert settings["enabledPlugins"]["adam-coding-local@adam-agentskills"] is True
 

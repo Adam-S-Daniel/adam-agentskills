@@ -17,6 +17,13 @@
 # disables the WHOLE FILE, not a key Dependabot quietly ignores.
 # dependabot/dependabot-core#14628 is the open upstream request to add the
 # support.
+#
+# GitHub validates this file only when a commit to the default branch
+# changes it, and records the result as the `dependabot` app's
+# `.github/dependabot.yml` check run. This repo's first commit (559ceb7)
+# carried the file without one, so the fleet's config-health sweep read it
+# as unknown (Adam-S-Daniel/_agent-guidance#162). Merging this comment is
+# what gives the file a recorded check.
 version: 2
 updates:
   - package-ecosystem: github-actions

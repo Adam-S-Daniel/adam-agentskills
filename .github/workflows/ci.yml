@@ -59,22 +59,20 @@ jobs:
         with:
           node-version: '22'
       - name: Install Claude Code
-        # Harness CLIs are unpinned (fleet rule, _agent-guidance base.md
-        # "Dependency updates"; the owner's call, 2026-09-27): use the CLI the
-        # runner already has, else install npm `latest`. The CLI version is
-        # sometimes the variable under test (see docs/experiments/), so the
-        # version that ran is recorded in the step summary to keep a result
-        # reproducible after the fact. No model runs in this job, so the CLI
-        # version is the only thing to record. scripts/test_ci_workflow.py
-        # runs this body against fake binaries.
+        # Harness CLIs always install latest (fleet rule, _agent-guidance
+        # base.md "Dependency updates"; the owner's call, 2026-09-28): resolve
+        # npm's `latest`, install exactly that, and fail if the `claude` on
+        # PATH is not it (a runner-provided CLI earlier on PATH would shadow
+        # it). The CLI version is sometimes the variable under test (see
+        # docs/experiments/), so the version that ran goes to the step
+        # summary. No model runs in this job, so it is the only thing to
+        # record. scripts/test_ci_workflow.py runs this body against fakes.
         run: |
           set -euo pipefail
-          if [[ -x "$(command -v claude)" ]]; then
-            source=preinstalled
-          else
-            npm install -g @anthropic-ai/claude-code@latest
-            source="npm latest"
-          fi
+          latest="$(npm view @anthropic-ai/claude-code version)" || { echo "::error::could not resolve the latest Claude Code version"; exit 1; }
+          latest="${latest//[^0-9.]/}"
+          [[ -n "$latest" ]] || { echo "::error::npm reported no latest Claude Code version"; exit 1; }
+          npm install -g "@anthropic-ai/claude-code@${latest}"
           version="$(timeout -k 10 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
           # First line only, and only characters a version string needs: this
           # lands in a markdown code span in the step summary.
@@ -82,8 +80,9 @@ jobs:
           version="${version:0:80}"
           version="${version//[^A-Za-z0-9._() -]/}"
           [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
-          echo "harness: Claude Code ${version} (${source})"
-          { echo "### Harness"; echo "Claude Code \`${version}\` (${source})"; } >> "$GITHUB_STEP_SUMMARY"
+          [[ "$version" == "$latest"* ]] || { echo "::error::claude on PATH is not the npm latest just installed"; exit 1; }
+          echo "harness: Claude Code ${version} (npm latest)"
+          { echo "### Harness"; echo "Claude Code \`${version}\` (npm latest)"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins
         run: claude plugin validate . --strict
 

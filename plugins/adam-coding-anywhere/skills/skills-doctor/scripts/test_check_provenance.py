@@ -529,58 +529,6 @@ def test_the_digest_is_none_for_a_path_that_is_not_a_directory(tmp_path):
     assert prov.digest_skill_dir(plain) is None
 
 
-def _uploader():
-    """sync-skills' `sync_skills` module — the other end of the upload filter."""
-    _walk_up("plugins/adam-coding-local/skills/sync-skills/sync_skills.py")
-    import sync_skills
-
-    return sync_skills
-
-
-def test_the_upload_filter_matches_the_uploaders(tmp_path):
-    """The binding that keeps `UPLOAD_SKIP_*` a copy of the uploader's rule.
-
-    The account copy of a skill is whatever `zip_skill` put in the ZIP, so the
-    only correct definition of "what both channels carry" is the uploader's own
-    `_include_in_zip`. This file cannot import it — it ships into a
-    `~/.claude/skills` with no sync-skills in it — so the sets are re-declared,
-    and a re-declaration that drifts does not fail loudly: it turns whichever
-    artefact stopped being skipped into a `shadow-copies-differ` FINDING about a
-    session where nothing is wrong.
-    """
-    up = _uploader()
-    assert prov.UPLOAD_SKIP_DIRS == up._SKIP_DIRS
-    assert prov.UPLOAD_SKIP_DIR_PREFIXES == up._SKIP_DIR_PREFIXES
-    assert prov.UPLOAD_SKIP_EXTS == up._SKIP_EXTS
-
-
-def test_the_shared_payload_selects_what_the_uploader_would_have_zipped(tmp_path):
-    """Bound to the uploader end to end, not just to its constant names.
-
-    Re-declaring the sets correctly and then applying them differently —
-    matching a directory name against the file's suffix, say, or testing only
-    the last path segment — passes the binding above and still digests a file
-    the account copy never held.
-    """
-    up = _uploader()
-    skill = tmp_path / "skill"
-    for relpath, data in (("SKILL.md", b"---\nname: skill\n---\nbody\n"),
-                          ("scripts/helper.py", b"x = 1\n"),
-                          ("scripts/__pycache__/helper.cpython-311.pyc", b"\x00c"),
-                          ("scripts/helper.pyo", b"\x00o"),
-                          ("payload.b64", b"AAAA"),
-                          (".pytest_cache/v/last", b"{}"),
-                          ("pytest-cache-files-abc/tmp", b"scratch"),
-                          ("node_modules/dep/index.js", b"x")):
-        target = skill / relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-
-    mine = {relpath for relpath, _ in prov.uploaded_files(skill)}
-    assert mine == set(up.skill_payload(skill)), (
-        "the doctor's upload filter has drifted from what a real upload carries")
-
-
 # ---------------------------------------------------------------------------
 # the record's three states
 # ---------------------------------------------------------------------------
@@ -4351,6 +4299,29 @@ def test_two_copies_that_really_differ_are_a_finding(tmp_path, capsys,
     assert "[shadow-copies-differ] finding-unknowns" not in out, out
 
 
+def test_the_shadow_finding_names_no_retired_upload_tooling(tmp_path, capsys,
+                                                            ephemeral):
+    """ADR 0014 retired sync-skills and `--account-drift`; a finding that told
+    the reader to run either would send them to a command that is gone."""
+    store, lock = shadowed_store(tmp_path)
+    account_copy(store, "writing-adrs", body="line one\nAN OLDER LINE\n")
+    _, out = run(store, lock, capsys)
+    text = flat(out)
+    assert "[shadow-copies-differ] writing-adrs" in out, out
+    for retired in ("sync-skills", "account-drift", "re-upload"):
+        assert retired not in text, (retired, out)
+
+
+def test_the_account_drift_mode_is_gone(tmp_path, capsys):
+    """ADR 0014: the account store no longer holds anything this registry
+    uploaded, so there is nothing to diff it against."""
+    with pytest.raises(SystemExit) as raised:
+        prov.main(["--skills-dir", str(tmp_path), "--account-drift", str(tmp_path)])
+    assert raised.value.code == 2
+    assert "--account-drift" in capsys.readouterr().err
+    assert not hasattr(prov, "account_drift")
+
+
 def test_a_line_ending_difference_alone_is_never_the_finding(tmp_path, capsys,
                                                              ephemeral):
     """The whole reason the comparison normalises.
@@ -6182,151 +6153,6 @@ def test_the_origin_observation_matrix(tmp_path, capsys, ephemeral, cell):
 
 
 # =====================================================================================
-# --account-drift — content is the verdict, never a timestamp
-# =====================================================================================
-
-
-def _account(store: Path, name: str, body: str, crlf: bool = True) -> Path:
-    """Write an ACCOUNT-store copy of `name`. CRLF by default, as that channel is."""
-    skill = store / prov.ACCOUNT_DIR / name
-    skill.mkdir(parents=True, exist_ok=True)
-    text = f"---\nname: {name}\n---\n{body}"
-    (skill / "SKILL.md").write_bytes(
-        text.replace("\n", "\r\n").encode() if crlf else text.encode())
-    return skill
-
-
-def _registry(root: Path, name: str, body: str, bundle: str = "adam") -> Path:
-    """Write a registry copy of `name` under the nested bundle layout, LF as git keeps it."""
-    skill = root / "plugins" / bundle / "skills" / name
-    skill.mkdir(parents=True, exist_ok=True)
-    (skill / "SKILL.md").write_bytes(f"---\nname: {name}\n---\n{body}".encode())
-    return skill
-
-
-def test_crlf_alone_is_not_drift(tmp_path, capsys):
-    """The account channel stores CRLF where the registry is LF. Comparing raw bytes
-    marks EVERY skill as drifted — a signal that fires on all of them says nothing
-    about any of them, which is how a drift check stops being read."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "writing-adrs", "same text\n", crlf=True)
-    _registry(reg, "writing-adrs", "same text\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_a_real_content_change_is_drift(tmp_path, capsys):
-    """The negative control for the test above: folding CRLF must not fold away an
-    actual edit, or the check is a green light wired to nothing."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "writing-adrs", "the old text\n", crlf=True)
-    _registry(reg, "writing-adrs", "the NEW text\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "DRIFTED" in out, out
-    assert code == 1, out
-
-
-def test_a_moved_path_is_not_drift(tmp_path, capsys):
-    """The defect this mode was built to replace, stated as a test.
-
-    The old procedure compared the account copy's `updatedAt` against
-    `git log -1 --format=%cI -- <path>`, which records when that PATH was last
-    touched — a restructure commit that only MOVES a skill re-flags it. Measured
-    2026-08-25: `pdf-ocr-audit` and `bell-schedule` both read STALE that way while
-    being byte-identical to the registry. Content is the verdict, so a mtime far
-    newer than anything must not move it.
-    """
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "bell-schedule", "unchanged\n", crlf=True)
-    moved = _registry(reg, "bell-schedule", "unchanged\n")
-    os.utime(moved / "SKILL.md", (2_000_000_000, 2_000_000_000))
-    os.utime(moved, (2_000_000_000, 2_000_000_000))
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_a_dropped_file_is_drift(tmp_path, capsys):
-    """Comparing two copies with each other (rather than against a recorded digest)
-    is what makes a missing payload visible: it changes the manifest's relpaths."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "skills-doctor", "body\n", crlf=True)
-    theirs = _registry(reg, "skills-doctor", "body\n")
-    (theirs / "scripts").mkdir()
-    (theirs / "scripts" / "helper.py").write_text("print(1)\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "DRIFTED" in out, out
-    assert code == 1, out
-
-
-def test_a_build_artefact_is_not_drift(tmp_path, capsys):
-    """`__pycache__` beside a skill's scripts is in a working tree and was never in
-    the uploaded ZIP. Calling that a divergence reddens a session where nothing is
-    wrong, so the upload filter applies to both sides."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "skills-doctor", "body\n", crlf=True)
-    theirs = _registry(reg, "skills-doctor", "body\n")
-    (theirs / "__pycache__").mkdir()
-    (theirs / "__pycache__" / "helper.cpython-311.pyc").write_bytes(b"\x00binary")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_the_flat_registry_layout_is_found(tmp_path, capsys):
-    """A federated registry declaring `"layout": "skills"` puts skills at the top
-    rather than under a bundle plugin. Both shapes have to resolve or a whole
-    registry silently reports as `not in any registry given`."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "browser-testing", "body\n", crlf=True)
-    flat_layout = reg / "skills" / "browser-testing"
-    flat_layout.mkdir(parents=True)
-    (flat_layout / "SKILL.md").write_bytes(b"---\nname: browser-testing\n---\nbody\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_a_skill_no_registry_carries_is_not_judged(tmp_path, capsys):
-    """Anthropic-supplied account skills are in no registry here. Reporting them as
-    drifted would be a finding nobody can act on."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "docx", "body\n", crlf=True)
-    _registry(reg, "writing-adrs", "body\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "not in any registry given" in out, out
-    assert code == 0, out
-
-
-def test_a_registry_path_that_is_not_a_directory_exits_2(tmp_path, capsys):
-    """2 is "cannot run", distinct from 1 ("ran, and here is drift")."""
-    store = tmp_path / "store"
-    _account(store, "writing-adrs", "body\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift",
-                      str(tmp_path / "absent")])
-    assert code == 2, capsys.readouterr()
-
-
-def test_account_drift_does_not_consult_a_lock_or_the_project(tmp_path, capsys):
-    """The mode takes a registry checkout, which the default run does not need. It
-    must therefore not require the inputs the default run does — a caller holding
-    only a store and a clone can still ask this question."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "writing-adrs", "body\n", crlf=True)
-    _registry(reg, "writing-adrs", "body\n")
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    assert code == 0, capsys.readouterr().out
-
-
-# =====================================================================================
 # The account store's bucket layout (#157)
 # =====================================================================================
 #
@@ -6374,123 +6200,56 @@ def write_cli_config(path: Path, org: str, account: str) -> Path:
     return path
 
 
-def test_a_bucketed_account_store_is_compared_not_called_empty(tmp_path, capsys,
-                                                               monkeypatch):
-    """#157's headline for this script: `--account-drift` printed "holds no
-    skills — nothing to compare … 0 drifted" and exited 0 while the bucket one
-    level down held 21. A clean verdict over an unread directory."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    bucket_copy(store, "writing-adrs", "same text\n")
-    _registry(reg, "writing-adrs", "same text\n")
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "holds no skills" not in out, out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_a_bucketed_content_change_is_still_drift(tmp_path, capsys, monkeypatch):
-    """The negative control: finding the bucket must not also make everything in
-    it read as clean."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
+def test_two_buckets_resolve_to_the_signed_in_account(tmp_path, monkeypatch):
+    store = tmp_path / "store"
     bucket_copy(store, "writing-adrs", "the old text\n")
-    _registry(reg, "writing-adrs", "the NEW text\n")
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "DRIFTED" in out, out
-    assert code == 1, out
-
-
-def test_a_flat_account_store_is_still_compared(tmp_path, capsys, monkeypatch):
-    """Older CLIs wrote `synced/<name>/` with no bucket. The same code has to
-    keep running on whichever CLI the machine has."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    _account(store, "writing-adrs", "same text\n", crlf=True)
-    _registry(reg, "writing-adrs", "same text\n")
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
-
-
-def test_the_drift_header_names_the_bucket_it_read(tmp_path, capsys, monkeypatch):
-    """The header is the reader's only statement of WHAT was compared. Naming
-    `synced/` while reading `synced/<org>_<account>/` makes a two-account
-    machine's report unfalsifiable."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    bucket_copy(store, "writing-adrs", "same text\n")
-    _registry(reg, "writing-adrs", "same text\n")
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert ORG_UUID + "_" + ACCT_UUID in out, out
-
-
-def test_two_buckets_resolve_to_the_signed_in_account(tmp_path, capsys, monkeypatch):
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    bucket_copy(store, "writing-adrs", "the old text\n")
-    bucket_copy(store, "writing-adrs", "same text\n",
-                bucket=OTHER_ORG + "_" + OTHER_ACCT)
-    _registry(reg, "writing-adrs", "same text\n")
+    other = bucket_copy(store, "writing-adrs", "same text\n",
+                        bucket=OTHER_ORG + "_" + OTHER_ACCT)
     monkeypatch.setattr(prov, "CLI_CONFIG_FILE",
                         write_cli_config(tmp_path / "claude.json", OTHER_ORG, OTHER_ACCT))
     monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
 
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
+    resolved = prov.resolve_account_store(store)
+    assert resolved.path == other.parent, resolved
 
 
 def test_two_buckets_fall_back_to_the_account_uuid_in_the_environment(
-        tmp_path, capsys, monkeypatch):
-    store, reg = tmp_path / "store", tmp_path / "reg"
-    bucket_copy(store, "writing-adrs", "same text\n")
+        tmp_path, monkeypatch):
+    store = tmp_path / "store"
+    mine = bucket_copy(store, "writing-adrs", "same text\n")
     bucket_copy(store, "writing-adrs", "the old text\n",
                 bucket=OTHER_ORG + "_" + OTHER_ACCT)
-    _registry(reg, "writing-adrs", "same text\n")
     monkeypatch.setattr(prov, "CLI_CONFIG_FILE", tmp_path / "absent.json")
     monkeypatch.setenv("CLAUDE_CODE_ACCOUNT_UUID", ACCT_UUID)
 
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    out = capsys.readouterr().out
-    assert "identical" in out, out
-    assert code == 0, out
+    resolved = prov.resolve_account_store(store)
+    assert resolved.path == mine.parent, resolved
 
 
-def test_two_buckets_and_no_signal_cannot_run(tmp_path, capsys, monkeypatch):
-    """2 is "cannot run", and it is the only honest code here: picking a bucket
-    would compare against another account's store, and 0 would repeat the very
-    false clean this section exists to remove."""
-    store, reg = tmp_path / "store", tmp_path / "reg"
+def test_two_buckets_and_no_signal_cannot_run(tmp_path, monkeypatch):
+    """A store nobody could pick is REFUSED, never empty: picking a bucket
+    would compare against another account's store, and reading the refusal as
+    "holds nothing" is the false clean #157 was filed about."""
+    store = tmp_path / "store"
     bucket_copy(store, "writing-adrs", "same text\n")
     bucket_copy(store, "writing-adrs", "same text\n",
                 bucket=OTHER_ORG + "_" + OTHER_ACCT)
-    _registry(reg, "writing-adrs", "same text\n")
     monkeypatch.setattr(prov, "CLI_CONFIG_FILE", tmp_path / "absent.json")
     monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
 
-    code = prov.main(["--skills-dir", str(store), "--account-drift", str(reg)])
-    captured = capsys.readouterr()
-    assert code == 2, captured.out
-    assert "0 drifted" not in captured.out, captured.out
-    both = captured.out + captured.err
-    assert ORG_UUID + "_" + ACCT_UUID in both, both
-    assert OTHER_ORG + "_" + OTHER_ACCT in both, both
+    resolved = prov.resolve_account_store(store)
+    assert resolved.path is None, resolved
+    assert resolved.reason, resolved
+    assert ORG_UUID + "_" + ACCT_UUID in resolved.reason, resolved
+    assert OTHER_ORG + "_" + OTHER_ACCT in resolved.reason, resolved
+
 
 
 def test_a_bucketed_account_copy_still_shadows_a_personal_one(tmp_path, capsys,
                                                               ephemeral, monkeypatch):
     """The other half of #157 for this script. The shadow comparison is the
     default report's account question, and it reads the same directory
-    `--account-drift` does — so the bucket hid every shadow too."""
+    the store resolution does — so the bucket hid every shadow."""
     monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
     store = tmp_path / "skills"
     store.mkdir()
@@ -6506,45 +6265,6 @@ def test_a_bucketed_account_copy_still_shadows_a_personal_one(tmp_path, capsys,
     code, out = run(store, lock, capsys)
     assert code == 0, out
     assert "[shadowed-by-the-account-store] writing-adrs" in out, out
-
-
-def test_the_bucket_resolution_matches_the_uploaders(tmp_path, monkeypatch):
-    """The binding that keeps this file's bucket rule a copy of sync-skills'.
-
-    Both tools read the same directory on the same machine, and this one cannot
-    import the other — it ships into a `~/.claude/skills` with no sync-skills in
-    it — so the resolution is re-declared. A re-declaration that drifts does not
-    fail loudly: the two tools would disagree about WHICH ACCOUNT they are
-    reporting on, and each would look internally consistent while doing it.
-
-    Bound behaviourally rather than by constant name: the same tree is put in
-    front of both, and they have to name the same directory.
-    """
-    up = _uploader()
-    assert prov.BUCKET_NAME_RE.pattern == up.BUCKET_NAME_RE.pattern
-    assert prov.BUCKET_MARKER_PREFIX == up.BUCKET_MARKER_PREFIX
-
-    store = tmp_path / "skills"
-    root = store / prov.ACCOUNT_DIR
-    for bucket in (ORG_UUID + "_" + ACCT_UUID, OTHER_ORG + "_" + OTHER_ACCT):
-        (root / bucket).mkdir(parents=True)
-        (root / bucket / "manifest.json").write_text("{}", encoding="utf-8")
-        (root / (".bucket-" + bucket)).write_bytes(b"")
-    config = write_cli_config(tmp_path / "claude.json", OTHER_ORG, OTHER_ACCT)
-    monkeypatch.setattr(prov, "CLI_CONFIG_FILE", config)
-    monkeypatch.setattr(up, "CLI_CONFIG_FILE", config)
-    monkeypatch.setattr(up, "ACCOUNT_SKILLS_DIR", root)
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    assert prov.account_store_path(store) == up.account_mirror_dir()
-
-    # And they refuse together, which is the half that matters: one tool
-    # guessing while the other declines is how a "clean" verdict gets paired
-    # with a real one and read as agreement.
-    monkeypatch.setattr(prov, "CLI_CONFIG_FILE", tmp_path / "absent.json")
-    monkeypatch.setattr(up, "CLI_CONFIG_FILE", tmp_path / "absent.json")
-    assert prov.account_store_path(store) is None
-    assert up.account_mirror_dir() is None
 
 
 # =====================================================================================

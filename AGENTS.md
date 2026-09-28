@@ -101,11 +101,11 @@ Skills are grouped into four plugins by audience and runtime —
 cloud-safe, default-enabled), `plugins/adam-coding-local/` and
 `plugins/adam-non-coding-local/` (machine-bound, opt-in) — each holding real
 `skills/<skill>/` dirs, never symlinks. Skill directory basenames must stay
-unique and never change once a skill has shipped — uploaded to the claude.ai
-account store, or locked by a consumer `skills.lock` (they key `setup.sh`
-symlinks and claude.ai uploads). Before either, a rename is a reviewed change:
+unique and never change once a skill has shipped — locked by a consumer
+`skills.lock` (it keys `setup.sh` symlinks; the claude.ai uploads that once
+also keyed on it were retired by ADR 0014). Before that, a rename is a reviewed change:
 `launch-wsl-claude-session` became `launch-top-level-claude-session` on
-2026-09-25, before it had been uploaded or locked; `setup.sh` removes the
+2026-09-25, before it had been locked; `setup.sh` removes the
 links it made for a skill that no longer exists.
 This marketplace has no `renames` map, so a plugin name is a one-way door once
 it is enabled anywhere.
@@ -134,15 +134,16 @@ it is enabled anywhere.
   append-only), so do not add one to paper over a rename — do not rename.
 - After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
   owner machine right away (a plain `bash setup.sh` only links skills and
-  registers no hook). A stale global sync-skills pre-push hook keeps pointing at the old
-  plugin path and fails every `git push` from every repo until re-registered.
+  registers no hook). `--owner-machine` also unregisters the retired global
+  sync-skills pre-push hooks (ADR 0014); left in place, they point at a deleted
+  script and fail every `git push` from every repo.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is base.md's "Prove the verifier can fail before you trust it" — the
   `test_account_zip_selection.py` incident there is this repo's own, so only
   the repo-specific facts stay here rather than re-narrating it: unless a test
   file ends in an `if __name__ == "__main__"` block that invokes a runner,
   running it directly imports the module and exits 0 having asserted nothing.
-  All 8 files under `scripts/` lack such a block, so all 8 are that trap.
+  All 12 files under `scripts/` lack such a block, so all 12 are that trap.
   Exactly one test file in the repo does not:
   `plugins/adam-non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py`
   ends with `unittest.main()`, and running THAT one directly really does run
@@ -205,8 +206,9 @@ it is enabled anywhere.
 
 - The irreversible surfaces in this repo are plugin names once enabled
   anywhere (there is no `renames` map to migrate them), skill directory
-  basenames once shipped (they key `setup.sh` symlinks and claude.ai uploads), and an upload to the claude.ai account
-  store — which has no delete in the upload path (ADR 0002). A change that
+  basenames once shipped (they key `setup.sh` symlinks and the consumer `skills.lock`), and any
+  future upload to the claude.ai account store — which has no delete in the upload
+  path (ADR 0002, superseded by ADR 0014). A change that
   touches one of them gets an **independent adversarial round before merge**:
   a separately prompted agent whose job is to break the change, not to
   approve it, run against the diff and — where the change is one-way — against

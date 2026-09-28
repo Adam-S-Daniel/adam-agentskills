@@ -41,8 +41,8 @@ A skill's repo is decided by **sensitivity, not by how personal it is**:
 
 Both repos use the **same** plugin + marketplace structure
 (`plugins/<plugin>/skills/<skill>/`, `.claude-plugin/marketplace.json`,
-`defaultEnabled`, the `setup.sh` de-dup), so the installer and `sync-skills`
-behave identically across them (Phase 2 in old-registry issue #18). Plugins are named by
+`defaultEnabled`, the `setup.sh` de-dup), so the installer
+behaves identically across them (Phase 2 in old-registry issue #18). Plugins are named by
 audience and runtime, `[adam|adam-private]-[coding|non-coding|anything]-[local|anywhere]`.
 The public registry has four: `adam-anything-anywhere` and
 `adam-coding-anywhere` (default-enabled), `adam-coding-local` and
@@ -60,8 +60,8 @@ embed secrets or PII:
   2026-09-22 — no longer a current skill.)
 - `fastmail` — drives email through a live, already-authenticated Claude-in-Chrome
   session; the `SKILL.md` carries no credentials of its own. **Public is correct.**
-- `sync-cc-settings-between-wsl-and-windows`, `sync-skills` — operate on local
-  paths / the user's own browser session; no embedded secrets. **Public is correct.**
+- `sync-cc-settings-between-wsl-and-windows` — operates on local
+  paths; no embedded secrets. **Public is correct.**
 - The remaining skills (`workflow-path-audit`,
   `github-actions-repo-settings`, `rename-pdfs`) are generically reusable.
   **Public is correct.**
@@ -93,9 +93,9 @@ When a skill graduates:
    the matching `adam-private-*` plugin in `adam-agentskills-private` instead.
    No new plugin.json or marketplace entry is needed — the plugin already has
    both. Skill directory basenames must be unique across the repo and must
-   never change once the skill has shipped — uploaded to the claude.ai
-   account store, or locked by a consumer `skills.lock` (they key `setup.sh`
-   symlinks and claude.ai uploads).
+   never change once the skill has shipped — locked by a consumer
+   `skills.lock` (it keys `setup.sh` symlinks; the claude.ai uploads that once
+   also keyed on it were retired by ADR 0014).
 2. Creating a **new plugin** is the rare, deliberate exception — only for a
    combination of the naming scheme that has no plugin yet. It means a new
    `plugins/<plugin>/` folder with both manifests and a new marketplace

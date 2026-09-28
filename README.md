@@ -115,8 +115,9 @@ That registers the new marketplaces, enables the new plugins and writes
 `false` for the retired registry's plugins (`adam`, `adam-local`, `fastmail`,
 `adam-personal`, `adam-private`), so nothing loads twice; it leaves the old
 marketplace entries themselves in place — remove those with
-`claude plugin marketplace remove`. Re-running it also re-registers the global sync-skills pre-push hook, which
-otherwise points at the old path and **blocks every `git push` from any repo**.
+`claude plugin marketplace remove`. Re-running it also unregisters the retired global sync-skills pre-push hooks
+(ADR 0014), which would otherwise point at a deleted script and **block every
+`git push` from any repo**.
 
 Available skills:
 
@@ -194,15 +195,16 @@ run `/reload-skills` to re-scan the skill directories in place.
 additionally configures a machine the way the registry's owner runs it, and
 is **not** for anyone else's machine:
 
-- registers the sync-skills pre-push reminder as a **global** git hook
-  (`git config --global`), so it fires in every repo on the machine;
+- unregisters the retired sync-skills pre-push hooks from the **global** git
+  config (`git config --global --remove-section`), so a machine stops running
+  a deleted script on every push ([ADR 0014](docs/decisions/0014-retire-the-claude-ai-account-store-channel.md));
 - converges `~/.claude/settings.json`: registers this marketplace and the
   owner's **private** one, enables the owner's plugins
   (`adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`,
   `adam-private-anything-anywhere`), writes `false` for the account-synced
   copies and for the retired registry's plugins, and sets
-  `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
-  that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
+  `syncClaudeAiSkills: false` — which keeps Anthropic's account-synced skills
+  (docx, pdf, ...) out of that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
   [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
 
 Without the flag neither step runs, and the script says how to opt in.
@@ -266,8 +268,8 @@ marketplace file had the same layout).
 ## Hosted agents — Claude Code on the web, claude.ai
 
 Hosted sessions start with **no user plugins and no marketplace adds** — but
-`~/.claude` is not empty: the claude.ai account store is already present at
-`~/.claude/skills/synced/` and loads from turn one (see "The claude.ai account
+`~/.claude` is not empty: Anthropic's account-synced skills are already present at
+`~/.claude/skills/synced/` and load from turn one (see "The claude.ai account
 store" below). The repo clone can additionally *write* into `~/.claude`; that
 write is the delivery channel for ephemeral surfaces. What works where:
 
@@ -315,44 +317,15 @@ write is the delivery channel for ephemeral surfaces. What works where:
   and [`docs/multi-repo-delivery.md`](docs/multi-repo-delivery.md) for the
   wiring such a session needs before any of it runs.
 - **The claude.ai account store** — `~/.claude/skills/synced/<organizationUuid>_<accountUuid>/`
-  on Claude Code 2.1.273+ (a `.bucket-<organizationUuid>_<accountUuid>` marker
-  file sits beside it; older CLIs wrote `~/.claude/skills/synced/` flat, and the
-  tools here read whichever a machine has — see
-  old-registry issue 157), populated by
-  uploading skills as ZIPs via Settings → Capabilities. This is the *only*
-  channel that reaches claude.ai chat, Cowork, Claude in Chrome, and mobile —
-  and it loads in Claude Code on the web / cloud sessions too, alongside
-  whatever the repo delivers. Where both channels carry the same skill NAME the
-  hook's copy wins and the name is listed once — measured in
-  [E5](docs/experiments/E5-account-store-vs-hook-precedence.md), which is also
-  why a stale account copy is shadowed in a hook session and still live in chat,
-  Cowork, mobile and any multi-repo session. It can't be repo-scoped (see
-  [ADR 0002](docs/decisions/0002-limit-account-store-to-repo-independent-skills.md)),
-  so it's reserved for skills that should be live everywhere, not per-repo
-  ones. The [`sync-skills`](plugins/adam-coding-local/skills/sync-skills) skill (in
-  the `adam-coding-local` plugin) automates pushing this registry's skills there.
-  Nothing in CI can see that store — a *surface* limit, not a permissions one:
-  it is files under `~/.claude/skills/synced/`, which a runner simply does not
-  have — so what a runner compares against is
-  [`account-state.json`](account-state.json) — a digest per declared skill,
-  recorded from a session that *does* have the mirror
-  (`sync_skills.py --record-account-state`). The
-  [Account skill ZIPs](.github/workflows/account-skill-zips.yml) workflow reads
-  it, and daily also reads the account audit
-  [skills-evals](https://github.com/Adam-S-Daniel/skills-evals) publishes to its
-  `eval-results` branch — the one thing that does look at the store — building
-  one artifact per skill *either* source calls drifted, each downloading as a
-  `<name>.zip` that uploads to claude.ai as-is: the path for uploading from a
-  phone. The union is deliberate (each source knows something the other cannot),
-  and intersecting the audit's names with the declared list is the guard on
-  reading an unprotected branch — see
-  [ADR 0006](docs/decisions/0006-drive-the-account-store-drift-loop-from-one-published-artifact.md).
-  A `stale` verdict is evidence an upload is needed, never proof one
-  happened. Close the loop afterwards either by re-recording from a machine
-  with the mirror, or — with no mirror, from the phone — by dispatching
-  [Record an account upload](.github/workflows/record-account-upload.yml),
-  which writes the weaker `basis: asserted` and pushes a branch to merge. An
-  observation always overwrites an assertion. See `sync-skills` SKILL.md §9.
+  on Claude Code 2.1.273+ (older CLIs wrote `~/.claude/skills/synced/` flat).
+  This registry no longer uploads to it: [ADR 0014](docs/decisions/0014-retire-the-claude-ai-account-store-channel.md)
+  retired the ZIP-upload machinery (the `sync-skills` skill, `account-state.json`
+  and the two account workflows) after every surface moved to the marketplace
+  plugins ([ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md))
+  and the owner emptied the store of them. Anthropic's own skills (docx, pdf, ...)
+  still arrive through `synced/`; the bootstrap hook leaves that directory alone,
+  and `skills-doctor` still reports a same-named shadow. A future upload would be
+  unaudited: nothing here compares the store with the registry any more.
 - **Memory**: hosted sessions see a repo's git-tracked `.claude/memory/` (see the
   Memory section in [`STRATEGY.md`](STRATEGY.md) and the
   [portable-memory guide](https://github.com/Adam-S-Daniel/claude-memory-map/blob/main/docs/portable-memory.md);

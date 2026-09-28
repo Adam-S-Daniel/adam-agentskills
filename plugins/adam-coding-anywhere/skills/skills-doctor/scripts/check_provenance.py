@@ -78,10 +78,10 @@ CLI_CONFIG_FILE = Path.home() / ".claude.json"
 #
 # Why this is the dangerous shape rather than a cosmetic path change: every
 # account question this script asks is "does the account store ALSO hold this
-# name", and an unread directory answers no to all of them. `--account-drift`
-# printed "the account store … holds no skills — nothing to compare … 0 drifted"
-# and exited 0 over 21 skills on disk, and the shadow comparison — the whole of
-# #122 — went silent in the same way. A false clean, which is the one verdict
+# name", and an unread directory answers no to all of them. The retired
+# `--account-drift` printed "the account store … holds no skills — nothing to
+# compare … 0 drifted" and exited 0 over 21 skills on disk, and the shadow
+# comparison — the whole of #122 — went silent in the same way. A false clean, which is the one verdict
 # this script exists to withhold (E5).
 _UUID = r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 BUCKET_NAME_RE = re.compile(_UUID + "_" + _UUID)
@@ -109,9 +109,8 @@ def account_bucket_id() -> Optional[str]:
 
     A hand-rolled read of the CLI's own config for `declared_name`'s reason:
     this file ships into a `~/.claude/skills` where nothing is installed but
-    the standard library, so there is no sync-skills to import the same
-    resolution from. `test_the_bucket_resolution_matches_the_uploaders` binds
-    the two copies together so they cannot drift silently.
+    the standard library. (It once mirrored the retired sync-skills uploader's
+    resolution, ADR 0014; the CLI's own layout is the only reference now.)
     """
     try:
         with open(CLI_CONFIG_FILE, encoding="utf-8") as handle:
@@ -206,19 +205,16 @@ def account_store_path(skills_dir: Path) -> Optional[Path]:
 # skill with each other.
 CRLF, LF = b"\r\n", b"\n"
 
-# What the uploader drops on the way into the account store, mirrored from
-# `_SKIP_DIRS`, `_SKIP_DIR_PREFIXES` and `_SKIP_EXTS` in sync-skills'
-# `sync_skills.py`. The account copy of a skill is not the directory the registry
-# holds: it is the ZIP `zip_skill` built out of it, and these never went in. A
-# comparison that digests the personal directory whole therefore reads an
-# ordinary build artefact as a second, divergent set of instructions — which is
-# the ONE thing this reporting must not do, because the shadow it describes is
-# the resting state of every cloud session here.
+# What an account-store copy of a skill never carried: build artefacts the
+# ZIP upload dropped (the retired sync-skills uploader, ADR 0014). Skills the
+# registry once uploaded may still sit in an account store as stale copies, and
+# a comparison that digests the personal directory whole would read an ordinary
+# build artefact as a second, divergent set of instructions — which is the ONE
+# thing this reporting must not do, because the shadow it describes is the
+# resting state of a cloud session here.
 #
-# A hand copy for `digest_skill_dir`'s reason: this file ships into a
-# `~/.claude/skills` that holds no sync-skills to import from.
-# `test_the_upload_filter_matches_the_uploaders` binds each set below to the
-# uploader's own, so the copy cannot drift silently.
+# The uploader that defined this rule is gone, so these sets are now the rule
+# itself and no test binds them to a second copy.
 UPLOAD_SKIP_DIRS = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv",
                               "node_modules"})
 UPLOAD_SKIP_DIR_PREFIXES = ("pytest-cache-files-",)
@@ -987,9 +983,8 @@ def digest_shared_payload(path: Path, fold: bool = False) -> Optional[str]:
       a divergence reddens a session where nothing is wrong.
     * `fold=True` folds CRLF to LF, because the two channels disagree about line
       endings and, so far, about nothing else that survives the filter above.
-      Account-store copies are CRLF where the registry is LF, which this skill's
-      own account-drift procedure already works around by piping both sides
-      through `tr -d '\r'` before diffing. Comparing exact bytes alone marks
+      Account-store copies are CRLF where the registry is LF, which a hand
+      diff has to work around by piping both sides through `tr -d '\r'`. Comparing exact bytes alone marks
       every account copy as differing from every personal one — a signal that
       fires on all of them and therefore says nothing about any of them.
 
@@ -2885,9 +2880,10 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
     Both texts say the benign case is a property of THIS MOMENT rather than of
     the design, because it is. The copies update on different clocks — the
     personal one at every session start from `skills.lock`, the account one only
-    when someone runs `sync-skills` — so "edit a skill, regenerate the lock,
-    forget to re-upload" turns the note into the finding with nothing having
-    gone wrong in between, and nothing in CI can see it: the collision exists
+    when the account channel changes it (the registry's uploads are retired,
+    ADR 0014, so a lingering account copy of a registry skill only ever ages) —
+    so "edit a skill, regenerate the lock" turns the note into the finding with
+    nothing having gone wrong in between, and nothing in CI can see it: the collision exists
     only on a surface CI never stands on.
 
     That clocks sentence is why `surface` is a parameter. It is quoted into
@@ -2925,13 +2921,9 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
                 f"disk or in any log says which copy the model read.")
         clocks = ("The two copies update on different clocks: the personal one "
                   "tracks skills.lock and is refreshed at every session start, "
-                  "the account one changes only when someone runs sync-skills "
-                  "from a machine with a browser. `--account-drift <registry>` "
-                  "compares the account copy against a registry checkout by "
-                  "CONTENT and reports that pair on its own; it is a different "
-                  "question from this one and has no notion of a session where "
-                  "both copies coexist, and CI never stands on the surface where "
-                  "they do.")
+                  "the account one changes only when the account channel does, "
+                  "and this registry no longer uploads to it (ADR 0014). "
+                  "CI never stands on the surface where both copies coexist.")
 
         exact_mine = digest_shared_payload(mine)
         exact_theirs = digest_shared_payload(theirs)
@@ -2968,11 +2960,10 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
                     f"store). So the model is reading one of two different sets "
                     f"of instructions under this name and nothing records which. "
                     f"{PAYLOAD_SCOPE} "
-                    f"{clocks} The usual cause is the account copy being behind — "
-                    f"a skill edited and re-locked, and never re-uploaded. "
-                    f"Compare them with the account-drift procedure in "
-                    f"skills-doctor's SKILL.md, then either re-upload or accept "
-                    f"the drift deliberately.{but_here}"))
+                    f"{clocks} The usual cause is a stale account copy left "
+                    f"from before the uploads were retired; remove that skill "
+                    f"from the claude.ai account so only the marketplace copy "
+                    f"remains.{but_here}"))
                 continue
             sameness = ("The two copies carry byte-identical instructions "
                         "once CRLF line endings are folded to LF"
@@ -2989,25 +2980,6 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
             f"docs/decisions/0002, which costed the duplicated context and not "
             f"this collision.{but_here}"))
     return findings, notes
-
-
-# =====================================================================================
-# Account drift — the account store against a registry checkout
-# =====================================================================================
-
-# Where a registry keeps its skills. `adam-agentskills` nests them under a bundle plugin;
-# a federated registry declaring `"layout": "skills"` in a lock puts them at the top.
-# First hit wins, which is the same rule the lock's own source resolution uses.
-REGISTRY_LAYOUTS = ("plugins/*/skills/{name}", "skills/{name}")
-
-
-def registry_copy(registry: Path, name: str) -> Optional[Path]:
-    """Where `name` lives inside `registry`, or None if it does not."""
-    for layout in REGISTRY_LAYOUTS:
-        for candidate in sorted(registry.glob(layout.format(name=name))):
-            if (candidate / "SKILL.md").is_file():
-                return candidate
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -3123,8 +3095,7 @@ def account_channel_report(skills_dir: Path, chain: List[Path]) -> Tuple[List[st
     store = resolve_account_store(skills_dir)
     if store.path is None:
         lines.append(f"  {store.reason}")
-        # 2 is "cannot run" for the same reason --account-drift uses it: the
-        # duplicate half of this report was not measured, and a report that
+        # 2 is "cannot run": the duplicate half of this report was not measured, and a report that
         # merely omitted it would read as "no duplicates".
         return lines, 2
 
@@ -3163,91 +3134,6 @@ def account_channel_report(skills_dir: Path, chain: List[Path]) -> Tuple[List[st
         lines.append(f"  {trash} holds nothing (no opt-out has moved a synced "
                      f"copy aside here, or one never had to).")
     return lines, 0
-
-
-class DriftReport(NamedTuple):
-    """`account_drift`'s answer, with "could not run" kept separate from "0".
-
-    `blocked` carries the reason the store could not be resolved, and it is a
-    third field rather than a magic `drifted` value because the two questions
-    are genuinely different: `drifted == 0` with `blocked is None` is a
-    measurement, and `drifted == 0` with a reason is the absence of one.
-    """
-    lines: List[str]
-    drifted: int
-    blocked: Optional[str]
-
-
-def account_drift(skills_dir: Path, registries: List[Path]) -> "DriftReport":
-    """Compare every account-store copy against the same skill in a registry checkout.
-
-    This exists because the procedure it replaces was a TIMESTAMP comparison, and a
-    timestamp is the wrong clock. `updatedAt` records when the account copy was
-    uploaded; `git log -1 --format=%cI -- <path>` records when that PATH was last
-    touched by any commit — including a commit that only MOVED it. So every
-    repo-wide restructure re-flags every skill it touched, whether or not a single
-    byte of any of them changed.
-
-    That is not hypothetical. Measured 2026-08-25 on this registry: `pdf-ocr-audit`
-    and `bell-schedule` both read STALE under the timestamp rule against commit
-    88526d1 ("Prune skills that left the lock ..."), which moved paths across the
-    whole tree — and a CRLF-folded content diff showed both byte-identical to the
-    registry. Two false positives out of ten comparisons, in the one run that
-    happened to check. A drift signal that fires on skills nobody has edited is a
-    check that gets ignored, which is worse than not having one.
-
-    So content is the verdict here and the timestamp is not consulted at all. The
-    comparison is `digest_shared_payload(fold=True)` on both sides — the same one
-    `shadow_findings` uses, and for the same two reasons:
-
-      * it digests only `uploaded_files`, because the account copy is the ZIP
-        `zip_skill` built and never carried a `__pycache__` the registry working
-        tree may well have;
-      * `fold=True` folds CRLF to LF, because the account channel stores CRLF where
-        the registry is LF and comparing raw bytes marks every skill as drifted — a
-        signal that fires on all of them and so says nothing about any of them.
-
-    Comparing two copies with each OTHER is the sanctioned use of that digest: a file
-    dropped from one side changes the manifest's relpaths, so it is visible here in a
-    way it would not be against a recorded digest.
-    """
-    lines: List[str] = []
-    drifted = 0
-    store = resolve_account_store(skills_dir)
-    if store.path is None:
-        # NOT `0 drifted`. An unread store and an empty one produce the same
-        # number of comparisons and must never produce the same verdict —
-        # that equivalence is #157's defect, one layer up from the path.
-        return DriftReport([f"  {store.reason}"], 0, store.reason)
-    names = sorted(skill_names(store.path))
-    if not names:
-        return DriftReport(
-            [f"  the account store {store.path} holds no skills — "
-             f"nothing to compare. It is manifest-gated, so this is what an "
-             f"account with no uploads looks like and not a failure to read it."],
-            0, None)
-
-    for name in names:
-        mine = store.path / name
-        found = next((hit for hit in (registry_copy(registry, name)
-                                      for registry in registries) if hit), None)
-        if found is None:
-            lines.append(f"  {name:42} not in any registry given — not judged")
-            continue
-        theirs = digest_shared_payload(found, fold=True)
-        ours = digest_shared_payload(mine, fold=True)
-        if ours is None or theirs is None:
-            unread = mine if ours is None else found
-            lines.append(f"  {name:42} UNREADABLE ({unread}) — not judged")
-            continue
-        if ours == theirs:
-            lines.append(f"  {name:42} identical to {found}")
-        else:
-            drifted += 1
-            lines.append(f"  {name:42} DRIFTED from {found}")
-            lines.append(f"  {'':42} account {ours[:12]} vs registry {theirs[:12]} "
-                         f"(CRLF folded, upload filter applied)")
-    return DriftReport(lines, drifted, None)
 
 
 def store_findings(store_state: str, skills_dir: Path) -> List[Finding]:
@@ -3694,15 +3580,6 @@ def main(argv: Optional[List[str]] = None) -> int:
                              "calling a locked skill missing, and its settings "
                              "chain is what decides whether any hook runs "
                              "(default: .)")
-    parser.add_argument("--account-drift", default=None, metavar="DIR",
-                        action="append",
-                        help="compare the ACCOUNT store against this registry "
-                             "checkout by content and report only that, instead "
-                             "of the provenance report. Repeatable. The account "
-                             "channel carries no content hash and no version, so "
-                             "content is the only honest drift signal there is — "
-                             "a timestamp comparison re-flags every skill any "
-                             "restructure commit moved")
     parser.add_argument("--account-channel", action="store_true",
                         help="report what the claude.ai account sync is doing "
                              "on THIS surface — the settings-chain verdict for "
@@ -3724,36 +3601,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     skills_dir = Path(args.skills_dir).expanduser()
 
-    if args.account_drift:
-        # A separate mode on purpose. It answers a different question, against an
-        # input the default run does not need (a registry checkout), so folding it
-        # into the report would make the report's inputs conditional.
-        registries = [Path(entry).expanduser() for entry in args.account_drift]
-        missing = [str(entry) for entry in registries if not entry.is_dir()]
-        if missing:
-            sys.stderr.write("check_provenance.py: not a directory: "
-                             + ", ".join(missing) + "\n")
-            return 2
-        report = account_drift(skills_dir, registries)
-        store = resolve_account_store(skills_dir)
-        # The header is the reader's only statement of WHAT was compared, so it
-        # names the resolved bucket rather than the root a two-account machine
-        # shares between accounts.
-        print("ACCOUNT DRIFT  "
-              + (store.path or skills_dir / ACCOUNT_DIR).as_posix()
-              + " vs " + ", ".join(str(entry) for entry in registries))
-        print("  content is the verdict; `updatedAt` and commit dates are not "
-              "consulted. See `account_drift`.")
-        print()
-        print("\n".join(report.lines))
-        print()
-        if report.blocked:
-            # 2 is "cannot run", the same code a missing registry path gets. A
-            # count printed here would be a measurement nobody took.
-            sys.stderr.write("check_provenance.py: " + report.blocked + "\n")
-            return 2
-        print(f"  {report.drifted} drifted")
-        return 1 if report.drifted else 0
     if args.account_channel:
         chain = ([Path(entry).expanduser() for entry in args.settings]
                  if args.settings else default_settings_chain())

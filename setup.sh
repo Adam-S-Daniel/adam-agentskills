@@ -46,8 +46,8 @@
 # OWNER-MACHINE STEPS ARE OPT-IN. Run as `bash setup.sh`, this script only
 # links skills into the per-agent homes above. Two more steps configure a
 # machine the way the registry's OWNER runs it, and they are wrong on anyone
-# else's: registering the global sync-skills pre-push hook (a GLOBAL git
-# config entry, fired in every repo on the machine), and converging
+# else's: unregistering the retired global sync-skills pre-push hooks (GLOBAL git
+# config entries, ADR 0014), and converging
 # ~/.claude/settings.json — which registers the owner's PRIVATE marketplace,
 # enables the owner's plugins and sets `syncClaudeAiSkills: false`, turning
 # off that user's claude.ai account skills in their terminals (ADR 0010, ADR
@@ -65,7 +65,7 @@ for arg in "$@"; do
     -h|--help)
       echo "usage: bash setup.sh [--owner-machine]"
       echo "  (default)        link every skill into ~/.agents/skills, ~/.agent/skills, ~/.cursor/skills"
-      echo "  --owner-machine  also register the global sync-skills pre-push hook and converge"
+      echo "  --owner-machine  also unregister the retired sync-skills pre-push hooks and converge"
       echo "                   ~/.claude/settings.json for the registry owner's own machines"
       echo "                   (same as AGENTSKILLS_OWNER_MACHINE=1)"
       exit 0 ;;
@@ -397,23 +397,16 @@ done
 
 if [[ "$OWNER_MACHINE" == 1 ]]; then
 echo ""
-echo "=== Registering sync-skills pre-push hook ==="
-# Resolve the sync-skills setup script by glob so this file doesn't hardcode
-# which bundle plugin the skill lives in.
-SYNC_SKILLS_SETUP=""
-for candidate in "$PLUGINS_DIR"/*/skills/sync-skills/setup.sh; do
-  # Not through a symlinked skill entry (none should exist; ADR 0013).
-  [[ -L "$(dirname "$candidate")" ]] && continue
-  if [[ -f "$candidate" ]]; then
-    SYNC_SKILLS_SETUP="$candidate"
-    break
+echo "=== Unregistering the retired sync-skills pre-push hooks ==="
+# ADR 0014 retired the sync-skills skill. Older --owner-machine runs registered
+# two GLOBAL git hooks that run its script on every push; drop them so the
+# machine stops calling a deleted file. Absent sections are fine.
+for retired_hook in sync-skills-reminder sync-skills-private-reminder; do
+  if git config --global --get-regexp "^hook\\.${retired_hook}\\." >/dev/null 2>&1; then
+    git config --global --remove-section "hook.${retired_hook}" \
+      && echo "  UNREGISTER hook.${retired_hook}"
   fi
 done
-if [[ -z "$SYNC_SKILLS_SETUP" ]]; then
-  echo "ERROR: sync-skills setup.sh not found under $PLUGINS_DIR/*/skills/sync-skills/" >&2
-  exit 1
-fi
-bash "$SYNC_SKILLS_SETUP"
 fi
 
 # >>> settings-convergence
@@ -421,7 +414,7 @@ fi
 # a throwaway HOME. Keep both marker lines.
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
-  echo "Skipped the owner-machine steps (global pre-push hook, ~/.claude/settings.json)."
+  echo "Skipped the owner-machine steps (retired pre-push hook cleanup, ~/.claude/settings.json)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else
 echo ""
@@ -484,7 +477,7 @@ TARGET_MARKETPLACES = {
 # ADR 0013: the public registry's plugins are grouped by audience and runtime.
 # A terminal takes the three that make sense on a durable machine from the
 # marketplace, pinned and version-gated: the two `-anywhere` plugins plus
-# `adam-coding-local`, which carries sync-skills and must run here (ADR 0010).
+# `adam-coding-local`, the machine-bound coding skills.
 # `adam-non-coding-local` is for the Desktop app's local Cowork, not for
 # terminals, so it is left for the operator to enable. From the private
 # registry, `adam-private-anything-anywhere` is enabled the same way.
@@ -539,9 +532,9 @@ TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
 # Claude Code 2.1.273+ downloads every skill enabled on the claude.ai account
 # into a terminal session signed in with it. On a converged machine that is 21
 # more always-on descriptions (~3,236 tok, measured 2026-09-18), three of them
-# a second copy of a skill this machine already has pinned -- and it puts the
-# one channel that drifts in front of sync-skills, the one skill that must run
-# on the laptop.
+# a second copy of a skill this machine already has pinned, from the one
+# channel that drifts. ADR 0014 retired the uploads; the setting stays for
+# Anthropic's own account skills.
 #
 # False, the JSON boolean: the CLI honours only `false`, so a string "false"
 # or a 0 is an opt-out that silently does not happen. Only user, local or

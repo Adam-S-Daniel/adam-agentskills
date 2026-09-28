@@ -6,8 +6,7 @@ description: >
   session's own skill listing, `~/.claude/skills/`, the account
   `synced/manifest.json`, `claude plugin list`), attribute every skill to the
   registry and bundle it came from by reading the bootstrap hook's own install
-  record rather than guessing, and flag silent shadowing, account-store
-  staleness, dangling payload references, and always-on context cost. Reports
+  record rather than guessing, and flag silent shadowing, dangling payload references, and always-on context cost. Reports
   only — it never installs, copies, deletes or repairs anything. Use when a
   skill you expected is missing or won't trigger, when a repo-owned skill looks
   overridden, when the session-start `skills:` verdict reads DEGRADED, when you
@@ -326,49 +325,16 @@ does claim that pair joins the session, which brings it back in scope and makes
 the next run remove it. `stale-out-of-scope` is therefore a statement about the
 session as it stands, not about the directory.
 
-### Staleness of the account store
+### The account store is no longer a delivery channel for this registry
 
-The account store carries **no content hash and no version**, so the only
-honest drift signal is the content itself. Run the comparison rather than
-reconstructing it:
-
-```bash
-python3 <skills-doctor>/scripts/check_provenance.py --account-drift <registry>
-```
-
-It is repeatable (`--account-drift A --account-drift B`), reads both registry
-layouts, and reports per skill: `identical`, `DRIFTED`, `not in any registry
-given`, or `UNREADABLE`. Exit 1 means something drifted, 0 means nothing did, 2
-means it could not run at all.
-
-**Do not verdict on `updatedAt` against a commit date.** This is the trap, and
-it is the one this section used to prescribe. `updatedAt` records when the
-account copy was uploaded; `git log -1 --format=%cI -- <path>` records when that
-PATH was last touched by any commit — **including a commit that only moved it**.
-The two clocks measure different things, so every repo-wide restructure re-flags
-every skill it touched, whether or not a byte changed.
-
-Measured 2026-08-25 on this registry: `pdf-ocr-audit` and `bell-schedule` both
-read STALE that way against commit `88526d1` ("Prune skills that left the
-lock…"), which moved paths across the whole tree — and a content comparison
-showed both byte-identical to the registry. Two false positives out of ten
-comparisons, in the one run that happened to check. A drift signal that fires on
-skills nobody edited is a check that gets ignored, which is worse than no check.
-The timestamp is at most a cheap pre-filter that over-reports; it is never the
-verdict.
-
-**If you compare by hand anyway, fold line endings first.** Account copies are
-CRLF, the registry is LF, so a raw `diff` or hash marks *every* skill as drifted:
-
-```bash
-diff <(tr -d '\r' < ~/.claude/skills/synced/<org>_<account>/<skill>/SKILL.md) \
-     <(tr -d '\r' < <registry>/plugins/<plugin>/skills/<skill>/SKILL.md)
-```
-
-That compares one file. `--account-drift` compares every file an upload
-carries — so it also catches a payload dropped from one side, which a
-`SKILL.md` diff cannot see — and applies the upload filter to both sides, so a
-`__pycache__` in the working tree is not mistaken for a divergence.
+[ADR 0014](../../../../docs/decisions/0014-retire-the-claude-ai-account-store-channel.md)
+retired the ZIP uploads: every surface takes this registry's skills from the
+marketplace plugins, and the owner emptied the account store of them. There is
+therefore no drift audit to run (the old `--account-drift` mode is gone), and a
+registry-named skill still found in `synced/` is a stale leftover from before the
+retirement. It surfaces as a shadow note or finding below; the fix is to remove it
+from the claude.ai account, not to re-upload. Anthropic's own skills (docx, pdf, …)
+still arrive through `synced/` and are none of this registry's business.
 
 ### Which surface the account channel is on
 

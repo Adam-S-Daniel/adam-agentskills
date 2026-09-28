@@ -75,7 +75,7 @@ jobs:
             npm install -g @anthropic-ai/claude-code@latest
             source="npm latest"
           fi
-          version="$(timeout 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
+          version="$(timeout -k 10 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
           # First line only, and only characters a version string needs: this
           # lands in a markdown code span in the step summary.
           version="${version%%$'\n'*}"

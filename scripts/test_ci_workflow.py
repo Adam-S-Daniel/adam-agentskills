@@ -328,7 +328,7 @@ def test_the_install_step_installs_latest_only_when_none_is_usable():
 
 def test_the_install_step_bounds_version_and_records_it():
     run = _install_step()["run"]
-    assert "timeout 60 claude --version" in run
+    assert 'version="$(timeout -k 10 60 claude --version)"' in run
     assert '"::error::claude --version failed"' in run
     assert '"::error::claude --version printed no version"' in run
     assert '"$GITHUB_STEP_SUMMARY"' in run
@@ -341,7 +341,7 @@ def test_the_plugin_validate_job_has_a_timeout():
 
 
 def _run_install_step(tmp_path, claude_body, npm_body="exit 1",
-                      claude_executable=True):
+                      claude_executable=True, timeout_args=None):
     """Run the real step body with fake `claude` and `npm` first on PATH."""
     import os
     import shutil
@@ -366,9 +366,14 @@ def _run_install_step(tmp_path, claude_body, npm_body="exit 1",
     summary.write_text("", encoding="utf-8")
     env = {"PATH": f"{bindir}:/usr/bin:/bin",
            "GITHUB_STEP_SUMMARY": str(summary)}
+    body = _install_step()["run"]
+    if timeout_args is not None:
+        # The shipped bound is 60 s; a test cannot wait that long, so swap
+        # in a short one. The shape test pins the shipped value.
+        assert "timeout -k 10 60 " in body
+        body = body.replace("timeout -k 10 60 ", f"timeout {timeout_args} ")
     result = subprocess.run(
-        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c",
-         _install_step()["run"]],
+        [bash, "--noprofile", "--norc", "-eo", "pipefail", "-c", body],
         env=env, capture_output=True, text=True, timeout=120)
     return result, summary.read_text(encoding="utf-8")
 
@@ -381,9 +386,24 @@ def test_a_usable_preinstalled_cli_is_recorded(tmp_path):
 
 
 def test_a_failing_version_fails_the_step_loudly(tmp_path):
-    result, _ = _run_install_step(tmp_path, "exit 3")
+    # It prints a plausible version and THEN fails, so only the
+    # "--version failed" guard can stop it; the empty-version guard cannot.
+    result, summary = _run_install_step(
+        tmp_path, 'echo "2.1.283 (Claude Code)"; exit 3')
     assert result.returncode != 0
     assert "::error::claude --version failed" in result.stdout
+    assert summary == ""
+
+
+def test_a_hanging_version_is_ended_even_if_it_ignores_sigterm(tmp_path):
+    import time
+    start = time.monotonic()
+    result, summary = _run_install_step(
+        tmp_path, 'trap "" TERM; sleep 30', timeout_args="-k 1 1")
+    assert time.monotonic() - start < 15
+    assert result.returncode != 0
+    assert "::error::claude --version failed" in result.stdout
+    assert summary == ""
 
 
 def test_an_empty_version_fails_the_step_loudly(tmp_path):
@@ -408,7 +428,8 @@ def test_a_huge_version_line_is_capped(tmp_path):
 
 
 def test_a_non_executable_cli_falls_back_to_npm_latest(tmp_path):
-    npm = ('cat > "$(dirname "$0")/claude" <<\'X\'\n'
+    npm = ('[ "$*" = "install -g @anthropic-ai/claude-code@latest" ] || exit 9\n'
+           'cat > "$(dirname "$0")/claude" <<\'X\'\n'
            '#!/bin/sh\necho "9.9.9 (Claude Code)"\nX\n'
            'chmod 755 "$(dirname "$0")/claude"')
     result, summary = _run_install_step(

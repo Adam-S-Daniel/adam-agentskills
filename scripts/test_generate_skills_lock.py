@@ -4659,7 +4659,7 @@ def test_every_test_this_repo_cites_by_name_exists():
     Scanned over every non-test source this repo tracks, so a citation in the
     hook counts the same as one in the generator. A name resolves if some
     tracked module defines it as a function OR is a test module of that name
-    (`scripts/account_zip_selection.py` names its own test file).
+    (`scripts/check_skills.py` names its own test file, `test_check_skills.py`).
     """
     tracked = subprocess.run(
         ["git", "ls-files", "*.py", "*.sh"],

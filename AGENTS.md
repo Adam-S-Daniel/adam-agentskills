@@ -134,8 +134,12 @@ it is enabled anywhere.
   append-only), so do not add one to paper over a rename — do not rename.
 - After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
   owner machine right away (a plain `bash setup.sh` only links skills and
-  registers no hook). A stale global sync-skills pre-push hook keeps pointing at the old
-  plugin path and fails every `git push` from every repo until re-registered.
+  registers no hook). Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
+  a stale global sync-skills pre-push hook kept pointing at the old plugin
+  path and failed every `git push` from every repo until re-registered;
+  `setup.sh --owner-machine` now only removes that retired hook's global
+  git-config sections, so a machine that ran an earlier version still needs
+  one `--owner-machine` run to stop failing pushes.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is base.md's "Prove the verifier can fail before you trust it" — the
   `test_account_zip_selection.py` incident there is this repo's own, so only

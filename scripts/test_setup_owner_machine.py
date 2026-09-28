@@ -42,14 +42,29 @@ def run_setup(tmp_path: Path, *args: str, env_extra=None) -> subprocess.Complete
                           env=env, capture_output=True, text=True, cwd=str(tmp_path))
 
 
-def global_hook(tmp_path: Path) -> str:
+def global_hook(tmp_path: Path, section: str = "hook.sync-skills-reminder") -> str:
     config = tmp_path / "gitconfig"
     if not config.exists():
         return ""
     proc = subprocess.run(["git", "config", "--file", str(config), "--get",
-                           "hook.sync-skills-reminder.event"],
+                           f"{section}.event"],
                           capture_output=True, text=True)
     return proc.stdout.strip()
+
+
+def seed_global_hook_sections(tmp_path: Path) -> None:
+    """Seed both retired hook sections in the throwaway global git config, the
+    way an earlier sync-skills setup.sh run would have left them — so the
+    owner-machine cleanup step has something real to remove."""
+    config = tmp_path / "gitconfig"
+    for section in ("hook.sync-skills-reminder", "hook.sync-skills-private-reminder"):
+        subprocess.run(
+            ["git", "config", "--file", str(config), f"{section}.event", "pre-push"],
+            check=True)
+        subprocess.run(
+            ["git", "config", "--file", str(config), f"{section}.command",
+             "bash \"/old/path/to/sync-skills/hooks/pre-push\""],
+            check=True)
 
 
 def test_a_plain_run_only_links_skills(tmp_path):
@@ -82,7 +97,41 @@ def test_the_owner_machine_opt_in_runs_both_steps(tmp_path, how):
                           .read_text(encoding="utf-8"))
     assert settings["syncClaudeAiSkills"] is False
     assert settings["enabledPlugins"]["adam-coding-local@adam-agentskills"] is True
+    # A fresh machine never had the retired hook registered, so there is
+    # nothing to clean up and nothing gets written.
+    assert global_hook(tmp_path) == ""
+    assert global_hook(tmp_path, section="hook.sync-skills-private-reminder") == ""
+
+
+def test_the_owner_machine_opt_in_cleans_up_both_stale_hook_sections(tmp_path):
+    seed_global_hook_sections(tmp_path)
+    proc = run_setup(tmp_path, "--owner-machine")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert global_hook(tmp_path) == ""
+    assert global_hook(tmp_path, section="hook.sync-skills-private-reminder") == ""
+    assert "REMOVED  global hook section: hook.sync-skills-reminder" in proc.stdout
+    assert "REMOVED  global hook section: hook.sync-skills-private-reminder" in proc.stdout
+
+
+def test_a_second_owner_machine_run_does_not_repeat_the_hook_cleanup(tmp_path):
+    seed_global_hook_sections(tmp_path)
+    first = run_setup(tmp_path, "--owner-machine")
+    assert first.returncode == 0, first.stdout + first.stderr
+    second = run_setup(tmp_path, "--owner-machine")
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "REMOVED" not in second.stdout
+    assert global_hook(tmp_path) == ""
+    assert global_hook(tmp_path, section="hook.sync-skills-private-reminder") == ""
+
+
+def test_a_plain_run_does_not_touch_a_stale_hook_section(tmp_path):
+    # Without --owner-machine, setup.sh must not clean up (or touch at all)
+    # the global git config — that is an owner-machine-only step.
+    seed_global_hook_sections(tmp_path)
+    proc = run_setup(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
     assert global_hook(tmp_path) == "pre-push"
+    assert global_hook(tmp_path, section="hook.sync-skills-private-reminder") == "pre-push"
 
 
 def test_an_unknown_argument_is_refused_before_anything_runs(tmp_path):

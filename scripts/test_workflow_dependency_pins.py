@@ -434,8 +434,8 @@ def governed_files(root=REPO_ROOT):
 
 def join_continuations(body: str) -> str:
     """Fold `\\`-continued shell lines into one, so a command split across
-    lines is one command to the scanner. account-skill-zips.yml's install is
-    written that way.
+    lines is one command to the scanner. account-skill-zips.yml (since
+    retired, ADR 0014) wrote its install that way.
 
     The continuation is REMOVED rather than replaced by a space, because that
     is what bash does: `pi\\` newline `p install` is `pip install` to bash, and
@@ -451,9 +451,8 @@ def join_continuations(body: str) -> str:
     `hi` to `pip`, leaving a single `echo` command with no `pip` token and the
     install never classified at all. Measured: `scan_shell_body` on that body
     returned `([], [])`, a silent pass of an unpinned install, which is the
-    one outcome this file promises never to produce. The sibling scanner in
-    scripts/test_account_workflows.py already models the rule
-    (`test_an_escaped_backslash_does_not_continue_a_line`); this one did not.
+    one outcome this file promises never to produce, and which this file did
+    not guard against until this fix.
     Backslashes pair off, so an ODD run ends in a continuation and an even one
     does not.
     """
@@ -1204,8 +1203,9 @@ def test_an_unquotable_shell_body_fails_rather_than_parsing_as_nothing():
 
 
 def test_a_continued_install_is_one_command():
-    """account-skill-zips.yml writes its install across lines with a trailing
-    backslash; the tokens either side of the break belong to one command."""
+    """account-skill-zips.yml (since retired, ADR 0014) wrote its install
+    across lines with a trailing backslash; the tokens either side of the
+    break belong to one command."""
     found, unplaceable = scan_shell_body(
         "python3 -m pip install --quiet \\\n  -r requirements-dev.txt")
     assert not unplaceable
@@ -1552,10 +1552,10 @@ def test_an_install_inside_a_heredoc_is_reported(body):
 
 
 def test_a_heredoc_that_names_no_install_leaves_the_shell_around_it_readable():
-    """account-skill-zips.yml's `pick` job pipes a Python program into
-    `python3 -` from the same body that runs `pip install --quiet -r
-    requirements-dev.txt`. Lifting the heredoc out must not take that install
-    with it."""
+    """account-skill-zips.yml's `pick` job (since retired, ADR 0014) piped a
+    Python program into `python3 -` from the same body that ran `pip install
+    --quiet -r requirements-dev.txt`. Lifting the heredoc out must not take
+    that install with it."""
     found, unplaceable = scan_shell_body(
         "python3 -m pip install -r requirements-dev.txt\n"
         "verdict=$(python3 - <<'PY'\n"
@@ -1795,9 +1795,10 @@ def test_the_allowed_pip_variables_are_the_whitelisted_options_renamed():
 
 def test_a_shell_name_that_merely_starts_like_a_pip_variable_is_not_one(
         tmp_path):
-    """account-skill-zips.yml sets `pip_ok=yes`. Environment variables are
-    case-sensitive and pip reads the uppercase form, so the lowercase flag is
-    not a pip setting and must not be reported as one."""
+    """account-skill-zips.yml (since retired, ADR 0014) set `pip_ok=yes`.
+    Environment variables are case-sensitive and pip reads the uppercase
+    form, so the lowercase flag is not a pip setting and must not be
+    reported as one."""
     write_workflow(tmp_path, """\
 name: CI
 on: push
@@ -1890,5 +1891,6 @@ ORDINARY_SHELL_THAT_MUST_STAY_QUIET = [
 @pytest.mark.parametrize("body", ORDINARY_SHELL_THAT_MUST_STAY_QUIET)
 def test_the_extra_fail_closed_rules_do_not_fire_on_ordinary_shell(body):
     """Fail-closed only pays if it stays quiet on what these workflows do.
-    The third is account-skill-zips.yml's own shape, reduced."""
+    The third is account-skill-zips.yml's own shape, reduced (that workflow
+    is since retired, ADR 0014)."""
     assert scan_shell_body(body) == ([], [])

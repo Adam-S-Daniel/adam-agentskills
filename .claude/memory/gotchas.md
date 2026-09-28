@@ -6,8 +6,7 @@
 - claude-memory-map: the `@sparticuz/chromium` serverless test path is broken in
   v131 (`.default` removed); CI uses `npm run setup:browser` instead.
 - Expect a one-time `claude plugin install <plugin>@adam-agentskills` touch per
-  machine after a plugin move (plugin-cache-miss); sync-skills flags every
-  skill changed once (hash-dedup makes the re-upload a no-op).
+  machine after a plugin move (plugin-cache-miss).
 - In _agent-guidance, `test/run-tests.sh` (test_drift_report) writes mock
   data into the real `drift-report.md`. That file is **gitignored and untracked**
   on `main` (ADR 0001 moved the published copy to the `drift-report-latest`

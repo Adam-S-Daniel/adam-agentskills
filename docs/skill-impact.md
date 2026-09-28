@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-28 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: its uploader-binding tests imported the retired sync-skills (`_uploader()` in `scripts/test_check_provenance.py`), which broke in a flat checkout once `plugins/adam-coding-local/skills/sync-skills/` was deleted.
+- Change: the three binding tests and the `_uploader()` helper removed; `UPLOAD_SKIP_DIRS`/`UPLOAD_SKIP_DIR_PREFIXES`/`UPLOAD_SKIP_EXTS` frozen at the retired uploader's values with a new pinning test; comments and report wording updated to say the constants mirror the retired uploader (ADR 0014) rather than a live one; `adam-coding-anywhere` bumped 1.1.0 -> 1.1.1. (PR #TBD)
+- Eval: none — test and wording change only.
+- Outcome: pending merge.
+
+## 2026-09-28 — adam-coding-local/sync-skills — remove
+
+- Motivation: [issue #23](https://github.com/Adam-S-Daniel/adam-agentskills/issues/23) step 2 — the claude.ai ZIP-upload channel is replaced by the repo-synced plugin channel (ADR 0013, E6), confirmed on every surface including local Cowork.
+- Change: skill deleted (`sync-skills/`, `account-skills.txt`, `scripts/account_zip_selection.py`, both account-store workflows, `account-state.json`, the ADR 0006 drift loop); `adam-coding-local` bumped 1.1.0 -> 2.0.0. New [ADR 0014](decisions/0014-retire-the-account-zip-upload-channel.md). (PR #TBD)
+- Eval: exempt — removal.
+- Outcome: pending merge.
+
 ## 2026-09-28 — adam-coding-anywhere/vendor-release-impact-issues — create (eval result; corrects the 2026-09-25 entry)
 
 - Motivation: the 2026-09-25 entry says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.

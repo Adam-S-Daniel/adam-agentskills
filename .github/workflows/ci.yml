@@ -50,18 +50,40 @@ jobs:
   plugin-validate:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # The CLI floats to npm `latest`; a release that hangs must not hold a
+    # runner for GitHub's 6-hour default.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: '22'
       - name: Install Claude Code
-        # Pinned: the CLI version is sometimes the variable under test (see
-        # docs/experiments/), so validation results must be reproducible rather
-        # than silently re-baselined by whatever `latest` resolves to today.
-        # 2.1.223 is the `stable` dist-tag, published 2026-08-05 — old enough to
-        # satisfy this repo's 7-day dependency cooling-off as of 2026-08-14.
-        run: npm install -g @anthropic-ai/claude-code@2.1.223
+        # Harness CLIs are unpinned (fleet rule, _agent-guidance base.md
+        # "Dependency updates"; the owner's call, 2026-09-27): use the CLI the
+        # runner already has, else install npm `latest`. The CLI version is
+        # sometimes the variable under test (see docs/experiments/), so the
+        # version that ran is recorded in the step summary to keep a result
+        # reproducible after the fact. No model runs in this job, so the CLI
+        # version is the only thing to record. scripts/test_ci_workflow.py
+        # runs this body against fake binaries.
+        run: |
+          set -euo pipefail
+          if [[ -x "$(command -v claude)" ]]; then
+            source=preinstalled
+          else
+            npm install -g @anthropic-ai/claude-code@latest
+            source="npm latest"
+          fi
+          version="$(timeout -k 10 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
+          # First line only, and only characters a version string needs: this
+          # lands in a markdown code span in the step summary.
+          version="${version%%$'\n'*}"
+          version="${version:0:80}"
+          version="${version//[^A-Za-z0-9._() -]/}"
+          [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
+          echo "harness: Claude Code ${version} (${source})"
+          { echo "### Harness"; echo "Claude Code \`${version}\` (${source})"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins
         run: claude plugin validate . --strict
 

@@ -82,7 +82,7 @@ GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9.
 # falsely.
 #
 # Why exactly these two, checked against the CLI's own plugin-source schema
-# (Claude Code 2.1.231; CI pins 2.1.223) rather than assumed:
+# (Claude Code 2.1.231, when CI pinned 2.1.223) rather than assumed:
 #   * the `github` variant of a marketplace PLUGIN source declares `repo`, plus
 #     optional `ref` and `sha` — and nothing else;
 #   * `path` is NOT part of it. It belongs to the separate MARKETPLACE source

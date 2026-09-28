@@ -109,9 +109,10 @@ def account_bucket_id() -> Optional[str]:
 
     A hand-rolled read of the CLI's own config for `declared_name`'s reason:
     this file ships into a `~/.claude/skills` where nothing is installed but
-    the standard library, so there is no sync-skills to import the same
-    resolution from. `test_the_bucket_resolution_matches_the_uploaders` binds
-    the two copies together so they cannot drift silently.
+    the standard library. It once bound this resolution to sync-skills', the
+    uploader that read the same config for the same purpose; sync-skills is
+    retired (ADR 0014), so this is now the only copy and the last uploader's
+    resolution is what it is frozen at.
     """
     try:
         with open(CLI_CONFIG_FILE, encoding="utf-8") as handle:
@@ -206,7 +207,7 @@ def account_store_path(skills_dir: Path) -> Optional[Path]:
 # skill with each other.
 CRLF, LF = b"\r\n", b"\n"
 
-# What the uploader drops on the way into the account store, mirrored from
+# What the uploader dropped on the way into the account store, frozen at
 # `_SKIP_DIRS`, `_SKIP_DIR_PREFIXES` and `_SKIP_EXTS` in sync-skills'
 # `sync_skills.py`. The account copy of a skill is not the directory the registry
 # holds: it is the ZIP `zip_skill` built out of it, and these never went in. A
@@ -216,9 +217,12 @@ CRLF, LF = b"\r\n", b"\n"
 # the resting state of every cloud session here.
 #
 # A hand copy for `digest_skill_dir`'s reason: this file ships into a
-# `~/.claude/skills` that holds no sync-skills to import from.
-# `test_the_upload_filter_matches_the_uploaders` binds each set below to the
-# uploader's own, so the copy cannot drift silently.
+# `~/.claude/skills` that holds no sync-skills to import from. sync-skills
+# itself is retired (ADR 0014), so these values are no longer mirrored from a
+# live uploader — they are frozen at the last uploader's filter, which is what
+# built every copy still sitting in the account store.
+# `test_the_upload_filters_are_pinned_to_the_retired_uploaders_values` pins
+# them, so a further edit here is a deliberate, reviewed change.
 UPLOAD_SKIP_DIRS = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv",
                               "node_modules"})
 UPLOAD_SKIP_DIR_PREFIXES = ("pytest-cache-files-",)
@@ -2884,11 +2888,11 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
 
     Both texts say the benign case is a property of THIS MOMENT rather than of
     the design, because it is. The copies update on different clocks — the
-    personal one at every session start from `skills.lock`, the account one only
-    when someone runs `sync-skills` — so "edit a skill, regenerate the lock,
-    forget to re-upload" turns the note into the finding with nothing having
-    gone wrong in between, and nothing in CI can see it: the collision exists
-    only on a surface CI never stands on.
+    personal one at every session start from `skills.lock`, the account one
+    only when the account copy is replaced (the sync-skills uploader was
+    retired, ADR 0014) — so "edit a skill, regenerate the lock" turns the note
+    into the finding with nothing having gone wrong in between, and nothing in
+    CI can see it: the collision exists only on a surface CI never stands on.
 
     That clocks sentence is why `surface` is a parameter. It is quoted into
     every branch below, the benign note among them — which is the ordinary
@@ -2925,8 +2929,9 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
                 f"disk or in any log says which copy the model read.")
         clocks = ("The two copies update on different clocks: the personal one "
                   "tracks skills.lock and is refreshed at every session start, "
-                  "the account one changes only when someone runs sync-skills "
-                  "from a machine with a browser. `--account-drift <registry>` "
+                  "the account one changes only when the account copy is "
+                  "replaced (the sync-skills uploader was retired, ADR 0014). "
+                  "`--account-drift <registry>` "
                   "compares the account copy against a registry checkout by "
                   "CONTENT and reports that pair on its own; it is a different "
                   "question from this one and has no notion of a session where "

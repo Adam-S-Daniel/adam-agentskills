@@ -115,8 +115,9 @@ That registers the new marketplaces, enables the new plugins and writes
 `false` for the retired registry's plugins (`adam`, `adam-local`, `fastmail`,
 `adam-personal`, `adam-private`), so nothing loads twice; it leaves the old
 marketplace entries themselves in place — remove those with
-`claude plugin marketplace remove`. Re-running it also re-registers the global sync-skills pre-push hook, which
-otherwise points at the old path and **blocks every `git push` from any repo**.
+`claude plugin marketplace remove`. Re-running it also cleans up the retired global sync-skills
+pre-push hook ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)), which
+otherwise points at a script that no longer exists and **blocks every `git push` from any repo**.
 
 Available skills:
 
@@ -135,7 +136,6 @@ Available skills:
 | `adam-coding-local` | `/adam-coding-local:launch-top-level-claude-session` | Launch a new, top-level, interactive Claude Code session in a new Windows Terminal tab — native Windows or inside WSL — in a chosen folder, optionally remote-controllable and optionally seeded with an initial prompt or a handoff file. |
 | `adam-coding-local` | `/adam-coding-local:migrate-claude-memory` | Inventory, clean up, and migrate Claude Code auto-memory stores found under ~/.claude/projects/<munged-path>/memory/ on this machine. |
 | `adam-coding-local` | `/adam-coding-local:sync-cc-settings-between-wsl-and-windows` | Sync Claude Code settings.json between a Windows home and a WSL home. |
-| `adam-coding-local` | `/adam-coding-local:sync-skills` | Sync local skill folders from git repos to Claude.ai (and other agent targets) via the upload-skill API. |
 | `adam-coding-local` | `/adam-coding-local:windows-elevation-from-wsl` | Handle "Access is denied" from powershell.exe or pwsh.exe run inside WSL — Register-ScheduledTask / Set-ScheduledTask on a RunLevel=HighestAvailable task, a service change (Set-Service, Stop-Service, New-Service), an LSA rights grant such as "Log on as a batch job" (SeBatchLogonRight, secedit, ntrights), an HKLM registry write, or any other change to Windows state from a WSL session. |
 | `adam-non-coding-local` | `/adam-non-coding-local:add-from-address` | Add one or more email addresses to a Fastmail account as selectable "From" (sending) identities by triggering the add-from-address GitHub Actions workflow in the Adam-S-Daniel/fastmail-actions repo (which does the JMAP work with the FASTMAIL_API_TOKEN repo secret). |
 | `adam-non-coding-local` | `/adam-non-coding-local:add-received-from-addresses` | Discover which of a Fastmail account's own alias addresses are worth being able to send from, and add them as "From" identities, by triggering the add-received-from-addresses GitHub Actions workflow in the Adam-S-Daniel/fastmail-actions repo (which does the JMAP work with the FASTMAIL_API_TOKEN repo secret). |
@@ -194,8 +194,10 @@ run `/reload-skills` to re-scan the skill directories in place.
 additionally configures a machine the way the registry's owner runs it, and
 is **not** for anyone else's machine:
 
-- registers the sync-skills pre-push reminder as a **global** git hook
-  (`git config --global`), so it fires in every repo on the machine;
+- removes the retired global sync-skills pre-push hook (`hook.sync-skills-reminder`
+  and `hook.sync-skills-private-reminder` in `git config --global`) if a
+  previous run left it registered — idempotent, and a no-op on a machine that
+  never had it ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md));
 - converges `~/.claude/settings.json`: registers this marketplace and the
   owner's **private** one, enables the owner's plugins
   (`adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`,
@@ -314,45 +316,20 @@ write is the delivery channel for ephemeral surfaces. What works where:
   [ADR 0007](docs/decisions/0007-install-the-union-of-every-discovered-lock.md),
   and [`docs/multi-repo-delivery.md`](docs/multi-repo-delivery.md) for the
   wiring such a session needs before any of it runs.
-- **The claude.ai account store** — `~/.claude/skills/synced/<organizationUuid>_<accountUuid>/`
-  on Claude Code 2.1.273+ (a `.bucket-<organizationUuid>_<accountUuid>` marker
-  file sits beside it; older CLIs wrote `~/.claude/skills/synced/` flat, and the
-  tools here read whichever a machine has — see
-  old-registry issue 157), populated by
-  uploading skills as ZIPs via Settings → Capabilities. This is the *only*
-  channel that reaches claude.ai chat, Cowork, Claude in Chrome, and mobile —
-  and it loads in Claude Code on the web / cloud sessions too, alongside
-  whatever the repo delivers. Where both channels carry the same skill NAME the
-  hook's copy wins and the name is listed once — measured in
-  [E5](docs/experiments/E5-account-store-vs-hook-precedence.md), which is also
-  why a stale account copy is shadowed in a hook session and still live in chat,
-  Cowork, mobile and any multi-repo session. It can't be repo-scoped (see
-  [ADR 0002](docs/decisions/0002-limit-account-store-to-repo-independent-skills.md)),
-  so it's reserved for skills that should be live everywhere, not per-repo
-  ones. The [`sync-skills`](plugins/adam-coding-local/skills/sync-skills) skill (in
-  the `adam-coding-local` plugin) automates pushing this registry's skills there.
-  Nothing in CI can see that store — a *surface* limit, not a permissions one:
-  it is files under `~/.claude/skills/synced/`, which a runner simply does not
-  have — so what a runner compares against is
-  [`account-state.json`](account-state.json) — a digest per declared skill,
-  recorded from a session that *does* have the mirror
-  (`sync_skills.py --record-account-state`). The
-  [Account skill ZIPs](.github/workflows/account-skill-zips.yml) workflow reads
-  it, and daily also reads the account audit
-  [skills-evals](https://github.com/Adam-S-Daniel/skills-evals) publishes to its
-  `eval-results` branch — the one thing that does look at the store — building
-  one artifact per skill *either* source calls drifted, each downloading as a
-  `<name>.zip` that uploads to claude.ai as-is: the path for uploading from a
-  phone. The union is deliberate (each source knows something the other cannot),
-  and intersecting the audit's names with the declared list is the guard on
-  reading an unprotected branch — see
-  [ADR 0006](docs/decisions/0006-drive-the-account-store-drift-loop-from-one-published-artifact.md).
-  A `stale` verdict is evidence an upload is needed, never proof one
-  happened. Close the loop afterwards either by re-recording from a machine
-  with the mirror, or — with no mirror, from the phone — by dispatching
-  [Record an account upload](.github/workflows/record-account-upload.yml),
-  which writes the weaker `basis: asserted` and pushes a branch to merge. An
-  observation always overwrites an assertion. See `sync-skills` SKILL.md §9.
+- **The claude.ai account store** is the *only* channel that reaches claude.ai
+  chat, Cowork, Claude in Chrome, and mobile, and it also loads in Claude Code
+  on the web / cloud sessions alongside whatever the repo delivers; where both
+  carry the same skill NAME the hook's copy wins
+  ([E5](docs/experiments/E5-account-store-vs-hook-precedence.md)). It can't be
+  repo-scoped ([ADR 0002](docs/decisions/0002-limit-account-store-to-repo-independent-skills.md)).
+  The account's skills now come from this repo as a repo-synced personal
+  marketplace — enabled once on claude.ai and once in the Desktop app, and
+  updated by hand ("Check for updates" plus a Desktop restart) — rather than
+  from ZIP uploads. The uploader and its drift loop were retired once that
+  channel was confirmed on every surface:
+  [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)
+  (background: [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md),
+  [E6](docs/experiments/E6-account-plugin-channel.md)).
 - **Memory**: hosted sessions see a repo's git-tracked `.claude/memory/` (see the
   Memory section in [`STRATEGY.md`](STRATEGY.md) and the
   [portable-memory guide](https://github.com/Adam-S-Daniel/claude-memory-map/blob/main/docs/portable-memory.md);

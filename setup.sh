@@ -46,12 +46,14 @@
 # OWNER-MACHINE STEPS ARE OPT-IN. Run as `bash setup.sh`, this script only
 # links skills into the per-agent homes above. Two more steps configure a
 # machine the way the registry's OWNER runs it, and they are wrong on anyone
-# else's: registering the global sync-skills pre-push hook (a GLOBAL git
-# config entry, fired in every repo on the machine), and converging
-# ~/.claude/settings.json — which registers the owner's PRIVATE marketplace,
-# enables the owner's plugins and sets `syncClaudeAiSkills: false`, turning
-# off that user's claude.ai account skills in their terminals (ADR 0010, ADR
-# 0013). Both run only with `--owner-machine` or AGENTSKILLS_OWNER_MACHINE=1.
+# else's: cleaning up the retired global sync-skills pre-push hook (ADR
+# 0014) — a GLOBAL git config entry a prior run may have left registered,
+# fired in every repo on the machine, now pointing at a script that no
+# longer exists — and converging ~/.claude/settings.json — which registers
+# the owner's PRIVATE marketplace, enables the owner's plugins and sets
+# `syncClaudeAiSkills: false`, turning off that user's claude.ai account
+# skills in their terminals (ADR 0010, ADR 0013). Both run only with
+# `--owner-machine` or AGENTSKILLS_OWNER_MACHINE=1.
 #
 # Safe to re-run (idempotent). On Windows (Git Bash) it uses `mklink /J`
 # directory junctions — no admin required. Run on Windows AND in WSL
@@ -65,9 +67,9 @@ for arg in "$@"; do
     -h|--help)
       echo "usage: bash setup.sh [--owner-machine]"
       echo "  (default)        link every skill into ~/.agents/skills, ~/.agent/skills, ~/.cursor/skills"
-      echo "  --owner-machine  also register the global sync-skills pre-push hook and converge"
-      echo "                   ~/.claude/settings.json for the registry owner's own machines"
-      echo "                   (same as AGENTSKILLS_OWNER_MACHINE=1)"
+      echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook and"
+      echo "                   converge ~/.claude/settings.json for the registry owner's own"
+      echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
       exit 0 ;;
     *) echo "ERROR: unknown argument: $arg (see --help)" >&2; exit 2 ;;
   esac
@@ -397,23 +399,20 @@ done
 
 if [[ "$OWNER_MACHINE" == 1 ]]; then
 echo ""
-echo "=== Registering sync-skills pre-push hook ==="
-# Resolve the sync-skills setup script by glob so this file doesn't hardcode
-# which bundle plugin the skill lives in.
-SYNC_SKILLS_SETUP=""
-for candidate in "$PLUGINS_DIR"/*/skills/sync-skills/setup.sh; do
-  # Not through a symlinked skill entry (none should exist; ADR 0013).
-  [[ -L "$(dirname "$candidate")" ]] && continue
-  if [[ -f "$candidate" ]]; then
-    SYNC_SKILLS_SETUP="$candidate"
-    break
+echo "=== Cleaning up the retired sync-skills pre-push hook ==="
+# sync-skills (retired, ADR 0014) registered these as GLOBAL git-config-based
+# hooks (git 2.54+, `git hook list`), so they fired on every push in every
+# repo on the machine. The skill and its setup.sh are gone; a machine that
+# still has either section registered would fail EVERY push the moment
+# something tries to run a hook command pointing at a script that no longer
+# exists. Removal is idempotent — a section already absent is left alone and
+# nothing is printed for it.
+for section in hook.sync-skills-reminder hook.sync-skills-private-reminder; do
+  if git config --global --get-regexp "^${section}\." >/dev/null 2>&1; then
+    git config --global --remove-section "$section"
+    echo "REMOVED  global hook section: $section"
   fi
 done
-if [[ -z "$SYNC_SKILLS_SETUP" ]]; then
-  echo "ERROR: sync-skills setup.sh not found under $PLUGINS_DIR/*/skills/sync-skills/" >&2
-  exit 1
-fi
-bash "$SYNC_SKILLS_SETUP"
 fi
 
 # >>> settings-convergence
@@ -421,7 +420,7 @@ fi
 # a throwaway HOME. Keep both marker lines.
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
-  echo "Skipped the owner-machine steps (global pre-push hook, ~/.claude/settings.json)."
+  echo "Skipped the owner-machine steps (retired global hook cleanup, ~/.claude/settings.json)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else
 echo ""
@@ -484,7 +483,9 @@ TARGET_MARKETPLACES = {
 # ADR 0013: the public registry's plugins are grouped by audience and runtime.
 # A terminal takes the three that make sense on a durable machine from the
 # marketplace, pinned and version-gated: the two `-anywhere` plugins plus
-# `adam-coding-local`, which carries sync-skills and must run here (ADR 0010).
+# `adam-coding-local`, which carries this machine's own local-only skills
+# (sync-cc-settings-between-wsl-and-windows, launch-top-level-claude-session,
+# migrate-claude-memory, windows-elevation-from-wsl) and so must run here.
 # `adam-non-coding-local` is for the Desktop app's local Cowork, not for
 # terminals, so it is left for the operator to enable. From the private
 # registry, `adam-private-anything-anywhere` is enabled the same way.
@@ -540,8 +541,8 @@ TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
 # into a terminal session signed in with it. On a converged machine that is 21
 # more always-on descriptions (~3,236 tok, measured 2026-09-18), three of them
 # a second copy of a skill this machine already has pinned -- and it puts the
-# one channel that drifts in front of sync-skills, the one skill that must run
-# on the laptop.
+# one channel that drifts in front of the machine-bound skills
+# `adam-coding-local` already carries pinned, from the marketplace.
 #
 # False, the JSON boolean: the CLI honours only `false`, so a string "false"
 # or a 0 is an opt-out that silently does not happen. Only user, local or

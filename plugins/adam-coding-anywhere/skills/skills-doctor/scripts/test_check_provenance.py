@@ -529,56 +529,23 @@ def test_the_digest_is_none_for_a_path_that_is_not_a_directory(tmp_path):
     assert prov.digest_skill_dir(plain) is None
 
 
-def _uploader():
-    """sync-skills' `sync_skills` module — the other end of the upload filter."""
-    _walk_up("plugins/adam-coding-local/skills/sync-skills/sync_skills.py")
-    import sync_skills
+def test_the_upload_filters_are_pinned_to_the_retired_uploaders_values():
+    """`UPLOAD_SKIP_*` no longer mirrors a live uploader — it is frozen.
 
-    return sync_skills
-
-
-def test_the_upload_filter_matches_the_uploaders(tmp_path):
-    """The binding that keeps `UPLOAD_SKIP_*` a copy of the uploader's rule.
-
-    The account copy of a skill is whatever `zip_skill` put in the ZIP, so the
-    only correct definition of "what both channels carry" is the uploader's own
-    `_include_in_zip`. This file cannot import it — it ships into a
-    `~/.claude/skills` with no sync-skills in it — so the sets are re-declared,
-    and a re-declaration that drifts does not fail loudly: it turns whichever
-    artefact stopped being skipped into a `shadow-copies-differ` FINDING about a
-    session where nothing is wrong.
+    sync-skills, the ZIP uploader these constants mirrored, was retired
+    (ADR 0014): `plugins/adam-coding-local/skills/sync-skills/` is gone, so
+    there is nothing left to bind against and nothing left to drift out of
+    sync with. But every skill already sitting in the claude.ai account store
+    got there as a ZIP `zip_skill` built with exactly this filter, so the
+    filter is still the correct definition of "what the account copy holds" —
+    it just cannot be re-verified against a live uploader any more. This pins
+    today's values so a future edit here is a deliberate, reviewed change
+    rather than a silent one.
     """
-    up = _uploader()
-    assert prov.UPLOAD_SKIP_DIRS == up._SKIP_DIRS
-    assert prov.UPLOAD_SKIP_DIR_PREFIXES == up._SKIP_DIR_PREFIXES
-    assert prov.UPLOAD_SKIP_EXTS == up._SKIP_EXTS
-
-
-def test_the_shared_payload_selects_what_the_uploader_would_have_zipped(tmp_path):
-    """Bound to the uploader end to end, not just to its constant names.
-
-    Re-declaring the sets correctly and then applying them differently —
-    matching a directory name against the file's suffix, say, or testing only
-    the last path segment — passes the binding above and still digests a file
-    the account copy never held.
-    """
-    up = _uploader()
-    skill = tmp_path / "skill"
-    for relpath, data in (("SKILL.md", b"---\nname: skill\n---\nbody\n"),
-                          ("scripts/helper.py", b"x = 1\n"),
-                          ("scripts/__pycache__/helper.cpython-311.pyc", b"\x00c"),
-                          ("scripts/helper.pyo", b"\x00o"),
-                          ("payload.b64", b"AAAA"),
-                          (".pytest_cache/v/last", b"{}"),
-                          ("pytest-cache-files-abc/tmp", b"scratch"),
-                          ("node_modules/dep/index.js", b"x")):
-        target = skill / relpath
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(data)
-
-    mine = {relpath for relpath, _ in prov.uploaded_files(skill)}
-    assert mine == set(up.skill_payload(skill)), (
-        "the doctor's upload filter has drifted from what a real upload carries")
+    assert prov.UPLOAD_SKIP_DIRS == frozenset(
+        {"__pycache__", ".pytest_cache", ".git", ".venv", "node_modules"})
+    assert prov.UPLOAD_SKIP_DIR_PREFIXES == ("pytest-cache-files-",)
+    assert prov.UPLOAD_SKIP_EXTS == frozenset({".pyc", ".pyo", ".b64"})
 
 
 # ---------------------------------------------------------------------------
@@ -6506,45 +6473,6 @@ def test_a_bucketed_account_copy_still_shadows_a_personal_one(tmp_path, capsys,
     code, out = run(store, lock, capsys)
     assert code == 0, out
     assert "[shadowed-by-the-account-store] writing-adrs" in out, out
-
-
-def test_the_bucket_resolution_matches_the_uploaders(tmp_path, monkeypatch):
-    """The binding that keeps this file's bucket rule a copy of sync-skills'.
-
-    Both tools read the same directory on the same machine, and this one cannot
-    import the other — it ships into a `~/.claude/skills` with no sync-skills in
-    it — so the resolution is re-declared. A re-declaration that drifts does not
-    fail loudly: the two tools would disagree about WHICH ACCOUNT they are
-    reporting on, and each would look internally consistent while doing it.
-
-    Bound behaviourally rather than by constant name: the same tree is put in
-    front of both, and they have to name the same directory.
-    """
-    up = _uploader()
-    assert prov.BUCKET_NAME_RE.pattern == up.BUCKET_NAME_RE.pattern
-    assert prov.BUCKET_MARKER_PREFIX == up.BUCKET_MARKER_PREFIX
-
-    store = tmp_path / "skills"
-    root = store / prov.ACCOUNT_DIR
-    for bucket in (ORG_UUID + "_" + ACCT_UUID, OTHER_ORG + "_" + OTHER_ACCT):
-        (root / bucket).mkdir(parents=True)
-        (root / bucket / "manifest.json").write_text("{}", encoding="utf-8")
-        (root / (".bucket-" + bucket)).write_bytes(b"")
-    config = write_cli_config(tmp_path / "claude.json", OTHER_ORG, OTHER_ACCT)
-    monkeypatch.setattr(prov, "CLI_CONFIG_FILE", config)
-    monkeypatch.setattr(up, "CLI_CONFIG_FILE", config)
-    monkeypatch.setattr(up, "ACCOUNT_SKILLS_DIR", root)
-    monkeypatch.delenv("CLAUDE_CODE_ACCOUNT_UUID", raising=False)
-
-    assert prov.account_store_path(store) == up.account_mirror_dir()
-
-    # And they refuse together, which is the half that matters: one tool
-    # guessing while the other declines is how a "clean" verdict gets paired
-    # with a real one and read as agreement.
-    monkeypatch.setattr(prov, "CLI_CONFIG_FILE", tmp_path / "absent.json")
-    monkeypatch.setattr(up, "CLI_CONFIG_FILE", tmp_path / "absent.json")
-    assert prov.account_store_path(store) is None
-    assert up.account_mirror_dir() is None
 
 
 # =====================================================================================

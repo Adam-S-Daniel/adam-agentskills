@@ -41,8 +41,8 @@ A skill's repo is decided by **sensitivity, not by how personal it is**:
 
 Both repos use the **same** plugin + marketplace structure
 (`plugins/<plugin>/skills/<skill>/`, `.claude-plugin/marketplace.json`,
-`defaultEnabled`, the `setup.sh` de-dup), so the installer and `sync-skills`
-behave identically across them (Phase 2 in old-registry issue #18). Plugins are named by
+`defaultEnabled`, the `setup.sh` de-dup), so the installer behaves identically
+across them (Phase 2 in old-registry issue #18). Plugins are named by
 audience and runtime, `[adam|adam-private]-[coding|non-coding|anything]-[local|anywhere]`.
 The public registry has four: `adam-anything-anywhere` and
 `adam-coding-anywhere` (default-enabled), `adam-coding-local` and
@@ -60,8 +60,12 @@ embed secrets or PII:
   2026-09-22 — no longer a current skill.)
 - `fastmail` — drives email through a live, already-authenticated Claude-in-Chrome
   session; the `SKILL.md` carries no credentials of its own. **Public is correct.**
-- `sync-cc-settings-between-wsl-and-windows`, `sync-skills` — operate on local
-  paths / the user's own browser session; no embedded secrets. **Public is correct.**
+- `sync-cc-settings-between-wsl-and-windows` — operates on local paths; no
+  embedded secrets. **Public is correct.**
+- `sync-skills` — operated on the user's own browser session; no embedded
+  secrets. **Public is correct.** (Removed from the registry by
+  [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
+  2026-09-28 — no longer a current skill.)
 - The remaining skills (`workflow-path-audit`,
   `github-actions-repo-settings`, `rename-pdfs`) are generically reusable.
   **Public is correct.**

@@ -22,7 +22,7 @@ record rather than inferring, and it **reports, never repairs**.
 - **old-registry #84 — every file correct, nothing ever runs.** The lock and the hook were
   both right; what was missing was a settings file at a level the hook chain
   actually reads (ADR 0005, ADR 0007).
-- **False drift from timestamps.** Account drift was judged by `updatedAt`
+- **False drift from timestamps (historical; `--account-drift` retired by ADR 0014).** Account drift was judged by `updatedAt`
   against `git log`, so a repo-wide path move re-flagged every skill it
   touched: `pdf-ocr-audit` and `bell-schedule` both read STALE while being
   byte-identical once CRLF was folded. Content is the verdict now and the
@@ -40,8 +40,7 @@ record rather than inferring, and it **reports, never repairs**.
   syncs the account store into every terminal session signed in with the
   account. E5 §7 had called the exposure "the exact inverse of the delivery" —
   the channel that drifts served the surfaces with no lock coverage — and that
-  stopped being true: it now serves all of them, `sync-skills` included, which
-  is the one skill that must run on the laptop. ADR 0010 opts durable machines
+  stopped being true: it now serves all of them. (ADR 0014 later retired the uploads; the opt-out now only keeps Anthropic's account skills out of terminals.) ADR 0010 opts durable machines
   out and leaves cloud sessions syncing, because they cannot opt out, so two
   surfaces now load different sets on purpose. `--account-channel` reports
   which: the settings-chain verdict for both keys, every account skill whose
@@ -59,10 +58,16 @@ exists at all (ADR 0002, E5).
 ## The rule every finding is written to
 
 A verdict that could not be measured must never be printed as a clean one.
-`store_findings` raises when the personal store is unreadable, `account_drift`
-distinguishes "0 drifted" from "could not resolve the store", and
-`DriftReport.blocked` is a separate field rather than a magic zero for exactly
-that reason.
+`store_findings` raises when the personal store is unreadable, and
+`resolve_account_store` REFUSES (`path is None`) rather than returning an empty
+store, which the shadow and `--account-channel` reports treat as "not compared".
+
+## ADR 0014 change (2026-09-28)
+
+`--account-drift`, `account_drift`, `DriftReport` and `registry_copy` were removed
+with the retired account-store uploads; the shadow finding's remedy now says to
+remove a stale account copy instead of re-uploading. Shadow detection and
+`--account-channel` stay.
 
 ## Eval status
 

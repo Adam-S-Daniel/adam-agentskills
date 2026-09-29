@@ -29,12 +29,11 @@
 - skills-evals harness is dual-layout (glob plugins/*/skills/<skill>) and
   fully hermetic (47 tests, verified under unshare -rn); real evals are the
   only network path.
-- **Account-store drift loop, both halves landed 2026-08-21:** adam-agentskills
-  reads `eval-results:propagation/account/latest.json` daily (ADR 0006);
-  skills-evals' `account-store-drift.yml` (#52, merged) owns the tracking
-  issue's lifecycle off the same artifact and the same `freshness_verdict`.
-  The middle step — the upload itself — stays manual: browser-session auth,
-  no headless write path.
+- **Account-store drift loop RETIRED 2026-09-28 (ADR 0014):** every surface takes
+  skills from the marketplace plugins and the owner emptied the claude.ai account
+  store of uploads. adam-agentskills deleted the ZIP workflows, `account-state.json`
+  and the sync-skills skill; skills-evals' `account-store-drift.yml` half is that
+  repo's to retire. Anthropic's own skills still arrive via `synced/`.
 
 Cloud/ephemeral skill delivery has since moved past E1's NO-GO — see
 AGENTS.md's "Skills ecosystem" section for the current (E2-derived)

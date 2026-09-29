@@ -76,3 +76,15 @@ the retirement those already decided, once step 1's confirmation landed.
   rule that still governs account-store content
 - [E6](../experiments/E6-account-plugin-channel.md) — the plugin-channel
   measurements
+
+## Addendum 2026-09-28: skills-doctor `--account-drift`
+
+`skills-doctor --account-drift` (and `account_drift`, `DriftReport`,
+`registry_copy`) is removed too, in [PR #35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35):
+it read skills-evals' `propagation/account/latest.json`, which
+[skills-evals#211](https://github.com/Adam-S-Daniel/skills-evals/pull/211) stopped
+publishing. `--account-channel` and the shadow checks stay.
+[ADR 0002](0002-limit-account-store-to-repo-independent-skills.md) is marked
+superseded and [ADR 0010](0010-let-pinned-channels-own-the-terminal.md)
+partially superseded by this ADR. Owner machines still need
+`bash setup.sh --owner-machine` re-run once (see the last consequence above).

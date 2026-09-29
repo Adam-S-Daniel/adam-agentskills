@@ -91,7 +91,7 @@ Optional sections for high-impact decisions:
 | ADR | Title | Status |
 |-----|-------|--------|
 | [0001](0001-consolidate-plugins-into-bundles.md) | Consolidate single-skill plugins into three bundles | Superseded by 0013 |
-| [0002](0002-limit-account-store-to-repo-independent-skills.md) | Limit the claude.ai account store to personal, repo-independent skills | Accepted (partially superseded by 0011) |
+| [0002](0002-limit-account-store-to-repo-independent-skills.md) | Limit the claude.ai account store to personal, repo-independent skills | Superseded by 0014 (earlier: partially superseded by 0011) |
 | [0003](0003-retire-the-sha-pinning-skill.md) | Retire the SHA-pinning skill and carry its rule in managed guidance | Accepted (superseded in part by 0004) |
 | [0004](0004-drop-the-version-comment-from-sha-pins.md) | Drop the version comment from SHA-pinned actions | Accepted |
 | [0005](0005-resolve-hooks-only-from-cwd-and-user-settings.md) | Resolve hooks only from the cwd and user settings chains | Accepted (open questions answered by 0007) |
@@ -99,7 +99,7 @@ Optional sections for high-impact decisions:
 | [0007](0007-install-the-union-of-every-discovered-lock.md) | Install the union of every discovered lock in a multi-repo session | Accepted |
 | [0008](0008-refuse-symlinks-in-a-skill-directory.md) | Refuse symlinks in a skill directory rather than digest them | Accepted |
 | [0009](0009-bump-bundle-versions-on-every-release.md) | Bump bundle versions on every release so `plugin update` can fire | Proposed |
-| [0010](0010-let-pinned-channels-own-the-terminal.md) | Let pinned channels own the terminal and leave the account channel the surfaces with nothing else | Accepted |
+| [0010](0010-let-pinned-channels-own-the-terminal.md) | Let pinned channels own the terminal and leave the account channel the surfaces with nothing else | Accepted (partially superseded by 0014) |
 | [0011](0011-remove-a-school-bell-schedule-skill-from-registry-and-account.md) | Remove a school bell-schedule skill from the registry and the account store | Accepted |
 | [0012](0012-serve-the-account-skills-as-one-repo-synced-plugin.md) | Serve the account's skills as one repo-synced plugin | Superseded by 0013 |
 | [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) | Start a fresh public registry and group plugins by audience and runtime | Accepted |

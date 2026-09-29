@@ -29,7 +29,7 @@ hardcoded):
     resolver's 16-hop depth limit, with no cycles, no self-mappings, and
     no key that shadows a current plugin name;
   - skill directory basenames are unique across the whole repo, since they
-    key setup.sh's per-agent symlinks and claude.ai skill uploads;
+    key setup.sh's per-agent symlinks and consumer skills.lock entries;
   - optionally, that no skill basename collides with one in another repo
     with the same plugins/*/skills/* layout (--private-registry PATH).
 

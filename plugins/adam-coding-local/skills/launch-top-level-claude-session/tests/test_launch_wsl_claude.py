@@ -67,7 +67,9 @@ BASH = shutil.which("bash")
 PWSH = os.environ.get("LAUNCH_WSL_CLAUDE_PWSH") or shutil.which("pwsh")
 
 # Decode subprocess output explicitly and never die on a stray byte:
-# `text=True` alone is locale-decoded (cp1252 on Windows) and not safe here.
+# `text=True` alone lets the OS/locale choose the decoder (cp1252 on
+# Windows), which raises UnicodeDecodeError on a byte outside that codepage;
+# utf-8 with errors=replace is deterministic across platforms.
 TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
 

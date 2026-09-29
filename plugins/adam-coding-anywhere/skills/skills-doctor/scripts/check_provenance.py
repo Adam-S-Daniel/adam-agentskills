@@ -109,8 +109,10 @@ def account_bucket_id() -> Optional[str]:
 
     A hand-rolled read of the CLI's own config for `declared_name`'s reason:
     this file ships into a `~/.claude/skills` where nothing is installed but
-    the standard library. (It once mirrored the retired sync-skills uploader's
-    resolution, ADR 0014; the CLI's own layout is the only reference now.)
+    the standard library. It once bound this resolution to sync-skills', the
+    uploader that read the same config for the same purpose; sync-skills is
+    retired (ADR 0014), so this is now the only copy and the last uploader's
+    resolution is what it is frozen at.
     """
     try:
         with open(CLI_CONFIG_FILE, encoding="utf-8") as handle:
@@ -205,16 +207,22 @@ def account_store_path(skills_dir: Path) -> Optional[Path]:
 # skill with each other.
 CRLF, LF = b"\r\n", b"\n"
 
-# What an account-store copy of a skill never carried: build artefacts the
-# ZIP upload dropped (the retired sync-skills uploader, ADR 0014). Skills the
-# registry once uploaded may still sit in an account store as stale copies, and
-# a comparison that digests the personal directory whole would read an ordinary
-# build artefact as a second, divergent set of instructions — which is the ONE
-# thing this reporting must not do, because the shadow it describes is the
-# resting state of a cloud session here.
+# What the uploader dropped on the way into the account store, frozen at
+# `_SKIP_DIRS`, `_SKIP_DIR_PREFIXES` and `_SKIP_EXTS` in sync-skills'
+# `sync_skills.py`. The account copy of a skill is not the directory the registry
+# holds: it is the ZIP `zip_skill` built out of it, and these never went in. A
+# comparison that digests the personal directory whole therefore reads an
+# ordinary build artefact as a second, divergent set of instructions — which is
+# the ONE thing this reporting must not do, because the shadow it describes is
+# the resting state of every cloud session here.
 #
-# The uploader that defined this rule is gone, so these sets are now the rule
-# itself and no test binds them to a second copy.
+# A hand copy for `digest_skill_dir`'s reason: this file ships into a
+# `~/.claude/skills` that holds no sync-skills to import from. sync-skills
+# itself is retired (ADR 0014), so these values are no longer mirrored from a
+# live uploader — they are frozen at the last uploader's filter, which is what
+# built every copy still sitting in the account store.
+# `test_the_upload_filters_are_pinned_to_the_retired_uploaders_values` pins
+# them, so a further edit here is a deliberate, reviewed change.
 UPLOAD_SKIP_DIRS = frozenset({"__pycache__", ".pytest_cache", ".git", ".venv",
                               "node_modules"})
 UPLOAD_SKIP_DIR_PREFIXES = ("pytest-cache-files-",)
@@ -2879,12 +2887,11 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
 
     Both texts say the benign case is a property of THIS MOMENT rather than of
     the design, because it is. The copies update on different clocks — the
-    personal one at every session start from `skills.lock`, the account one only
-    when the account channel changes it (the registry's uploads are retired,
-    ADR 0014, so a lingering account copy of a registry skill only ever ages) —
-    so "edit a skill, regenerate the lock" turns the note into the finding with
-    nothing having gone wrong in between, and nothing in CI can see it: the collision exists
-    only on a surface CI never stands on.
+    personal one at every session start from `skills.lock`, the account one
+    only when the account copy is replaced (the sync-skills uploader was
+    retired, ADR 0014) — so "edit a skill, regenerate the lock" turns the note
+    into the finding with nothing having gone wrong in between, and nothing in
+    CI can see it: the collision exists only on a surface CI never stands on.
 
     That clocks sentence is why `surface` is a parameter. It is quoted into
     every branch below, the benign note among them — which is the ordinary
@@ -2921,8 +2928,8 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
                 f"disk or in any log says which copy the model read.")
         clocks = ("The two copies update on different clocks: the personal one "
                   "tracks skills.lock and is refreshed at every session start, "
-                  "the account one changes only when the account channel does, "
-                  "and this registry no longer uploads to it (ADR 0014). "
+                  "the account one changes only when the account copy is "
+                  "replaced (the sync-skills uploader was retired, ADR 0014). "
                   "CI never stands on the surface where both copies coexist.")
 
         exact_mine = digest_shared_payload(mine)

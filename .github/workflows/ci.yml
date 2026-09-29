@@ -378,7 +378,8 @@ jobs:
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
       # test_check_agent_plugins.py — 157 tests) once existed while this job ran
-      # only the sync-skills directory, so they executed NOWHERE for three PRs.
+      # only the sync-skills directory (since retired, ADR 0014), so they
+      # executed NOWHERE for three PRs.
       # Every target is a DIRECTORY rather than a file precisely so a new
       # scripts/test_*.py, or a new skills/<skill>/tests/ dir, is picked up with
       # no edit here and cannot silently go unrun again.

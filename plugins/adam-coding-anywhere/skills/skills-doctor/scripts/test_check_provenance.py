@@ -529,6 +529,25 @@ def test_the_digest_is_none_for_a_path_that_is_not_a_directory(tmp_path):
     assert prov.digest_skill_dir(plain) is None
 
 
+def test_the_upload_filters_are_pinned_to_the_retired_uploaders_values():
+    """`UPLOAD_SKIP_*` no longer mirrors a live uploader — it is frozen.
+
+    sync-skills, the ZIP uploader these constants mirrored, was retired
+    (ADR 0014): `plugins/adam-coding-local/skills/sync-skills/` is gone, so
+    there is nothing left to bind against and nothing left to drift out of
+    sync with. But every skill already sitting in the claude.ai account store
+    got there as a ZIP `zip_skill` built with exactly this filter, so the
+    filter is still the correct definition of "what the account copy holds" —
+    it just cannot be re-verified against a live uploader any more. This pins
+    today's values so a future edit here is a deliberate, reviewed change
+    rather than a silent one.
+    """
+    assert prov.UPLOAD_SKIP_DIRS == frozenset(
+        {"__pycache__", ".pytest_cache", ".git", ".venv", "node_modules"})
+    assert prov.UPLOAD_SKIP_DIR_PREFIXES == ("pytest-cache-files-",)
+    assert prov.UPLOAD_SKIP_EXTS == frozenset({".pyc", ".pyo", ".b64"})
+
+
 # ---------------------------------------------------------------------------
 # the record's three states
 # ---------------------------------------------------------------------------
@@ -6415,7 +6434,7 @@ def test_the_account_channel_cannot_run_on_an_unresolvable_store(tmp_path, capsy
     """The duplicate half of the report is a measurement, so a store nobody
     could pick must not produce the sentence "nothing is shadowed" — which is
     what omitting the section quietly would have said. 2 is "cannot run", the
-    same code --account-drift uses for the same reason."""
+    same code the shadow checks use for the same reason."""
     store = tmp_path / "store"
     bucket_copy(store, "writing-adrs")
     bucket_copy(store, "writing-adrs", bucket=OTHER_ORG + "_" + OTHER_ACCT)

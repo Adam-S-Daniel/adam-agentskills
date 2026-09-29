@@ -1,6 +1,6 @@
 # 0002. Limit the claude.ai account store to personal, repo-independent skills
 
-- **Status:** Superseded by [0014](0014-retire-the-claude-ai-account-store-channel.md) (earlier: partially superseded by [0011](0011-remove-a-school-bell-schedule-skill-from-registry-and-account.md) — the bell-schedule decisions only)
+- **Status:** Superseded by [0014](0014-retire-the-account-zip-upload-channel.md) (its ZIP uploads are retired; earlier: partially superseded by [0011](0011-remove-a-school-bell-schedule-skill-from-registry-and-account.md) — the bell-schedule decisions only)
 - **Date:** 2026-08-14
 - **Deciders:** Adam Daniel
 

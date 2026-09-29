@@ -327,7 +327,7 @@ session as it stands, not about the directory.
 
 ### The account store is no longer a delivery channel for this registry
 
-[ADR 0014](../../../../docs/decisions/0014-retire-the-claude-ai-account-store-channel.md)
+[ADR 0014](../../../../docs/decisions/0014-retire-the-account-zip-upload-channel.md)
 retired the ZIP uploads: every surface takes this registry's skills from the
 marketplace plugins, and the owner emptied the account store of them. There is
 therefore no drift audit to run (the old `--account-drift` mode is gone), and a

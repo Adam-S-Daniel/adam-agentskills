@@ -115,9 +115,9 @@ That registers the new marketplaces, enables the new plugins and writes
 `false` for the retired registry's plugins (`adam`, `adam-local`, `fastmail`,
 `adam-personal`, `adam-private`), so nothing loads twice; it leaves the old
 marketplace entries themselves in place — remove those with
-`claude plugin marketplace remove`. Re-running it also unregisters the retired global sync-skills pre-push hooks
-(ADR 0014), which would otherwise point at a deleted script and **block every
-`git push` from any repo**.
+`claude plugin marketplace remove`. Re-running it also cleans up the retired global sync-skills
+pre-push hook ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)), which
+otherwise points at a script that no longer exists and **blocks every `git push` from any repo**.
 
 Available skills:
 
@@ -157,6 +157,11 @@ separate `$HOME`s):
 bash setup.sh
 ```
 
+On Windows, run it from Git Bash, or from PowerShell by full path:
+`& 'C:\Program Files\Git\bin\bash.exe' setup.sh`. A bare `bash`
+in PowerShell is WSL's launcher (`C:\Windows\System32\bash.exe`), so it sets up
+the WSL home and leaves the Windows one untouched.
+
 That is all anyone else needs. It links every skill under `plugins/*/skills/*` into the standard skill homes:
 
 - `~/.agents/skills/` — Codex (and the generic agents dir)
@@ -194,16 +199,17 @@ run `/reload-skills` to re-scan the skill directories in place.
 additionally configures a machine the way the registry's owner runs it, and
 is **not** for anyone else's machine:
 
-- unregisters the retired sync-skills pre-push hooks from the **global** git
-  config (`git config --global --remove-section`), so a machine stops running
-  a deleted script on every push ([ADR 0014](docs/decisions/0014-retire-the-claude-ai-account-store-channel.md));
+- removes the retired global sync-skills pre-push hook (`hook.sync-skills-reminder`
+  and `hook.sync-skills-private-reminder` in `git config --global`) if a
+  previous run left it registered — idempotent, and a no-op on a machine that
+  never had it ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md));
 - converges `~/.claude/settings.json`: registers this marketplace and the
   owner's **private** one, enables the owner's plugins
   (`adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`,
   `adam-private-anything-anywhere`), writes `false` for the account-synced
   copies and for the retired registry's plugins, and sets
-  `syncClaudeAiSkills: false` — which keeps Anthropic's account-synced skills
-  (docx, pdf, ...) out of that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
+  `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
+  that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
   [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
 
 Without the flag neither step runs, and the script says how to opt in.
@@ -267,8 +273,8 @@ marketplace file had the same layout).
 ## Hosted agents — Claude Code on the web, claude.ai
 
 Hosted sessions start with **no user plugins and no marketplace adds** — but
-`~/.claude` is not empty: Anthropic's account-synced skills are already present at
-`~/.claude/skills/synced/` and load from turn one (see "The claude.ai account
+`~/.claude` is not empty: the claude.ai account store is already present at
+`~/.claude/skills/synced/` and loads from turn one (see "The claude.ai account
 store" below). The repo clone can additionally *write* into `~/.claude`; that
 write is the delivery channel for ephemeral surfaces. What works where:
 
@@ -315,16 +321,20 @@ write is the delivery channel for ephemeral surfaces. What works where:
   [ADR 0007](docs/decisions/0007-install-the-union-of-every-discovered-lock.md),
   and [`docs/multi-repo-delivery.md`](docs/multi-repo-delivery.md) for the
   wiring such a session needs before any of it runs.
-- **The claude.ai account store** — `~/.claude/skills/synced/<organizationUuid>_<accountUuid>/`
-  on Claude Code 2.1.273+ (older CLIs wrote `~/.claude/skills/synced/` flat).
-  This registry no longer uploads to it: [ADR 0014](docs/decisions/0014-retire-the-claude-ai-account-store-channel.md)
-  retired the ZIP-upload machinery (the `sync-skills` skill, `account-state.json`
-  and the two account workflows) after every surface moved to the marketplace
-  plugins ([ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md))
-  and the owner emptied the store of them. Anthropic's own skills (docx, pdf, ...)
-  still arrive through `synced/`; the bootstrap hook leaves that directory alone,
-  and `skills-doctor` still reports a same-named shadow. A future upload would be
-  unaudited: nothing here compares the store with the registry any more.
+- **The claude.ai account store** is the *only* channel that reaches claude.ai
+  chat, Cowork, Claude in Chrome, and mobile, and it also loads in Claude Code
+  on the web / cloud sessions alongside whatever the repo delivers; where both
+  carry the same skill NAME the hook's copy wins
+  ([E5](docs/experiments/E5-account-store-vs-hook-precedence.md)). It can't be
+  repo-scoped ([ADR 0002](docs/decisions/0002-limit-account-store-to-repo-independent-skills.md)).
+  The account's skills now come from this repo as a repo-synced personal
+  marketplace — enabled once on claude.ai and once in the Desktop app, and
+  updated by hand ("Check for updates" plus a Desktop restart) — rather than
+  from ZIP uploads. The uploader and its drift loop were retired once that
+  channel was confirmed on every surface:
+  [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)
+  (background: [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md),
+  [E6](docs/experiments/E6-account-plugin-channel.md)).
 - **Memory**: hosted sessions see a repo's git-tracked `.claude/memory/` (see the
   Memory section in [`STRATEGY.md`](STRATEGY.md) and the
   [portable-memory guide](https://github.com/Adam-S-Daniel/claude-memory-map/blob/main/docs/portable-memory.md);

@@ -40,21 +40,26 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-28 — adam-coding-anywhere/skills-doctor — remove (`--account-drift`)
+
+- Motivation: `--account-drift` consumed skills-evals' Tier-3 artifact (`propagation/account/latest.json` on `eval-results`), whose publisher [skills-evals#211](https://github.com/Adam-S-Daniel/skills-evals/pull/211) retired, so the flag read an artifact nobody publishes; ADR 0014 already retired the uploads it audited.
+- Change: `--account-drift`, `account_drift`, `DriftReport` and `registry_copy` removed with their tests; SKILL.md and PURPOSE.md say the mode is gone and the shadow remedy is to remove a stale account copy; `--account-channel` and the shadow checks stay; `adam-coding-anywhere` bumped 1.1.1 -> 1.2.0. ([#35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35))
+- Eval: none — removal of a report mode; pytest covers the remaining paths.
+- Outcome: pending merge.
+
 ## 2026-09-28 — adam-coding-anywhere/skills-doctor — edit
 
-- Motivation: the claude.ai account-store channel was retired ([ADR 0014](decisions/0014-retire-the-claude-ai-account-store-channel.md)), so the account-drift comparison has nothing to compare against.
-- Change: removed the `--account-drift` option from SKILL.md, PURPOSE.md and `check_provenance.py`, with its tests; shadowing checks and `--account-channel` stay; `adam-coding-anywhere` 1.2.0 ([#35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35)).
-- Eval: none — no eval exists yet.
+- Motivation: its uploader-binding tests imported the retired sync-skills (`_uploader()` in `scripts/test_check_provenance.py`), which broke in a flat checkout once `plugins/adam-coding-local/skills/sync-skills/` was deleted.
+- Change: the three binding tests and the `_uploader()` helper removed; `UPLOAD_SKIP_DIRS`/`UPLOAD_SKIP_DIR_PREFIXES`/`UPLOAD_SKIP_EXTS` frozen at the retired uploader's values with a new pinning test; comments and report wording updated to say the constants mirror the retired uploader (ADR 0014) rather than a live one; `adam-coding-anywhere` bumped 1.1.0 -> 1.1.1. ([#34](https://github.com/Adam-S-Daniel/adam-agentskills/pull/34))
+- Eval: none — test and wording change only.
 - Outcome: pending merge.
 
 ## 2026-09-28 — adam-coding-local/sync-skills — remove
 
-- Motivation: the owner retired the claude.ai account-store (upload-skill API) channel on 2026-09-28; every surface now takes skills from the marketplace plugins, and the uploads are deleted ([ADR 0014](decisions/0014-retire-the-claude-ai-account-store-channel.md)).
-- Change: deleted the skill (SKILL.md, PURPOSE.md, `sync_skills.py`, `account-skills.txt`, hooks, tests); `setup.sh --owner-machine` now removes its two global pre-push hook sections; `adam-coding-local` 1.2.0 ([#35](https://github.com/Adam-S-Daniel/adam-agentskills/pull/35)).
-- Eval: exempt (DESIGN.md non-coverage table, machine-bound).
+- Motivation: [issue #23](https://github.com/Adam-S-Daniel/adam-agentskills/issues/23) step 2 — the claude.ai ZIP-upload channel is replaced by the repo-synced plugin channel (ADR 0013, E6), confirmed on every surface including local Cowork.
+- Change: skill deleted (`sync-skills/`, `account-skills.txt`, `scripts/account_zip_selection.py`, both account-store workflows, `account-state.json`, the ADR 0006 drift loop); `adam-coding-local` bumped 1.1.0 -> 2.0.0. New [ADR 0014](decisions/0014-retire-the-account-zip-upload-channel.md). ([#34](https://github.com/Adam-S-Daniel/adam-agentskills/pull/34))
+- Eval: exempt — removal.
 - Outcome: pending merge.
-
----
 
 ## 2026-09-28 — adam-coding-anywhere/vendor-release-impact-issues — create (eval result; corrects the 2026-09-25 entry)
 

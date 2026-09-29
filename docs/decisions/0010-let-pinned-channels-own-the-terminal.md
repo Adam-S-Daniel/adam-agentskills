@@ -1,6 +1,6 @@
 # 0010. Let pinned channels own the terminal and leave the account channel the surfaces with nothing else
 
-- **Status:** Accepted (2026-09-23); partially superseded by [0014](0014-retire-the-claude-ai-account-store-channel.md) — the account channel it leaves "the surfaces with nothing else" is retired, but `syncClaudeAiSkills: false` stays
+- **Status:** Accepted (2026-09-23); partially superseded by [0014](0014-retire-the-account-zip-upload-channel.md) — the ZIP-upload account channel it leaves "the surfaces with nothing else" is retired, but `syncClaudeAiSkills: false` stays
 - **Date:** 2026-09-18
 - **Deciders:** Adam Daniel
 

@@ -22,7 +22,7 @@
     {
       "name": "adam-coding-local",
       "source": "./plugins/adam-coding-local",
-      "description": "Adam's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows homes): Claude Code settings, session and memory management, and elevation from WSL.",
+      "description": "Adam's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows homes): Claude Code settings sync, session and memory management, and elevation from WSL.",
       "category": "claude-code",
       "keywords": ["claude-code", "wsl", "windows", "sync", "settings", "memory", "skills"],
       "defaultEnabled": false

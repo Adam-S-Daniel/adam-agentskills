@@ -2887,11 +2887,12 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
 
     Both texts say the benign case is a property of THIS MOMENT rather than of
     the design, because it is. The copies update on different clocks — the
-    personal one at every session start from `skills.lock`, the account one
-    only when the account copy is replaced (the sync-skills uploader was
-    retired, ADR 0014) — so "edit a skill, regenerate the lock" turns the note
-    into the finding with nothing having gone wrong in between, and nothing in
-    CI can see it: the collision exists only on a surface CI never stands on.
+    personal one at every session start from `skills.lock`, the account one only
+    when the account channel changes it (the registry's uploads are retired,
+    ADR 0014, so a lingering account copy of a registry skill only ever ages) —
+    so "edit a skill, regenerate the lock" turns the note into the finding with
+    nothing having gone wrong in between, and nothing in CI can see it: the collision exists
+    only on a surface CI never stands on.
 
     That clocks sentence is why `surface` is a parameter. It is quoted into
     every branch below, the benign note among them — which is the ordinary
@@ -2928,8 +2929,8 @@ def shadow_findings(skills_dir: Path, names: List[str], account: Set[str],
                 f"disk or in any log says which copy the model read.")
         clocks = ("The two copies update on different clocks: the personal one "
                   "tracks skills.lock and is refreshed at every session start, "
-                  "the account one changes only when the account copy is "
-                  "replaced (the sync-skills uploader was retired, ADR 0014). "
+                  "the account one changes only when the account channel does, "
+                  "and this registry no longer uploads to it (ADR 0014). "
                   "CI never stands on the surface where both copies coexist.")
 
         exact_mine = digest_shared_payload(mine)

@@ -6671,7 +6671,8 @@ _WINDOWS_BASE_ENV = (
 
 def _run_hook(home: Path, project_dir: Path = None, extra_env: dict = None,
               script: Path = HOOK, cwd: Path = None,
-              timeout: float = None) -> subprocess.CompletedProcess:
+              timeout: float = None,
+              args: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
     """Run the hook with HOME forced into a tmp dir.
 
     The tmp HOME is mandatory and constructed here rather than by the caller's
@@ -6708,7 +6709,7 @@ def _run_hook(home: Path, project_dir: Path = None, extra_env: dict = None,
         env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     env.update(extra_env or {})
     return subprocess.run(
-        [BASH, str(script)],
+        [BASH, str(script), *args],
         input='{"hook_event_name":"SessionStart","source":"startup"}',
         env=env, cwd=str(cwd) if cwd else None, capture_output=True, text=True,
         timeout=timeout,
@@ -7061,6 +7062,132 @@ def test_hook_installs_and_verifies_the_locked_skills(tmp_path, registry):
     assert _verdict(again) == verdict, _verdict(again)
     # Byte-identical, so a nested copy or a re-copy that lost a file reddens.
     assert _tree(home / ".claude" / "skills") == installed
+
+
+def test_codex_cloud_installs_verified_skills_without_claude_writes(tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {
+        "SKILLS_BOOTSTRAP_FORCE": "",
+        "CLAUDE_CODE_REMOTE_SESSION_ID": "",
+        "CLAUDE_CODE_ENTRYPOINT": "",
+    }, args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).startswith("skills: 2/2 ")
+    assert _verdict(proc).endswith("OK")
+    for name in ("alpha", "beta"):
+        assert (home / ".agents" / "skills" / name / "SKILL.md").is_file()
+    assert (home / ".agents" / "skills" / "alpha" / "notes.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_digest_failure_exits_nonzero_and_purges_stale_copy(
+        tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    lock_path = make_project(project, root, sha)
+    home = tmp_path / "home"
+    first = _run_hook(home, project, args=("--codex-cloud",))
+    assert first.returncode == 0, first.stderr
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["skills"]["adam/alpha"] = "0" * 64
+    lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    failed = _run_hook(home, project, args=("--codex-cloud",))
+    assert failed.returncode != 0, failed.stdout
+    assert "digest mismatch (alpha)" in _verdict(failed)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_federated_lock_installs_both_sources(tmp_path, federated):
+    project = tmp_path / "project"
+    _federated_project(project, federated)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).startswith("skills: 2/2 ")
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+    assert (home / ".agents" / "skills" / "deploy" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_uses_only_own_lock_and_respects_project_skill(
+        tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    make_project(project / "child", root, sha)
+    _write(project / ".agents" / "skills" / "alpha" / "SKILL.md",
+           "---\nname: alpha\n---\nproject-owned\n")
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, args=("--codex-cloud",))
+    assert proc.returncode != 0
+    assert "1/2" in _verdict(proc)
+    assert "alpha" in _verdict(proc)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_cached_rerun_and_changed_lock_cleanup(tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    lock_path = make_project(project, root, sha)
+    full = json.loads(lock_path.read_text(encoding="utf-8"))
+    home = tmp_path / "home"
+
+    first = _run_hook(home, project, args=("--codex-cloud",))
+    assert first.returncode == 0, first.stderr
+    installed = _tree(home / ".agents" / "skills")
+    again = _run_hook(home, project, args=("--codex-cloud",))
+    assert again.returncode == 0, again.stderr
+    assert _tree(home / ".agents" / "skills") == installed
+    _relock(lock_path, full, {"beta"})
+    changed = _run_hook(home, project, args=("--codex-cloud",))
+    assert changed.returncode == 0, changed.stderr
+    assert "removed 1 skill no longer in the lock (alpha)" in _verdict(changed)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_missing_lock_opts_out_without_fallback_or_child_scan(
+        tmp_path, registry):
+    root, sha = registry
+    hook_repo = tmp_path / "hook-repo"
+    script = _hook_copy(hook_repo)
+    make_project(hook_repo, root, sha)
+    project = tmp_path / "project"
+    project.mkdir()
+    make_project(project / "child", root, sha)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, None, script=script, cwd=project,
+                     args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert "skipped" in _verdict(proc)
+    assert "opted out" in _verdict(proc)
+    assert not (project / "skills.lock").exists()
+    assert not (home / ".agents").exists()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_rejects_unsupported_arguments(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    home = tmp_path / "home"
+    proc = _run_hook(home, project, args=("--codex-cloud", "extra"))
+    assert proc.returncode != 0
+    assert "unsupported argument" in _verdict(proc)
+    assert not (home / ".agents").exists()
 
 
 def test_hook_skips_a_skill_the_project_already_owns(tmp_path, registry):
@@ -8326,6 +8453,21 @@ def test_hook_reports_two_lock_rows_that_want_the_same_destination(tmp_path):
     assert "share a destination name" in verdict
     assert "adam/alpha" in verdict and "fastmail/alpha" in verdict
     # Neither wins. Installing either one is the silent overwrite being caught.
+    assert not (home / ".claude" / "skills" / "alpha").exists()
+
+
+def test_hook_duplicate_wins_over_project_collision(tmp_path):
+    """The hook reports a duplicate before considering a project-owned copy."""
+    project = _duplicate_basename_project(tmp_path)
+    _write(project / ".claude" / "skills" / "alpha" / "SKILL.md",
+           "---\nname: alpha\n---\nproject-owned\n")
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert "share a destination name" in verdict
+    assert "collision skipped" not in verdict
     assert not (home / ".claude" / "skills" / "alpha").exists()
 
 
@@ -12209,4 +12351,3 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     # a missing directory that is present in the registry.
     logs = _bootstrap_log(home)
     assert "refused symlinked skill root: plugins/adam/skills/zeta" in logs, logs[-2000:]
-

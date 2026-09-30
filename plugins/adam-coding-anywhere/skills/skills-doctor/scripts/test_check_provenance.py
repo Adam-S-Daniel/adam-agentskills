@@ -2266,34 +2266,12 @@ def test_a_directory_the_ladder_cannot_place_raises_instead_of_defaulting():
 
 
 def test_the_ladders_order_is_the_hooks_order(tmp_path):
-    """The rungs are only a ladder while the hook asks them in this order.
+    """The doctor reports the first applicable fate for a contested name.
 
-    `hook_fate` returns the FIRST rung that answers, so its arms encode an order
-    as much as a set: put the collision rung above the dup guard and a store
-    that is both gets the wrong sentence and the wrong finding/note split. That
-    order is a property of `.claude/hooks/skills-bootstrap.sh`, so it is read
-    out of the hook rather than restated here — and then confirmed against the
-    ladder on a store that trips both rungs at once, where only the order
-    decides which answer comes back.
-
-    Two of the rungs now share ONE bash arm — the `dup` status covers both a
-    lock naming a destination twice and two locks naming it at different
-    digests — so the hook's order between THEM is not a line order between two
-    `if`s but the order of `intra` and the `if not intra` that gates the
-    conflict notice. Read out of the hook the same way, for the same reason.
+    The hook's corresponding order is exercised with a local registry by
+    `test_hook_duplicate_wins_over_project_collision`. This assertion keeps
+    the doctor's judgment aligned with that measured behavior.
     """
-    lines = _hook_path().read_text(encoding="utf-8").splitlines()
-
-    def only(needle):
-        at = [i for i, line in enumerate(lines) if needle in line]
-        assert len(at) == 1, (needle, at)
-        return at[0]
-
-    gate = only('if ! may_replace "$name" "$want"; then')
-    dup = only('if [ "$status" = "dup" ]; then')
-    collision = only('if [ -f "$PROJECT_DIR/.claude/skills/$name/SKILL.md" ]; then')
-    copy = only('if ! cp -R "$src" "$DEST/$name"')
-    assert gate < dup < collision < copy, (gate, dup, collision, copy)
 
     # Both rungs true at once. The dup guard is above the collision guard in the
     # hook, so `dup` is the answer; reversing the two arms in `hook_fate` is what
@@ -2311,9 +2289,6 @@ def test_the_ladders_order_is_the_hooks_order(tmp_path):
     # duplicate. Swapping the two arms in `hook_fate` sends the reader to
     # reconcile two locks over a defect inside one of them, and nothing else
     # here measures that.
-    intra = only('    intra = any(row[6] for row in group)')
-    notice = only('        if not intra:')
-    assert intra < notice, (intra, notice)
     contested = both._replace(conflicted={"alpha": ("a.lock", "b.lock")})
     assert prov.hook_fate(lock, "alpha", replaceable=True, repo_owned={},
                           union=contested) == prov.DELETED_BY_THE_DUP_GUARD
@@ -5238,33 +5213,33 @@ def test_a_hook_installed_copy_edited_up_to_the_locked_bytes_is_a_note(
 # The surface guard the refusal sentences hang off. `may_replace` decides what
 # the hook does with a directory; this decides whether the hook gets that far at
 # all, and the two were reported as if only the first existed.
-HOOK_SURFACE_GUARD = 'emit "skills: skipped \u2014 durable session'
 DURABLE_CAVEAT = "None of that happens on THIS machine"
 UNSURE_CAVEAT = "Whether any of that happens here is unmeasured"
 
 
-def test_the_hook_really_does_stop_before_reading_the_lock_when_durable():
-    """The premise of every caveat below, read out of the hook rather than assumed.
-
-    Three separate facts, and the caveats need all three: the durable guard is
-    where the report says it is, `emit` ENDS the process rather than printing and
-    carrying on, and the lock is not read before either. If the guard moved — or
-    started falling through into the install — the caveats would be the new
-    false sentence and nothing else in this file would notice.
-    """
-    lines = _hook_path().read_text(encoding="utf-8").splitlines()
-    guard = [i for i, line in enumerate(lines) if HOOK_SURFACE_GUARD in line]
-    assert len(guard) == 1, guard
-    chosen = [i for i, line in enumerate(lines) if line.startswith('LOCK=')]
-    assert chosen and min(chosen) > guard[0], (guard, chosen)
-
-    # `emit` never returns to its caller: both of its arms exit, so reaching the
-    # guard IS the end of that run. A `return` on either would make the guard a
-    # message rather than a stop, and every caveat below wrong again.
-    body = _bash_function("\n".join(lines) + "\n", "emit")
-    assert body.count("\n    exit 0\n") == 1, body
-    assert body.endswith("  exit 0\n}\n"), body[-40:]
-    assert "\n  return" not in body, body
+def test_the_hook_really_does_stop_before_reading_the_lock_when_durable(tmp_path):
+    """A durable invocation stops before it parses even an invalid lock."""
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash on this machine")
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "skills.lock").write_text("invalid JSON\n", encoding="utf-8")
+    home = tmp_path / "home"
+    (home / "tmp").mkdir(parents=True)
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": str(home),
+        "TMPDIR": str(home / "tmp"),
+        "CLAUDE_PROJECT_DIR": str(project),
+        "CLAUDE_CODE_ENTRYPOINT": "cli",
+    }
+    proc = subprocess.run([bash, str(_hook_path())], input="", text=True,
+                          capture_output=True, env=env, cwd=project)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["systemMessage"].startswith(
+        "skills: skipped — durable session")
+    assert not (home / ".claude" / "skills").exists()
 
 
 @pytest.mark.parametrize("which", sorted(REFUSAL_STATES))

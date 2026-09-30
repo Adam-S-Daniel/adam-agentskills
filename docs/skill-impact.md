@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-09-30 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: Codex Cloud support made the bootstrap hook's destination and exit status mode-dependent, exposing two skills-doctor tests that inferred behavior from shell source lines.
+- Change: [The tests](../plugins/adam-coding-anywhere/skills/skills-doctor/scripts/test_check_provenance.py) now exercise durable-session behavior and the doctor's duplicate precedence; [the hook integration test](../scripts/test_generate_skills_lock.py) checks that duplicate rows win over a project-owned collision. The bundle version moves from 1.2.0 to 1.2.1 so plugin update can deliver the changed test content. Skill instructions are unchanged.
+- Eval: none — test-only edit; focused pytest passed 11/11, and the canonical suite passed all changed-code tests (two unrelated login-shell fixture failures reproduced from an origin/main archive).
+- Outcome: pending merge.
+
 ## 2026-09-28 — adam-coding-anywhere/skills-doctor — remove (`--account-drift`)
 
 - Motivation: `--account-drift` consumed skills-evals' Tier-3 artifact (`propagation/account/latest.json` on `eval-results`), whose publisher [skills-evals#211](https://github.com/Adam-S-Daniel/skills-evals/pull/211) retired, so the flag read an artifact nobody publishes; ADR 0014 already retired the uploads it audited.

@@ -313,6 +313,7 @@ write is the delivery channel for ephemeral surfaces. What works where:
   skills of a repo that is **not in this session**, and the account-sync
   `synced/` store are never touched; an edited one is kept and named in the
   verdict rather than deleted.
+
   In a session opened on several repos it reads **every** repo's lock and
   installs the union, so a repo in the same session is no longer "another
   repo" — its skills are this run's too. Two locks naming one skill directory
@@ -321,6 +322,15 @@ write is the delivery channel for ephemeral surfaces. What works where:
   [ADR 0007](docs/decisions/0007-install-the-union-of-every-discovered-lock.md),
   and [`docs/multi-repo-delivery.md`](docs/multi-repo-delivery.md) for the
   wiring such a session needs before any of it runs.
+- **Codex Cloud**: invoke the same script during environment setup and
+  maintenance with `bash .claude/hooks/skills-bootstrap.sh --codex-cloud` from
+  the project root (or set `CLAUDE_PROJECT_DIR` to that root). This explicit
+  mode reads only that project's `skills.lock`, verifies the same pinned
+  sources and digests, and installs into `~/.agents/skills/`. A project
+  without its own lock opts out cleanly, even when a child or the script's
+  registry has one. A degraded delivery exits nonzero so setup stops; the
+  no-argument Claude hook stays fail-soft. Codex Cloud mode does not write to
+  `~/.claude`.
 - **The claude.ai account store** is the *only* channel that reaches claude.ai
   chat, Cowork, Claude in Chrome, and mobile, and it also loads in Claude Code
   on the web / cloud sessions alongside whatever the repo delivers; where both

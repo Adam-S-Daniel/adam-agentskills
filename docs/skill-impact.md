@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-02 — adam-coding-anywhere/github-actions-repo-settings — edit
+
+- Motivation: the fleet branch-naming standard (repo-settings [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/persistent-branch-standard/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md), PR [#62](https://github.com/Adam-S-Daniel/repo-settings/pull/62)) names persistent results branches `persistent/<purpose>`, and the skill's bot-write policy text still pointed at an unprefixed results branch.
+- Change: the schema and the example fleet config say a branch meant to persist across PRs is `persistent/<purpose>` and is protected by a deletion-only `persistent/**` ruleset declared per repo as `extra_rulesets`; the example now names skills-evals' branch `persistent/eval-results`. The skill's engine copy does not implement `extra_rulesets`, so the text points at the fleet manifest rather than claiming support. `adam-coding-anywhere` bumped 1.2.1 -> 1.2.2.
+- Eval: none — documentation text in an asset; no eval exists for this skill.
+- Outcome: pending merge.
+
 ## 2026-09-30 — adam-coding-anywhere/skills-doctor — edit
 
 - Motivation: Codex Cloud support made the bootstrap hook's destination and exit status mode-dependent, exposing two skills-doctor tests that inferred behavior from shell source lines.

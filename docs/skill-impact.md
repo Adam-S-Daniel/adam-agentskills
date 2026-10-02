@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-02 — adam-coding-anywhere/github-actions-repo-settings — edit
+
+- Motivation: the fleet branch-naming standard (repo-settings [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/persistent-branch-standard/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md), PR [#62](https://github.com/Adam-S-Daniel/repo-settings/pull/62)) names persistent results branches `persistent/<purpose>`, and the skill's bot-write policy text still pointed at an unprefixed results branch.
+- Change: the schema and the example fleet config say a branch meant to persist across PRs is `persistent/<purpose>` and is protected by a deletion-only `persistent/**` ruleset declared per repo as `extra_rulesets`; the example now names skills-evals' branch `persistent/eval-results`. The skill's engine copy does not implement `extra_rulesets`, so the text points at the fleet manifest rather than claiming support. `adam-coding-anywhere` bumped 1.2.1 -> 1.2.2.
+- Eval: none — documentation text in an asset; no eval exists for this skill.
+- Outcome: pending merge.
+
 ## 2026-09-30 — adam-coding-anywhere/skills-doctor — edit
 
 - Motivation: Codex Cloud support made the bootstrap hook's destination and exit status mode-dependent, exposing two skills-doctor tests that inferred behavior from shell source lines.
@@ -72,7 +79,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 - Motivation: the 2026-09-25 entry says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.
 - Change: none to skill content. The owner chose to merge before the eval, because the paid run reads the skill from the registry's default branch ([#22](https://github.com/Adam-S-Daniel/adam-agentskills/pull/22) merged 2026-09-26, then the eval ran).
-- Eval: [run 36263643613](https://github.com/Adam-S-Daniel/skills-evals/actions/runs/36263643613), exit 0 ([report](https://github.com/Adam-S-Daniel/skills-evals/blob/eval-results/results/vendor-release-impact-issues/20260926T184529Z/report.md)). `with_skill`: objective 6/7, judge 7.2 (Correctness 5, Hygiene 9, Restraint 10). `without_skill`: objective 4/7, judge 5.4. The skill fixed the upstream-backlink and title-placeholder failures. Both arms failed the publish-time check; the check itself was at fault (it required all three releases' times, in the attribution form only), and is fixed in [skills-evals#204](https://github.com/Adam-S-Daniel/skills-evals/pull/204). The rubric now scores coverage. The `with_skill` arm filed 2 of the 5 planted findings.
+- Eval: [run 36263643613](https://github.com/Adam-S-Daniel/skills-evals/actions/runs/36263643613), exit 0 ([report](https://github.com/Adam-S-Daniel/skills-evals/blob/persistent/eval-results/results/vendor-release-impact-issues/20260926T184529Z/report.md)). `with_skill`: objective 6/7, judge 7.2 (Correctness 5, Hygiene 9, Restraint 10). `without_skill`: objective 4/7, judge 5.4. The skill fixed the upstream-backlink and title-placeholder failures. Both arms failed the publish-time check; the check itself was at fault (it required all three releases' times, in the attribution form only), and is fixed in [skills-evals#204](https://github.com/Adam-S-Daniel/skills-evals/pull/204). The rubric now scores coverage. The `with_skill` arm filed 2 of the 5 planted findings.
 - Outcome: merged 2026-09-26.
 
 ## 2026-09-25 — adam-coding-anywhere/vendor-release-impact-issues — create

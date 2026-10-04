@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-anywhere/review-bash-ci-reliability — edit
+
+- Motivation: the checklist had the process-substitution case (`set -e` misses a failure inside `<(...)`) but not its opposite, an expected non-zero inside `$(...)` aborting the script; `_agent-guidance`'s `test/run-tests.sh` died mid-file with no `Results:` line for this reason ([#20](https://github.com/Adam-S-Daniel/adam-agentskills/issues/20)).
+- Change: new checklist item 7 (`grep` with no match, `diff`, `cmp` inside `$(...)` under `set -euo pipefail`; guard with `|| true` only where no result is legitimate; a test-harness helper must never abort the run), a matching line in "How to Use", and a new `PURPOSE.md`. `adam-coding-anywhere` bumped 1.2.2 -> 1.2.3.
+- Eval: not run — the touch gate asks for `python3 harness/run_eval.py evals/review-bash-ci-reliability --arm both --registry <this tree>` in skills-evals (paid, judge-scored); left for the orchestrator. A seed case for item 7 belongs in that fixture, in that repo.
+- Outcome: pending merge.
+
+## 2026-10-04 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: three Claude Code changes touched this skill's subject ([#9](https://github.com/Adam-S-Daniel/adam-agentskills/issues/9), [#13](https://github.com/Adam-S-Daniel/adam-agentskills/issues/13), [#25](https://github.com/Adam-S-Daniel/adam-agentskills/issues/25)): synced skills are shown by short name and `anthropic-skills`/`claude-ai` became reserved namespaces (2.1.228-2.1.282), a built-in `/skill-doctor` appeared one letter away from this skill (2.1.261), and `digest_skill_dir` followed a symlinked skill root that the bootstrap hook's `digest_dir` refuses.
+- Change: `digest_skill_dir` returns None (reported as unmeasurable) for a symlinked skill directory or any symlink inside it, mirroring the hook (ADR 0008, ADR 0012), with regression tests; SKILL.md states how synced skills are named and shown, the reserved namespaces, the pre-2.1.280 `manifest.json` trash bug, and that `/skill-doctor` is a different tool. The skill's scope is not narrowed. `adam-coding-anywhere` bumped 1.2.2 -> 1.2.3 (one bump covers both entries).
+- Eval: not run — the touch gate asks for the existing fixture `evals/skills-doctor/bucketed-account-store` in skills-evals (paid); left for the orchestrator. Pytest on the script: see the PR body.
+- Outcome: pending merge.
+
 ## 2026-10-02 — adam-coding-anywhere/github-actions-repo-settings — edit
 
 - Motivation: the fleet branch-naming standard (repo-settings [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/persistent-branch-standard/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md), PR [#62](https://github.com/Adam-S-Daniel/repo-settings/pull/62)) names persistent results branches `persistent/<purpose>`, and the skill's bot-write policy text still pointed at an unprefixed results branch.

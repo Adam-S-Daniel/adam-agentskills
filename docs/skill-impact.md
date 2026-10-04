@@ -42,7 +42,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit
 
-- Motivation: [the carried-over missing-script defect](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26), originally [archived-registry issue 189](https://github.com/Adam-S-Daniel/agentskills/issues/189), promised a batch runner and a WPF reviewer that were never shipped. Neither script was recoverable from either registry's current files or git history.
+- Motivation: [the carried-over missing-script defect](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26), originally old-registry issue 189, promised a batch runner and a WPF reviewer that were never shipped. Neither script was recoverable from either registry's current files or git history.
 - Change: describe direct OCRmyPDF calls into separate outputs, preserve originals, record per-file outcomes, and review appearance and OCR text with installed tools. Add on-touch `PURPOSE.md`; bump `adam-non-coding-local` 1.0.0 -> 1.0.1. Extend the Markdown-AST-based census to detect bare script filenames in code blocks, including the PowerShell relative invocation form, without gating prose, external paths, or document artifacts.
 - Eval: exempt under [skills-evals' deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md#deliberate-non-coverage) for machine-bound surfaces; no paid evaluation run. Census regressions cover missing and existing local helpers plus the precision boundaries.
 - Outcome: pending independent review and merge. No account-store or installation changes made.

@@ -7,7 +7,7 @@ searchable copies while preserving the original documents.
 
 [The missing-helper incident](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26)
 was carried over from
-[the archived registry](https://github.com/Adam-S-Daniel/agentskills/issues/189):
+old-registry issue 189:
 the instructions named a Python batch runner and a PowerShell WPF reviewer,
 but neither script was shipped. Searches of the public and private
 registries and their git histories found neither file to recover.

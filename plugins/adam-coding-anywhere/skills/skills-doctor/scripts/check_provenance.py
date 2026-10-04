@@ -871,13 +871,25 @@ def digest_skill_dir(path: Path) -> Optional[str]:
     Returns None when the bytes cannot be read, which is NOT the same answer as a
     digest that differs: reporting "edited" for a directory nobody could measure
     would be a guess dressed as a measurement.
+
+    A symlink is a refusal, not a measurement (ADR 0008, ADR 0012), and so is a
+    skill directory that is itself one. The hook's `digest_dir` exits on both,
+    and a doctor that digested through a link could answer UNCHANGED, or "the
+    bytes are the locked ones", for exactly the directory the hook declines to
+    verify — and, for a link that leaves the skill, would fold bytes from outside
+    it into the digest. `is_symlink()` is asked before `is_dir()` and `is_file()`
+    because both follow the link. `rglob` yields every symlink inside as an entry
+    and does not descend into a linked directory, so one test covers all three
+    shapes: a link to a file, to a directory, and a dangling one.
     """
     root = Path(path)
     try:
-        if not root.is_dir():
+        if root.is_symlink() or not root.is_dir():
             return None
         entries = []
         for candidate in root.rglob("*"):
+            if candidate.is_symlink():
+                return None
             if not candidate.is_file():
                 continue  # directories carry no bytes; broken symlinks carry none either
             entries.append((candidate.relative_to(root).as_posix(), candidate))

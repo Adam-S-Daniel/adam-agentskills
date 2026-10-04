@@ -529,6 +529,84 @@ def test_the_digest_is_none_for_a_path_that_is_not_a_directory(tmp_path):
     assert prov.digest_skill_dir(plain) is None
 
 
+def _symlink(link: Path, target: Path) -> None:
+    """Make `link` point at `target`, or skip where this platform will not."""
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+    except OSError:                     # Windows without Developer Mode
+        pytest.skip("this platform does not permit creating symlinks")
+
+
+def _symlink_into_skill(skill: Path, shape: str, outside: Path) -> None:
+    """Put one symlink of the named shape inside `skill`."""
+    if shape == "file":
+        _symlink(skill / "linked.md", outside / "secret.md")
+    elif shape == "directory":
+        _symlink(skill / "linked", outside / "tree")
+    else:
+        _symlink(skill / "dangling", outside / "does-not-exist")
+
+
+@pytest.mark.parametrize("shape", ["file", "directory", "dangling"])
+def test_the_digest_refuses_a_symlink_inside_the_skill(tmp_path, shape):
+    """A link inside a skill is a refusal (ADR 0008), whatever it points at.
+
+    The hook's `digest_dir` exits on all three shapes, so a doctor that
+    digested them could report a directory unchanged that the hook declines to
+    verify. Before the guard, the link to a file folded the OUTSIDE file's bytes
+    into the digest, and the other two shapes contributed no entry at all.
+    """
+    outside = tmp_path / "outside"
+    (outside / "tree").mkdir(parents=True)
+    (outside / "secret.md").write_text("not part of the skill\n", encoding="utf-8")
+    (outside / "tree" / "inner.md").write_text("nor this\n", encoding="utf-8")
+    skill = make_skill(tmp_path, "alpha")
+    # The control: the directory without the link measures, so a None below is
+    # the link's doing and not an unreadable fixture.
+    assert prov.digest_skill_dir(skill) is not None
+
+    _symlink_into_skill(skill, shape, outside)
+    assert prov.digest_skill_dir(skill) is None
+
+
+def test_the_digest_refuses_a_skill_directory_that_is_itself_a_symlink(tmp_path):
+    """The hook checks the root BEFORE resolving it; so must the doctor.
+
+    `is_dir()` follows the link, so without the check the target's bytes are
+    digested under this skill's name and `setup.sh`-style links read as
+    UNCHANGED. The target is an ordinary, measurable skill, so the refusal
+    cannot be an unreadable fixture.
+    """
+    real = make_skill(tmp_path / "elsewhere", "alpha")
+    assert prov.digest_skill_dir(real) is not None
+    store = tmp_path / "skills"
+    store.mkdir()
+    _symlink(store / "alpha", real)
+    assert prov.digest_skill_dir(store / "alpha") is None
+
+
+def test_a_symlinked_skill_directory_is_not_called_unchanged(tmp_path, capsys):
+    """The report the issue describes: a link the hook refuses read as UNCHANGED.
+
+    The hook recorded `alpha`, then the directory was replaced by a link to a
+    copy holding the very same bytes. Resolving the link reproduces the recorded
+    digest exactly, which is what made the doctor say "unchanged since install"
+    over a path the hook's `digest_dir` refuses to measure.
+    """
+    store = tmp_path / "skills"
+    store.mkdir()
+    real = make_skill(tmp_path / "elsewhere", "alpha")
+    shutil.copytree(real, store / "alpha")
+    write_record(store, "alpha")
+    lock = write_lock(tmp_path / "skills.lock", store, "alpha")
+    shutil.rmtree(store / "alpha")
+    _symlink(store / "alpha", real)
+
+    _, out = run(store, lock, capsys)
+    assert "unmeasurable since install" in flat(out), out
+    assert "unchanged since install" not in flat(out), out
+
+
 def test_the_upload_filters_are_pinned_to_the_retired_uploaders_values():
     """`UPLOAD_SKIP_*` no longer mirrors a live uploader — it is frozen.
 

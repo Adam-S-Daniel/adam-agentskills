@@ -7744,21 +7744,25 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     half that a re-implementation is most likely to drop, because refusing is
     the behaviour with no output to compare.
 
-    TRICKY_SKILL deliberately does NOT carry the symlink: a fixture that is
-    refused cannot also be the fixture that proves the two agree on a digest,
-    so the symlink case needs its own registry or it would delete the coverage
-    it was added to extend.
-
-    The hook side is asserted through the VERDICT rather than by calling
-    `digest_dir`: the hook is the side that consumes locks authored elsewhere,
-    so what matters is not that its hasher errors but that a symlink-bearing
-    skill ends up NOT INSTALLED and reported — fail-closed, with the unverified
-    bytes removed rather than left live in ~/.claude/skills for the model to
-    load on turn one.
+    Generate a valid lock while the registry has an ordinary payload file,
+    then commit a relative directory symlink into that same skill. Retaining
+    the original digest means the hook without its symlink guard would hash
+    the same bytes and install the skill; the assertion therefore reaches the
+    guard rather than merely exercising a hash mismatch.
     """
     root = tmp_path / "registry"
     root.mkdir(parents=True)
-    sha = make_registry(root, {"adam/alpha": SKILL_A})
+    skill = {**SKILL_A, "payload/extra.md": "a subtree included in the locked digest\n"}
+    sha = make_registry(root, {"adam/alpha": skill})
+    project = tmp_path / "project"
+    project.mkdir()
+    lock_path = project / "skills.lock"
+    proc = run_generator("--repo", str(root), "--registry",
+                         root.resolve().as_uri(), "--ref", sha,
+                         "--bundles", "adam", "-o", str(lock_path))
+    assert proc.returncode == 0, proc.stderr
+    clean_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+
     # The symlink is added to the registry's WORKING TREE and committed, which
     # is how it would really arrive: git tracks a symlink as mode 120000, so
     # this is reachable from ordinary committed content, not just a local write.
@@ -7771,9 +7775,8 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     # `'plugins/adam/skills/alpha/link' is a link to an absolute path`, from
     # `git archive`, before `digest_skill_dir` was ever called. A relative
     # symlink extracts cleanly and lands in the tree the digest walks, which is
-    # exactly the gap #132 is about.
+    # exactly the gap in issue #24 is about.
     skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
-    _write(skill_dir / "payload" / "extra.md", "a subtree the digest never saw\n")
     _make_symlink(skill_dir / "link", "payload", to_directory=True)
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "add a symlink")
@@ -7785,39 +7788,33 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
                            check=True, capture_output=True, text=True).stdout
     assert "120000" in modes, f"git did not record a symlink here:\n{modes}"
 
-    # GENERATOR side: it refuses to WRITE a lock naming such a skill, which is
-    # this repo's usual posture — don't emit a lock the hook would reject.
-    project = tmp_path / "project"
-    project.mkdir()
+    # GENERATOR side: it refuses to write a lock naming such a skill. Keep
+    # this output separate from the valid lock the hook will consume below.
+    refusal_path = project / "refusal.lock"
     proc = run_generator("--repo", str(root), "--registry",
                          root.resolve().as_uri(), "--ref", sha,
-                         "--bundles", "adam", "-o", str(project / "skills.lock"))
+                         "--bundles", "adam", "-o", str(refusal_path))
     assert proc.returncode != 0, proc.stdout
     assert "symlink in skill directory" in (proc.stderr + proc.stdout)
-    assert not (project / "skills.lock").exists(), \
+    assert not refusal_path.exists(), \
         "a refused digest must not leave a lock behind"
 
-    # HOOK side: hand it a lock that names the skill anyway (an attacker does
-    # not run our generator), and the install must fail closed.
-    (project / ".git").mkdir()
-    _write(project / "skills.lock", json.dumps({
-        "registry": "fixture/registry",
-        "ref": sha,
-        "bundles": ["adam"],
-        "skills": {"adam/alpha": gsl.LOCK_DIGEST_PREFIX + "0" * 64},
-        "generated_from": sha,
-        "sources": [{"name": "fixture/registry",
-                     "url": root.resolve().as_uri(),
-                     "ref": sha, "bundles": ["adam"]}],
-    }, indent=2) + "\n")
+    # HOOK side: retarget the valid lock to the symlink commit without changing
+    # its digest. This is a valid lock shape and would install absent the guard.
+    clean_lock["ref"] = sha
+    clean_lock["generated_from"] = sha
+    _write(lock_path, json.dumps(clean_lock, indent=2) + "\n")
     home = tmp_path / "home"
     hook = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     assert hook.returncode == 0, hook.stderr
     verdict = _verdict(hook)
-    assert not verdict.startswith("skills: 1/1 "), verdict
+    assert verdict.startswith("skills: 0/1 "), verdict
+    assert "digest mismatch (alpha)" in verdict, verdict
     installed = home / ".claude" / "skills" / "alpha"
     assert not installed.exists(), \
         f"unverified bytes were left in place: {verdict}"
+    logs = _bootstrap_log(home)
+    assert "symlink in skill directory: link" in logs, logs[-2000:]
 
 
 def test_hook_bundle_override_narrows_what_is_installed(tmp_path):

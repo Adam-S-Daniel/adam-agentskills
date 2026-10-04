@@ -519,6 +519,11 @@ jobs:
       # them it is the same as -n 4. It must stay in both jobs' step together:
       # scripts/test_ci_workflow.py pins the two run lines equal, so an edit
       # to one that misses the other fails the suite rather than drifting.
+      # skills-evals uses the same -n auto/-rfEs flags and shared pytest/xdist
+      # pins through test/run_tests.py --jobs auto; its wrapper preserves the
+      # run-wide memory guard and collection cross-check. See the merged
+      # skills-evals PR 183:
+      # https://github.com/Adam-S-Daniel/skills-evals/pull/183.
       - name: Run every test suite in the repo
         if: steps.salient.outputs.run == 'true'
         run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto

@@ -28,7 +28,8 @@ offers to add the marketplace, then installs the plugin:
 /plugin install adam-coding-anywhere --marketplace Adam-S-Daniel/adam-agentskills
 ```
 
-On older CLIs, add the marketplace first and install by `plugin@marketplace`:
+On Claude Code versions before v2.1.275, add the marketplace first and install
+by `plugin@marketplace`:
 
 ```bash
 /plugin marketplace add Adam-S-Daniel/adam-agentskills
@@ -48,11 +49,26 @@ by name:
 ```
 
 Skills are namespaced by plugin — invoke them as `/<plugin>:<skill>`, e.g.
-`/adam-anything-anywhere:finding-unknowns`. Update later with
-`/plugin marketplace update adam-agentskills`; that refreshes the catalog, and
-the four local plugins' contents with it. The federated plugin's contents come
-from the other repo instead — this marketplace carries its address, not its
-skills.
+`/adam-anything-anywhere:finding-unknowns`. To refresh later, update the
+catalog and then the installed plugin caches explicitly:
+
+```bash
+claude plugin marketplace update adam-agentskills
+claude plugin update adam-coding-anywhere@adam-agentskills
+```
+
+Starting with Claude Code v2.1.232, installing by `plugin@marketplace` also
+refreshes the registered marketplace catalog automatically.
+Run `claude plugin update` for each installed plugin that should be refreshed;
+update `cms-platform@adam-agentskills` separately to refresh the federated
+plugin from its own repository. Catalog refresh alone does not update installed
+plugin caches. In Claude Code v2.1.268 and later, installs, enables, and
+disables made in the interactive plugin menu apply when the menu closes. The
+menu reloads plugins when it is safe; otherwise changes may wait for the next
+session. Shell installs and updates can also need a new session or
+`/reload-plugins`. See the [v2.1.232 release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.232),
+[v2.1.268 release notes](https://github.com/anthropics/claude-code/releases/tag/v2.1.268),
+and [plugin update guidance](https://code.claude.com/docs/en/discover-plugins#keep-plugins-updated).
 
 ### Plugins
 
@@ -189,9 +205,6 @@ any such links it created in earlier versions. Background and rationale:
 
 On Windows it uses directory junctions (`mklink /J`) — no admin required. The script
 is idempotent and migrates the old whole-directory links left by earlier versions.
-
-After running `setup.sh`, you don't need to restart an open Claude Code session —
-run `/reload-skills` to re-scan the skill directories in place.
 
 ### Owner machines only: `--owner-machine`
 
@@ -388,5 +401,4 @@ I put the following in Claude desktop app -> Settings -> Cowork -> Global instru
 > under `~/repos` and `%USERPROFILE%\repos`, and run `bash setup.sh --owner-machine` in both WSL and
 > Windows Git Bash so the skills are linked into the standard locations
 > (`.agents/skills/`, `.agent/skills/`, `.cursor/skills/`) — Claude Code itself
-> uses the marketplace, not `.claude/skills`. Run `/reload-skills` to pick up changes
-> without restarting the session.
+> uses the marketplace, not `.claude/skills`.

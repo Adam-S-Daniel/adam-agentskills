@@ -7735,6 +7735,53 @@ def test_the_hooks_digest_agrees_with_the_generators_on_a_tricky_skill(tmp_path)
     assert gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(installed) == locked
 
 
+def _copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr):
+    """Decide whether a copy probe can exercise the symlink guard."""
+    if platform == "nt":
+        if returncode != 0:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R failed on Windows (exit {returncode}): {detail}"
+        if not copied_entry_is_symlink:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R materialized a directory symlink on Windows: {detail}"
+        return "run", ""
+
+    if returncode != 0:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R probe failed on {platform} (exit {returncode}): {detail}"
+    if not copied_entry_is_symlink:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R did not preserve a symlink on {platform}: {detail}"
+    return "run", ""
+
+
+@pytest.mark.parametrize("platform, returncode, copied_entry_is_symlink, stderr, expected", [
+    (
+        "nt", 2, False, "cp: cannot create symbolic link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R failed on Windows (exit 2): cp: cannot create symbolic link"),
+    ),
+    (
+        "nt", 0, False, "cp: cannot preserve link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R materialized a directory symlink on Windows: cp: cannot preserve link"),
+    ),
+    ("nt", 0, True, "", ("run", "")),
+    (
+        "posix", 2, False, "cp: source unavailable\nsecond diagnostic",
+        ("fail", "cp -R probe failed on posix (exit 2): cp: source unavailable\nsecond diagnostic"),
+    ),
+    (
+        "posix", 0, False, "cp: unexpected copy behavior\nsecond diagnostic",
+        ("fail", "cp -R did not preserve a symlink on posix: cp: unexpected copy behavior\nsecond diagnostic"),
+    ),
+    ("posix", 0, True, "", ("run", "")),
+], ids=["nt-copy-failed", "nt-materialized", "nt-preserved", "posix-copy-failed",
+       "posix-not-preserved", "posix-preserved"])
+def test_copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr, expected):
+    assert _copy_probe_decision(
+        platform, returncode, copied_entry_is_symlink, stderr
+    ) == expected
+
+
 def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     """Bind the hook's `digest_dir` and the generator on the symlink rule.
 
@@ -7742,23 +7789,27 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     the two on content they must both HASH the same. This binds them on the one
     input they must both REFUSE — the other half of the same contract, and the
     half that a re-implementation is most likely to drop, because refusing is
-    the behaviour with no output to compare.
+    the behavior with no output to compare.
 
-    TRICKY_SKILL deliberately does NOT carry the symlink: a fixture that is
-    refused cannot also be the fixture that proves the two agree on a digest,
-    so the symlink case needs its own registry or it would delete the coverage
-    it was added to extend.
-
-    The hook side is asserted through the VERDICT rather than by calling
-    `digest_dir`: the hook is the side that consumes locks authored elsewhere,
-    so what matters is not that its hasher errors but that a symlink-bearing
-    skill ends up NOT INSTALLED and reported — fail-closed, with the unverified
-    bytes removed rather than left live in ~/.claude/skills for the model to
-    load on turn one.
+    Generate a valid lock while the registry has an ordinary payload file,
+    then commit a relative directory symlink into that same skill. Retaining
+    the original digest means the hook without its symlink guard would hash
+    the same bytes and install the skill; the assertion therefore reaches the
+    guard rather than merely exercising a hash mismatch.
     """
     root = tmp_path / "registry"
     root.mkdir(parents=True)
-    sha = make_registry(root, {"adam/alpha": SKILL_A})
+    skill = {**SKILL_A, "payload/extra.md": "a subtree included in the locked digest\n"}
+    sha = make_registry(root, {"adam/alpha": skill})
+    project = tmp_path / "project"
+    project.mkdir()
+    lock_path = project / "skills.lock"
+    proc = run_generator("--repo", str(root), "--registry",
+                         root.resolve().as_uri(), "--ref", sha,
+                         "--bundles", "adam", "-o", str(lock_path))
+    assert proc.returncode == 0, proc.stderr
+    clean_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+
     # The symlink is added to the registry's WORKING TREE and committed, which
     # is how it would really arrive: git tracks a symlink as mode 120000, so
     # this is reachable from ordinary committed content, not just a local write.
@@ -7771,10 +7822,10 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     # `'plugins/adam/skills/alpha/link' is a link to an absolute path`, from
     # `git archive`, before `digest_skill_dir` was ever called. A relative
     # symlink extracts cleanly and lands in the tree the digest walks, which is
-    # exactly the gap #132 is about.
+    # exactly the gap in issue #24 is about.
     skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
-    _write(skill_dir / "payload" / "extra.md", "a subtree the digest never saw\n")
     _make_symlink(skill_dir / "link", "payload", to_directory=True)
+    assert (skill_dir / "link").is_symlink()
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "add a symlink")
     sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -7785,39 +7836,53 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
                            check=True, capture_output=True, text=True).stdout
     assert "120000" in modes, f"git did not record a symlink here:\n{modes}"
 
-    # GENERATOR side: it refuses to WRITE a lock naming such a skill, which is
-    # this repo's usual posture — don't emit a lock the hook would reject.
-    project = tmp_path / "project"
-    project.mkdir()
+    # GENERATOR side: it refuses to write a lock naming such a skill. Keep
+    # this output separate from the valid lock the hook will consume below.
+    refusal_path = project / "refusal.lock"
     proc = run_generator("--repo", str(root), "--registry",
                          root.resolve().as_uri(), "--ref", sha,
-                         "--bundles", "adam", "-o", str(project / "skills.lock"))
+                         "--bundles", "adam", "-o", str(refusal_path))
     assert proc.returncode != 0, proc.stdout
     assert "symlink in skill directory" in (proc.stderr + proc.stdout)
-    assert not (project / "skills.lock").exists(), \
+    assert not refusal_path.exists(), \
         "a refused digest must not leave a lock behind"
 
-    # HOOK side: hand it a lock that names the skill anyway (an attacker does
-    # not run our generator), and the install must fail closed.
-    (project / ".git").mkdir()
-    _write(project / "skills.lock", json.dumps({
-        "registry": "fixture/registry",
-        "ref": sha,
-        "bundles": ["adam"],
-        "skills": {"adam/alpha": gsl.LOCK_DIGEST_PREFIX + "0" * 64},
-        "generated_from": sha,
-        "sources": [{"name": "fixture/registry",
-                     "url": root.resolve().as_uri(),
-                     "ref": sha, "bundles": ["adam"]}],
-    }, indent=2) + "\n")
+    # Probe the same Git Bash `cp -R` path the hook uses. On Windows, cp may
+    # fail or materialize a native directory symlink before the hook can inspect it.
+    probe_script = tmp_path / "copy-probe.sh"
+    _write(probe_script, 'set -eu\ncp -R "$1" "$2"\n')
+    copied_skill = tmp_path / "copied-skill"
+    probe = _run_hook(
+        tmp_path / "copy-probe-home",
+        script=probe_script,
+        args=(_hook_path(skill_dir), _hook_path(copied_skill)),
+    )
+    copied_link = copied_skill / "link"
+    action, reason = _copy_probe_decision(
+        os.name, probe.returncode, copied_link.is_symlink(), probe.stderr
+    )
+    if action == "skip":
+        pytest.skip(reason)
+    assert action == "run", reason
+    assert (copied_skill / "SKILL.md").read_bytes() == (skill_dir / "SKILL.md").read_bytes(), \
+        "cp probe did not copy the skill contents"
+
+    # HOOK side: retarget the valid lock to the symlink commit without changing
+    # its digest. This is a valid lock shape and would install absent the guard.
+    clean_lock["ref"] = sha
+    clean_lock["generated_from"] = sha
+    _write(lock_path, json.dumps(clean_lock, indent=2) + "\n")
     home = tmp_path / "home"
     hook = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     assert hook.returncode == 0, hook.stderr
     verdict = _verdict(hook)
-    assert not verdict.startswith("skills: 1/1 "), verdict
+    assert verdict.startswith("skills: 0/1 "), verdict
+    assert "digest mismatch (alpha)" in verdict, verdict
     installed = home / ".claude" / "skills" / "alpha"
     assert not installed.exists(), \
         f"unverified bytes were left in place: {verdict}"
+    logs = _bootstrap_log(home)
+    assert "symlink in skill directory: link" in logs, logs[-2000:]
 
 
 def test_hook_bundle_override_narrows_what_is_installed(tmp_path):

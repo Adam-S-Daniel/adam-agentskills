@@ -40,6 +40,27 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: the portability review of [PR #41](https://github.com/Adam-S-Daniel/adam-agentskills/pull/41) found hidden subprocess diagnostics and a native Windows runtime outside the decoder's POSIX path model; the log did not establish a script stderr cause.
+- Change: reject native Windows Git Bash/MSYS, Cygwin, and win32 Bash with a fixed reason and exit 3 before HOME access; document Linux/WSL native POSIX support; preserve subprocess diagnostics and probe runtime, invalid-byte filename, and permission capabilities without changing decoding.
+- Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); `/tmp/c3-venv/bin/python -m pytest plugins/adam-coding-local/skills/migrate-claude-memory/tests/test_memory_inventory.py -q --basetemp=/tmp/c3r3-implementation-fixtures` exited 0 with 67 passed and 0 skipped on Linux. Twelve isolated mutation/behavior proofs produced pytest exit 1 for all 33 selected cases (32 failures and one Linux runtime-probe setup error), with 0 passed and 0 skipped; these cover all newly added tests, invalid UTF-8 handling, and the existing alias/ambiguity/mount/suffix safety checks. Worktree hashes stayed unchanged, and the script/test copies and fixtures were deleted. No paid model eval was run for this repair.
+- Outcome: pending corrective review in [PR #41](https://github.com/Adam-S-Daniel/adam-agentskills/pull/41).
+
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: corrective review of the [issue #14 decoder follow-up](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14) found false orphan labels for underscore, space, and Unicode aliases; a further review found reached prefixes with undecodable suffixes were also ignored.
+- Change: enumerate and normalize every existing entry at every level using ASCII-alphanumeric UTF-16 munging, including supplementary characters and consecutive punctuation. Preserve uncertainty for any matching branch that cannot be examined or completed. Known removable roots and detected device boundaries remain unresolved, including populated mounts; document same-device mount, custom-name, long-name, and concurrent-change limits. Temporary-home tests isolate host ancestor listings and device IDs while checking every real entry inside each fixture. The existing 2.0.1 version bump remains sufficient relative to the main branch.
+- Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); focused pytest: exit 0, 50 passed. Sixteen isolated script mutations produced exit 1 for 37 failing test executions covering all 31 added cases and four corrected existing cases, with the two supplementary-character cases repeated under a second mutation. No paid evaluation run.
+- Outcome: pending independent review and merge; the broader issue #14 remains open. This entry corrects the earlier same-day dotted-alias-only claim below.
+
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: [issue #14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14) tracks naming changes that prompted this scoped follow-up: failed path decoding was labeled `ORPHANED` and the cleanup instructions suggest deleting those stores.
+- Change: inventory distinguishes `EXISTING`, supported missing `ORPHANED` paths, and `UNRESOLVED` paths; ambiguity, dotted aliases, inaccessible parents, and symlinks cannot become orphan claims. Instructions prohibit deletion based on unresolved status, and maintenance context and temporary-home regression tests accompany the change. `adam-coding-local` bumped 2.0.0 -> 2.0.1.
+- Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); focused pytest: exit 0, 19 passed. No paid evaluation run.
+- Outcome: pending merge; broader issue #14 work remains outside this change.
+
 ## 2026-10-02 — adam-coding-anywhere/github-actions-repo-settings — edit
 
 - Motivation: the fleet branch-naming standard (repo-settings [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/persistent-branch-standard/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md), PR [#62](https://github.com/Adam-S-Daniel/repo-settings/pull/62)) names persistent results branches `persistent/<purpose>`, and the skill's bot-write policy text still pointed at an unprefixed results branch.

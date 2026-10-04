@@ -1,6 +1,6 @@
 {
   "registry": "Adam-S-Daniel/adam-agentskills",
-  "ref": "eabd6e613f75c4c732c7b81ec0347b7be7cdf668",
+  "ref": "d839653262ae3cde207efaccea523b4de08dcf1e",
   "bundles": [
     "adam-anything-anywhere",
     "adam-coding-anywhere"
@@ -16,5 +16,5 @@
     "adam-coding-anywhere/vendor-release-impact-issues": "sha256:b7bc6f17c002a05b5c5c517ddf598c717820ef808d5d240a5e8e9d6e68a7c426",
     "adam-coding-anywhere/workflow-path-audit": "sha256:8a7c57bcd890bbab38c42473d8705f0b2521954385f03bf5289e3ec84d3fcdde"
   },
-  "generated_from": "eabd6e613f75c4c732c7b81ec0347b7be7cdf668"
+  "generated_from": "d839653262ae3cde207efaccea523b4de08dcf1e"
 }

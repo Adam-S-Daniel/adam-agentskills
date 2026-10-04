@@ -7742,7 +7742,7 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     the two on content they must both HASH the same. This binds them on the one
     input they must both REFUSE — the other half of the same contract, and the
     half that a re-implementation is most likely to drop, because refusing is
-    the behaviour with no output to compare.
+    the behavior with no output to compare.
 
     Generate a valid lock while the registry has an ordinary payload file,
     then commit a relative directory symlink into that same skill. Retaining
@@ -7778,6 +7778,7 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     # exactly the gap in issue #24 is about.
     skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
     _make_symlink(skill_dir / "link", "payload", to_directory=True)
+    assert (skill_dir / "link").is_symlink()
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "add a symlink")
     sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -7798,6 +7799,32 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     assert "symlink in skill directory" in (proc.stderr + proc.stdout)
     assert not refusal_path.exists(), \
         "a refused digest must not leave a lock behind"
+
+    # Probe the same Git Bash `cp -R` path the hook uses. On Windows, cp may
+    # materialize a native directory symlink before the hook can inspect it.
+    probe_script = tmp_path / "copy-probe.sh"
+    _write(probe_script, 'set -eu\ncp -R "$1" "$2"\n')
+    copied_skill = tmp_path / "copied-skill"
+    probe = _run_hook(
+        tmp_path / "copy-probe-home",
+        script=probe_script,
+        args=(_hook_path(skill_dir), _hook_path(copied_skill)),
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert (copied_skill / "SKILL.md").read_bytes() == (skill_dir / "SKILL.md").read_bytes(), \
+        "cp probe did not copy the skill contents"
+    copied_link = copied_skill / "link"
+    if not copied_link.is_symlink():
+        assert os.name == "nt", \
+            "cp -R did not preserve a symlink on a non-Windows platform"
+        assert copied_link.is_dir(), \
+            "Git Bash cp -R dropped the symlink instead of materializing its target"
+        assert (copied_link / "extra.md").read_bytes() == \
+            (skill_dir / "payload" / "extra.md").read_bytes(), \
+            "Git Bash cp -R did not materialize the symlink target contents"
+        pytest.skip(
+            "Git Bash cp -R materializes native directory symlinks; the hook post-copy digest cannot reach its symlink guard"
+        )
 
     # HOOK side: retarget the valid lock to the symlink commit without changing
     # its digest. This is a valid lock shape and would install absent the guard.

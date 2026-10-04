@@ -1,20 +1,17 @@
 ---
 name: migrate-claude-memory
 description: >
-  Inventory, clean up, and migrate Claude Code auto-memory stores found under
-  ~/.claude/projects/<munged-path>/memory/ on this machine. Use this skill to
-  list every memory store with its decoded project path, file count, size, and
-  freshness; to identify ORPHANED stores whose original workspace no longer
-  exists (so a human can review and delete them); and to migrate a chosen
-  store into a repo's git-tracked .claude/memory/ directory so the memory
-  travels with the repo across machines and is visible to hosted/cloud Claude
-  sessions. Trigger on requests like "clean up claude memory", "migrate claude
-  memory", "inventory memory stores", "orphaned memory", "sync memory across
-  machines", "make memory portable", or any mention of
-  `~/.claude/projects` or `autoMemoryDirectory`. LOCAL-ONLY: this skill reads
-  and writes files under this machine's `~/.claude` directory and CANNOT run
-  in a hosted/cloud Claude session that has no local `~/.claude` on disk — do
-  not invoke it there.
+  Inventory, clean up, and migrate Claude Code auto-memory stores under
+  ~/.claude/projects/<munged-path>/memory/ on this machine. List decoded paths,
+  file counts, sizes, and freshness; identify ORPHANED stores for human review;
+  keep undecodable or ambiguous stores UNRESOLVED and never delete on that
+  basis; and copy a chosen store into git-tracked .claude/memory/ so memory
+  travels across machines and reaches hosted/cloud sessions. Trigger on
+  "clean up claude memory", "migrate claude memory", "inventory memory stores",
+  "orphaned memory", "sync memory across machines", "make memory portable",
+  or mentions of `~/.claude/projects` or `autoMemoryDirectory`. LOCAL-ONLY:
+  requires this machine's ~/.claude directory; do not invoke in a hosted/cloud
+  session without it.
 compatibility: Requires bash, GNU coreutils (find, stat, du) and read/write access to ~/.claude/projects on the local machine; local execution only — memory stores are machine-local and this skill cannot run in a hosted/cloud session without that directory present.
 ---
 
@@ -41,7 +38,8 @@ This plugin does three things:
 1. **Inventory** every memory store (`memory-inventory.sh`) — read-only.
 2. **Help a human clean up orphans** — the script only *points at* candidates;
    it never deletes anything. You review the `ORPHANED` entries yourself and
-   run `rm -rf` on the ones you're sure about.
+   run `rm -rf` on the ones you're sure about. `UNRESOLVED` means the path
+   could not be determined safely; never delete a store on that basis.
 3. **Migrate a chosen store into the portable in-repo pattern**
    (`memory-migrate.sh`) — copy its files into `<repo>/.claude/memory/`
    (git-tracked) so the memory travels with the repo via git, reaching other
@@ -78,23 +76,37 @@ Both run a fail-fast preflight first:
 [ -d ~/.claude/projects ] || { echo "..." >&2; exit 1; }
 ```
 
-For each store, it reports the munged name, a best-guess decoded original
-path (or a `ORPHANED`-labeled guess if no matching directory exists on disk),
-file count, human-readable size, and newest file mtime, then a summary line
-(`N stores, M orphaned`). **`memory-inventory.sh` never deletes or modifies
-anything** — it is strictly read-only.
+For each store, it reports the munged name, path status, file count,
+human-readable size, and newest file mtime, then counts stores, orphans, and
+unresolved stores. **`memory-inventory.sh` never deletes or modifies anything**
+— it is strictly read-only.
+
+- `EXISTING`: one supported decoded workspace directory exists.
+- `ORPHANED`: one supported decoded path has a missing plain final component
+  beneath an accessible existing parent. The concrete path is reported.
+- `UNRESOLVED`: the path is undecodable, ambiguous, unsupported, or cannot be
+  checked safely. Multiple candidates, including a mixture of existing and
+  missing paths, remain unresolved. **Do not delete a store because it is
+  `UNRESOLVED`.**
+
+JSON retains `munged`, `path`, `orphaned`, `file_count`, `total_size_bytes`,
+and `newest_mtime`, and adds `status` and `unresolved`. Unresolved stores have
+`path: null`, `orphaned: false`, and `unresolved: true`; orphaned stores retain
+their supported decoded path.
 
 ## Workflow 2: Clean up orphans
 
 Look at the `ORPHANED` entries from the inventory. For each one you're
-confident about (i.e. you recognize the guessed path and know that workspace
-is really gone), delete the memory directory yourself:
+confident about (i.e. you recognize the reported path and independently know
+that workspace is really gone), delete the memory directory yourself:
 
 ```
 rm -rf ~/.claude/projects/<munged-name>
 ```
 
 This skill never runs `rm` for you — cleanup is a manual, human-reviewed step.
+`UNRESOLVED` is a reason to investigate the original workspace path, never a
+reason to delete the store. Do not treat a guessed path as deletion evidence.
 
 ## Workflow 3: Migrate to in-repo portable memory
 
@@ -118,14 +130,23 @@ Add this to <repo>/.claude/settings.json:
 credentials, or internal-only details before committing — once memory is
 migrated in-repo, it becomes as visible as the rest of the repo.
 
-## Known limitation: dotted directory names
+## Known limitations: lossy path decoding
 
-Claude Code's real munging also replaces literal `.` in path components with
-`-` (verified: a repo literally named `adamdaniel.ai` produces a memory-store
-folder ending `...-adamdaniel-ai` — indistinguishable from a repo actually
-named `adamdaniel-ai`). The decoder in `memory-inventory.sh` only tries the
-`-`-was-`/` vs. `-`-is-a-literal-hyphen split; it does **not** also try
-substituting `.` for `-`. This means directories whose real name contains a
-literal dot will be reported `ORPHANED` even though the workspace still
-exists on disk. This is an accepted best-guess limitation, not a bug — verify
-any `ORPHANED` result against the actual filesystem before deleting anything.
+Munging also replaces literal `.` in path components with `-`: an invented
+workspace named `example.com` collides with `example-com` and `example/com`.
+The decoder searches supported slash/hyphen splits through existing directory
+prefixes. It inspects actual dotted entries as evidence of ambiguity, but
+never invents dot-substitution candidates. A matching dotted entry therefore
+keeps the store `UNRESOLVED`.
+
+A missing final component containing hyphens, a missing ancestor, a matching
+symlink (including a dangling link), an inaccessible parent, or an unsupported
+store name also remains `UNRESOLVED`. Existing names containing spaces or
+Unicode still decode when unambiguous. These limits prevent a failed decode
+from becoming an orphan claim; they do not identify every deleted workspace.
+Always verify an `ORPHANED` result independently before deleting anything.
+
+The existing inventory format assumes filenames contain no control characters
+(such as newlines or tabs); its line-based file counts and size extraction,
+and JSON escaping, do not support those names. Inspect such stores manually
+and do not use their inventory output as cleanup evidence.

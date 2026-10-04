@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: [issue #14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14) tracks naming changes that prompted this scoped follow-up: failed path decoding was labeled `ORPHANED` and the cleanup instructions suggest deleting those stores.
+- Change: inventory distinguishes `EXISTING`, supported missing `ORPHANED` paths, and `UNRESOLVED` paths; ambiguity, dotted aliases, inaccessible parents, and symlinks cannot become orphan claims. Instructions prohibit deletion based on unresolved status, and maintenance context and temporary-home regression tests accompany the change. `adam-coding-local` bumped 2.0.0 -> 2.0.1.
+- Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); focused pytest: exit 0, 19 passed. No paid evaluation run.
+- Outcome: pending merge; broader issue #14 work remains outside this change.
+
 ## 2026-10-02 — adam-coding-anywhere/github-actions-repo-settings — edit
 
 - Motivation: the fleet branch-naming standard (repo-settings [ADR 0007](https://github.com/Adam-S-Daniel/repo-settings/blob/persistent-branch-standard/docs/decisions/0007-persistent-branches-use-the-persistent-prefix-and-a-deletion-ruleset.md), PR [#62](https://github.com/Adam-S-Daniel/repo-settings/pull/62)) names persistent results branches `persistent/<purpose>`, and the skill's bot-write policy text still pointed at an unprefixed results branch.

@@ -11,6 +11,72 @@ import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "memory-inventory.sh"
 
+UNSUPPORTED_REASON = (
+    "ERROR: memory inventory requires native POSIX paths with Bash and GNU tools; "
+    "native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported."
+)
+
+
+def _script():
+    return Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+
+
+def _diagnostics(command, result):
+    return (
+        f"command: {command!r}\nreturn code: {result.returncode}\n"
+        f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    )
+
+
+def _run(command, *, env, expected=0):
+    result = subprocess.run(
+        command, env=env, capture_output=True, text=True,
+        encoding="utf-8", errors="surrogateescape",
+    )
+    if expected is not None and result.returncode != expected:
+        raise AssertionError(_diagnostics(command, result))
+    return result
+
+
+@pytest.fixture
+def inventory_runtime(tmp_path):
+    """Skip only a verified Windows rejection from the actual tested script."""
+    home = tmp_path / "capability-home"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    temp = tmp_path / "capability-temp"
+    temp.mkdir()
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    command = ["bash", _script().as_posix(), "--json"]
+    result = _run(command, env=env, expected=None)
+    if result.returncode == 3:
+        ostype = _run(["bash", "-c", 'printf "%s" "$OSTYPE"'], env=env).stdout
+        assert ostype.startswith(("msys", "cygwin", "win32")), _diagnostics(command, result)
+        assert result.stdout == "", _diagnostics(command, result)
+        assert result.stderr == UNSUPPORTED_REASON + "\n", _diagnostics(command, result)
+        pytest.skip(UNSUPPORTED_REASON)
+    assert result.returncode == 0, _diagnostics(command, result)
+    assert result.stdout == "[]\n", _diagnostics(command, result)
+    assert list(temp.iterdir()) == []
+    assert _snapshot(home) == {}
+
+
+def _restrict_or_skip(directory, env):
+    """Probe actual Bash permissions instead of assuming platform or user ID."""
+    try:
+        directory.chmod(0)
+    except OSError as error:
+        pytest.skip(f"filesystem cannot remove directory permissions: {type(error).__name__}")
+    result = _run(
+        ["bash", "-c", '[[ ! -r "$1" && ! -x "$1" ]]', "permission-probe", directory.as_posix()],
+        env=env, expected=None,
+    )
+    if result.returncode == 1:
+        directory.chmod(0o700)
+        pytest.skip("filesystem or current user does not enforce unreadable directory permissions")
+    if result.returncode != 0:
+        directory.chmod(0o700)
+        raise AssertionError(_diagnostics(result.args, result))
+
 
 def _munge(path):
     """Mirror the vendor ASCII regex over UTF-16 code units."""
@@ -27,7 +93,7 @@ def _test_env(tmp_path, home, temp):
     commands = tmp_path / "baseline-commands"
     commands.mkdir()
     shim = commands / "stat"
-    shim.write_text('#!/usr/bin/env bash\nprintf "1\n"\n')
+    shim.write_text('#!/usr/bin/env bash\nprintf "1\n"\n', newline="\n")
     shim.chmod(0o700)
     real_find = shutil.which("find")
     assert real_find is not None
@@ -39,7 +105,7 @@ def _test_env(tmp_path, home, temp):
         '  printf "%s\\0" "${1%/}/${suffix%%/*}"\n'
         '  exit 0\n'
         'fi\n'
-        'exec "$INVENTORY_BASE_FIND" "$@"\n'
+        'exec "$INVENTORY_BASE_FIND" "$@"\n', newline="\n"
     )
     shim.chmod(0o700)
     return {**os.environ, "HOME": str(home), "TMPDIR": str(temp), "PATH": str(commands) + os.pathsep + os.environ["PATH"], "INVENTORY_FIXTURE_ROOT": str(tmp_path), "INVENTORY_BASE_FIND": real_find}
@@ -96,7 +162,7 @@ def _snapshot(home):
         ("invalid_utf8_sibling", "UNRESOLVED"),
     ],
 )
-def test_inventory_classification(tmp_path, scenario, status):
+def test_inventory_classification(tmp_path, inventory_runtime, scenario, status):
     home = tmp_path / "home"
     workspaces = tmp_path / "workspaces"
     workspaces.mkdir()
@@ -133,12 +199,9 @@ def test_inventory_classification(tmp_path, scenario, status):
     elif scenario == "missing_ancestor":
         workspace = workspaces / "removed" / "project"
     elif scenario == "unreadable_parent":
-        if os.geteuid() == 0:
-            pytest.skip("root bypasses directory access permissions")
         restricted = workspaces / "restricted"
         restricted.mkdir()
         workspace = restricted / "project"
-        restricted.chmod(0)
 
     if scenario in {"underscore_alias", "space_alias", "unicode_alias", "alias_file", "alias_symlink_loop", "unreadable_alias"}:
         prefix, alias = {
@@ -155,10 +218,7 @@ def test_inventory_classification(tmp_path, scenario, status):
         else:
             workspace.mkdir()
             if scenario == "unreadable_alias":
-                if os.geteuid() == 0:
-                    pytest.skip("root bypasses directory access permissions")
                 restricted = workspace
-                restricted.chmod(0)
     elif scenario == "intermediate_alias":
         (workspaces / "area-one").mkdir()
         (workspaces / "area_one").mkdir()
@@ -184,7 +244,11 @@ def test_inventory_classification(tmp_path, scenario, status):
         (workspaces / "area_one").write_text("Invented obstruction for example.com.\n")
         workspace = workspaces / "area-one" / "leaf"
     if scenario == "invalid_utf8_sibling":
-        (workspaces / os.fsdecode(b"invalid\xff")).mkdir()
+        invalid_name = b"invalid\xff".decode("utf-8", errors="surrogateescape")
+        try:
+            (workspaces / invalid_name).mkdir()
+        except (UnicodeError, OSError) as error:
+            pytest.skip(f"filesystem cannot create an invalid UTF-8 sibling: {type(error).__name__}")
     if scenario == "trailing_separator":
         workspace.mkdir()
     munged = _munge(workspace)
@@ -203,11 +267,12 @@ def test_inventory_classification(tmp_path, scenario, status):
     temp.mkdir()
     env = _test_env(tmp_path, home, temp)
     before = _snapshot(home)
-    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    script = _script()
+    if restricted is not None:
+        _restrict_or_skip(restricted, env)
     try:
-        result = subprocess.run(
-            ["bash", str(script), "--json"], env=env,
-            check=True, capture_output=True, text=True,
+        result = _run(
+            ["bash", script.as_posix(), "--json"], env=env,
         )
         entries = json.loads(result.stdout)
         assert len(entries) == 1
@@ -219,9 +284,8 @@ def test_inventory_classification(tmp_path, scenario, status):
         assert entry["file_count"] == 1
         assert entry["munged"] == munged
 
-        text = subprocess.run(
-            ["bash", str(script)], env=env,
-            check=True, capture_output=True, text=True,
+        text = _run(
+            ["bash", script.as_posix()], env=env,
         ).stdout
         assert "GUESS" not in text
         assert ("[ORPHANED:" in text) is (status == "ORPHANED")
@@ -238,7 +302,7 @@ def test_inventory_classification(tmp_path, scenario, status):
 
 
 @pytest.mark.parametrize("populated", [False, True], ids=["empty", "aggregate"])
-def test_inventory_summary(tmp_path, populated):
+def test_inventory_summary(tmp_path, inventory_runtime, populated):
     home = tmp_path / "home"
     projects = home / ".claude" / "projects"
     projects.mkdir(parents=True)
@@ -261,16 +325,14 @@ def test_inventory_summary(tmp_path, populated):
     temp = tmp_path / "temp"
     temp.mkdir()
     env = _test_env(tmp_path, home, temp)
-    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    script = _script()
     before = _snapshot(home)
-    result = subprocess.run(
-        ["bash", str(script), "--json"], env=env,
-        check=True, capture_output=True, text=True,
+    result = _run(
+        ["bash", script.as_posix(), "--json"], env=env,
     )
     assert {entry["munged"]: entry["status"] for entry in json.loads(result.stdout)} == expected
-    text = subprocess.run(
-        ["bash", str(script)], env=env,
-        check=True, capture_output=True, text=True,
+    text = _run(
+        ["bash", script.as_posix()], env=env,
     ).stdout
     count = int(populated)
     assert text.rstrip().endswith(
@@ -282,18 +344,18 @@ def test_inventory_summary(tmp_path, populated):
 
 
 @pytest.mark.parametrize("path", ["/mnt/x/leaf", "/mnt/c/Case/leaf", "/media/leaf", "/run/media/leaf", "/Volumes/leaf"])
-def test_known_mount_roots_are_unresolved(tmp_path, path):
+def test_known_mount_roots_are_unresolved(tmp_path, inventory_runtime, path):
     """No real mount or drive is inspected; only the lexical guard is exercised."""
     home = tmp_path / "home"
     (home / ".claude" / "projects").mkdir(parents=True)
     temp = tmp_path / "temp"
     temp.mkdir()
     env = _test_env(tmp_path, home, temp)
-    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    script = _script()
     before = _snapshot(home)
-    result = subprocess.run(
-        ["bash", "-c", 'source "$1" --json; _decode_try() { _decode_candidate "$1" ORPHANED; }; decode_munged_path "$2"; printf "%s\n" "$decode_status"', "inventory-test", str(script), _munge(path)],
-        env=env, check=True, capture_output=True, text=True,
+    result = _run(
+        ["bash", "-c", 'source "$1" --json; _decode_try() { _decode_candidate "$1" ORPHANED; }; decode_munged_path "$2"; printf "%s\n" "$decode_status"', "inventory-test", script.as_posix(), _munge(path)],
+        env=env,
     )
     assert result.stdout.splitlines() == ["[]", "UNRESOLVED"]
     assert _snapshot(home) == before
@@ -301,7 +363,7 @@ def test_known_mount_roots_are_unresolved(tmp_path, path):
 
 
 @pytest.mark.parametrize("failure", ["device", "malformed_device", "stat_error", "enumeration_error", "locale_error"])
-def test_unexamined_parent_is_unresolved(tmp_path, failure):
+def test_unexamined_parent_is_unresolved(tmp_path, inventory_runtime, failure):
     home = tmp_path / "home"
     workspaces = tmp_path / "workspaces"
     workspaces.mkdir()
@@ -322,18 +384,18 @@ def test_unexamined_parent_is_unresolved(tmp_path, failure):
         'for argument in "$@"; do\n'
         '  if [[ "$argument" == "$INVENTORY_BLOCKED_PARENT" ]]; then\n'
         + ('    printf "999999999\n"; exit 0\n' if failure == "device" else '    printf "invalid\n"; exit 0\n' if failure == "malformed_device" else '    exit 1\n')
-        + '  fi\ndone\nexec "$INVENTORY_REAL_COMMAND" "$@"\n'
+        + '  fi\ndone\nexec "$INVENTORY_REAL_COMMAND" "$@"\n', newline="\n"
     )
     if failure == "locale_error":
-        shim.write_text("#!/usr/bin/env bash\nexit 1\n")
+        shim.write_text("#!/usr/bin/env bash\nexit 1\n", newline="\n")
     shim.chmod(0o700)
     env = _test_env(tmp_path, home, temp)
     if command in {"stat", "find"}:
         real_command = str(tmp_path / "baseline-commands" / command)
     env.update({"PATH": str(commands) + os.pathsep + env["PATH"], "INVENTORY_BLOCKED_PARENT": str(workspaces), "INVENTORY_REAL_COMMAND": real_command})
-    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    script = _script()
     before = _snapshot(home)
-    result = subprocess.run(["bash", str(script), "--json"], env=env, check=True, capture_output=True, text=True)
+    result = _run(["bash", script.as_posix(), "--json"], env=env)
     entries = json.loads(result.stdout)
     assert len(entries) == 1
     assert entries[0]["status"] == "UNRESOLVED"
@@ -342,3 +404,84 @@ def test_unexamined_parent_is_unresolved(tmp_path, failure):
     assert entries[0]["unresolved"] is True
     assert _snapshot(home) == before
     assert list(temp.iterdir()) == []
+
+
+def test_failure_diagnostics_preserve_invalid_bytes_and_both_streams(tmp_path):
+    home = tmp_path / "home"
+    temp = tmp_path / "temp"
+    home.mkdir()
+    temp.mkdir()
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    command = ["bash", "-c", r"printf 'stdout\377'; printf 'stderr\376' >&2; exit 7"]
+    with pytest.raises(AssertionError) as failure:
+        _run(command, env=env)
+    message = str(failure.value)
+    assert f"command: {command!r}" in message
+    assert "return code: 7" in message
+    assert "stdout:\nstdout\udcff" in message
+    assert "stderr:\nstderr\udcfe" in message
+
+
+@pytest.mark.parametrize("ostype", ["msys", "msys_nt", "cygwin", "cygwin_nt", "win32", "win32_nt"])
+@pytest.mark.parametrize("missing_home", [False, True], ids=["empty-projects", "missing-home"])
+def test_windows_guard_precedes_home_lookup_without_modifying_files(tmp_path, ostype, missing_home):
+    home = tmp_path / "home"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    if missing_home:
+        env["HOME"] = str(tmp_path / "absent-home")
+    before = _snapshot(tmp_path)
+    paths_before = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*"))
+    result = _run(
+        ["bash", "-c", 'OSTYPE="$1"; source "$2" --json', "guard-test", ostype, _script().as_posix()],
+        env=env, expected=3,
+    )
+    assert result.stdout == ""
+    assert result.stderr == UNSUPPORTED_REASON + "\n"
+    assert _snapshot(tmp_path) == before
+    assert sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*")) == paths_before
+
+
+@pytest.mark.parametrize("ostype", ["msys", "cygwin", "win32"])
+def test_argument_validation_precedes_windows_guard(tmp_path, ostype):
+    home = tmp_path / "home"
+    temp = tmp_path / "temp"
+    home.mkdir()
+    temp.mkdir()
+    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    result = _run(
+        ["bash", "-c", 'OSTYPE="$1"; source "$2" --invalid', "guard-test", ostype, _script().as_posix()],
+        env=env, expected=2,
+    )
+    assert result.stdout == ""
+    assert result.stderr == "Usage: memory-inventory.sh [--json]\n"
+    assert list(temp.iterdir()) == []
+
+
+def test_unreadable_parent_with_missing_plain_leaf_is_unresolved(tmp_path, inventory_runtime):
+    """An orphan-shaped missing leaf cannot establish a readable parent chain."""
+    home = tmp_path / "home"
+    parent = tmp_path / "workspaces" / "restricted"
+    parent.mkdir(parents=True)
+    workspace = parent / "leaf"
+    memory = home / ".claude" / "projects" / _munge(workspace) / "memory"
+    memory.mkdir(parents=True)
+    (memory / "MEMORY.md").write_text("Invented memory for example.com.\n")
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    env = _test_env(tmp_path, home, temp)
+    before = _snapshot(home)
+    _restrict_or_skip(parent, env)
+    try:
+        result = _run(["bash", _script().as_posix(), "--json"], env=env)
+        entries = json.loads(result.stdout)
+        assert len(entries) == 1
+        assert entries[0]["status"] == "UNRESOLVED"
+        assert entries[0]["path"] is None
+        assert entries[0]["orphaned"] is False
+        assert _snapshot(home) == before
+        assert list(temp.iterdir()) == []
+    finally:
+        parent.chmod(0o700)

@@ -34,3 +34,15 @@ The focused tests run the inventory with invented temporary homes and cover
 classification, JSON and text output, aggregate counts, and preserved memory
 contents. This skill remains local because its inputs live on the machine;
 none of these tests inspect the operator's real memory stores.
+
+The portability repair in [PR #41](https://github.com/Adam-S-Daniel/adam-agentskills/pull/41)
+keeps the decoder's native POSIX path rule explicit. Native Windows Git
+Bash/MSYS, Cygwin, and win32 Bash now stop with a fixed reason and exit 3
+before looking up HOME or creating temporary files. Supported inventory runs
+use Bash and GNU tools on native POSIX paths, such as Linux or WSL. The Windows
+failure log did not expose script stderr, so the repair does not claim a
+specific cause for those failures. Tests now preserve both subprocess streams,
+including invalid bytes, and skip inventory cases only after the actual
+script and an independent Bash runtime probe confirm this unsupported case.
+Invalid UTF-8 filenames and unreadable directories are separately probed for
+filesystem support so capable Linux runs retain those safety regressions.

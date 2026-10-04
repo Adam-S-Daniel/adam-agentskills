@@ -12,7 +12,7 @@ description: >
   or mentions of `~/.claude/projects` or `autoMemoryDirectory`. LOCAL-ONLY:
   requires this machine's ~/.claude directory; do not invoke in a hosted/cloud
   session without it.
-compatibility: Requires bash, GNU coreutils (find, stat, du) and read/write access to ~/.claude/projects on the local machine; local execution only — memory stores are machine-local and this skill cannot run in a hosted/cloud session without that directory present.
+compatibility: Inventory requires native POSIX paths with Bash and GNU tools (including find, stat, and du), such as Linux or WSL; native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported. Requires read/write access to ~/.claude/projects on the local machine; local execution only — memory stores are machine-local and this skill cannot run in a hosted/cloud session without that directory present.
 ---
 
 # Migrate Claude Memory
@@ -71,7 +71,17 @@ bash scripts/memory-inventory.sh          # human-readable
 bash scripts/memory-inventory.sh --json   # machine-readable JSON array
 ```
 
-Both run a fail-fast preflight first:
+Inventory supports native POSIX paths with Bash and GNU tools, such as Linux
+or WSL. Native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported:
+they do not provide the native POSIX path model decoded by this script. After
+argument validation, these runtimes exit **3** before accessing `HOME` or
+creating a temporary file, with this fixed reason on stderr and no stdout:
+
+```text
+ERROR: memory inventory requires native POSIX paths with Bash and GNU tools; native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported.
+```
+
+On supported runtimes, both commands then check for the local store root:
 
 ```bash
 [ -d ~/.claude/projects ] || { echo "..." >&2; exit 1; }

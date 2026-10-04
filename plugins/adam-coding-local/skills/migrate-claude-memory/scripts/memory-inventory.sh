@@ -24,6 +24,14 @@ for arg in "$@"; do
   esac
 done
 
+# Windows Bash runtimes do not provide the native POSIX path model decoded here.
+case "$OSTYPE" in
+  msys*|cygwin*|win32*)
+    echo "ERROR: memory inventory requires native POSIX paths with Bash and GNU tools; native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported." >&2
+    exit 3
+    ;;
+esac
+
 [ -d "$HOME/.claude/projects" ] || { echo "ERROR: ~/.claude/projects not found — is this a machine with Claude Code auto-memory?" >&2; exit 1; }
 
 # Claude Code replaces each non-ASCII-alphanumeric UTF-16 code unit with a

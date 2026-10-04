@@ -28,6 +28,150 @@ def _diagnostics(command, result):
     )
 
 
+def _is_windows_launcher(candidate, system_root):
+    """Reject bash.exe under SystemRoot; it is the WSL launcher."""
+    try:
+        Path(candidate).resolve().relative_to(Path(system_root).resolve())
+    except (ValueError, OSError):
+        return False
+    return True
+
+
+def _find_posix_bash(*, platform_name=None, which=shutil.which, environ=None):
+    """Find an absolute POSIX Bash path, excluding System32's WSL launcher.
+
+    Candidate search follows scripts/test_generate_skills_lock.py's
+    ``_find_posix_bash``; kept local because importing that test module would
+    require a sys.path change.
+    """
+    platform_name = os.name if platform_name is None else platform_name
+    environ = os.environ if environ is None else environ
+    found = which("bash")
+    if platform_name != "nt":
+        return str(Path(found).resolve()) if found else None
+
+    candidates = [Path(found)] if found else []
+    git = which("git")
+    if git:
+        git_path = Path(git).resolve()
+        for up in (2, 3):
+            try:
+                root = git_path.parents[up - 1]
+            except IndexError:
+                continue
+            candidates.append(root / "usr" / "bin" / "bash.exe")
+    for var in ("ProgramFiles", "ProgramW6432", "ProgramFiles(x86)", "LOCALAPPDATA"):
+        base = environ.get(var)
+        if base:
+            candidates.append(Path(base) / "Git" / "usr" / "bin" / "bash.exe")
+            candidates.append(Path(base) / "Programs" / "Git" / "usr" / "bin" / "bash.exe")
+
+    system_root = Path(environ.get("SystemRoot", r"C:\Windows"))
+    for candidate in candidates:
+        if _is_windows_launcher(candidate, system_root):
+            continue
+        if candidate.is_file():
+            return str(candidate.resolve())
+    return None
+
+
+def _capability_decision(bash, returncode, stdout, stderr, *, is_windows):
+    """Return (run|skip|fail, reason) for the actual script capability probe."""
+    if bash is None:
+        return "skip", "no POSIX bash found (only the WSL launcher or none)"
+    if returncode == 0:
+        return "run", ""
+    if returncode == 3 and is_windows and stdout == "" and stderr == UNSUPPORTED_REASON + "\n":
+        return "skip", f"native Windows rejection: {UNSUPPORTED_REASON!r}"
+    return "fail", f"capability probe exited {returncode}; stdout={stdout!r}; stderr={stderr!r}"
+
+
+@pytest.mark.parametrize(
+    "bash,returncode,stdout,stderr,is_windows,expected,reason_part",
+    [
+        (None, None, "", "", True, "skip", "no POSIX bash found"),
+        (None, None, "", "", False, "skip", "no POSIX bash found"),
+        ("/git/bash", 3, "", UNSUPPORTED_REASON + "\n", True, "skip", UNSUPPORTED_REASON),
+        ("/usr/bin/bash", 3, "", UNSUPPORTED_REASON + "\n", False, "fail", "exited 3"),
+        ("/git/bash", 3, "unexpected", UNSUPPORTED_REASON + "\n", True, "fail", "stdout='unexpected'"),
+        ("/usr/bin/bash", 0, "[]\n", "", False, "run", ""),
+        ("/usr/bin/bash", 3, "", "different\n", True, "fail", "stdout=''; stderr='different\\n'"),
+        ("/usr/bin/bash", 1, "partial", "problem", False, "fail", "stdout='partial'; stderr='problem'"),
+    ],
+    ids=[
+        "no-bash-windows", "no-bash-posix", "native-windows-rejection",
+        "linux-exit-3-fails", "windows-with-stdout-fails", "exit-zero-runs",
+        "windows-other-exit-fails", "other-exit-fails",
+    ],
+)
+def test_capability_decision_table(
+    bash, returncode, stdout, stderr, is_windows, expected, reason_part
+):
+    decision, reason = _capability_decision(
+        bash, returncode, stdout, stderr, is_windows=is_windows
+    )
+    assert decision == expected
+    assert reason_part in reason
+
+
+def test_posix_bash_resolver_skips_windows_launcher_and_finds_git_bash(tmp_path):
+    system = tmp_path / "Windows"
+    launcher = system / "System32" / "bash.exe"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    git_bash = tmp_path / "Program Files" / "Git" / "usr" / "bin" / "bash.exe"
+    git_bash.parent.mkdir(parents=True)
+    git_bash.touch()
+    found = {"bash": str(launcher), "git": None}
+    result = _find_posix_bash(
+        platform_name="nt",
+        which=lambda name: found.get(name),
+        environ={"SystemRoot": str(system), "ProgramFiles": str(tmp_path / "Program Files")},
+    )
+    assert result == str(git_bash.resolve())
+
+
+def test_posix_bash_resolver_returns_none_when_only_wsl_launcher_exists(tmp_path):
+    system = tmp_path / "Windows"
+    launcher = system / "System32" / "bash.exe"
+    launcher.parent.mkdir(parents=True)
+    launcher.touch()
+    result = _find_posix_bash(
+        platform_name="nt",
+        which=lambda name: str(launcher) if name == "bash" else None,
+        environ={"SystemRoot": str(system)},
+    )
+    assert result is None
+
+
+def test_posix_bash_resolver_finds_portable_git_install(tmp_path):
+    git = tmp_path / "Portable" / "Git" / "cmd" / "git.exe"
+    git.parent.mkdir(parents=True)
+    git.touch()
+    bash = tmp_path / "Portable" / "Git" / "usr" / "bin" / "bash.exe"
+    bash.parent.mkdir(parents=True)
+    bash.touch()
+    result = _find_posix_bash(
+        platform_name="nt",
+        which=lambda name: str(git) if name == "git" else None,
+        environ={"SystemRoot": str(tmp_path / "Windows")},
+    )
+    assert result == str(bash.resolve())
+
+
+@pytest.mark.parametrize("found", [True, False], ids=["absolute-path", "missing"])
+def test_posix_bash_resolver_on_posix_returns_absolute_or_none(tmp_path, found):
+    bash = tmp_path / "bin" / "bash"
+    bash.parent.mkdir()
+    bash.touch()
+    result = _find_posix_bash(
+        platform_name="posix",
+        which=lambda name: str(bash) if found else None,
+        environ={},
+    )
+    assert result == (str(bash.resolve()) if found else None)
+
+
 def _run(command, *, env, expected=0):
     result = subprocess.run(
         command, env=env, capture_output=True, text=True,
@@ -40,34 +184,42 @@ def _run(command, *, env, expected=0):
 
 @pytest.fixture
 def inventory_runtime(tmp_path):
-    """Skip only a verified Windows rejection from the actual tested script."""
+    """Return Bash after the script's platform capability has been verified."""
+    bash = _find_posix_bash()
+    if bash is None:
+        decision, reason = _capability_decision(
+            bash, None, "", "", is_windows=(os.name == "nt")
+        )
+        if decision == "skip":
+            pytest.skip(reason)
+        pytest.fail(reason)
     home = tmp_path / "capability-home"
     (home / ".claude" / "projects").mkdir(parents=True)
     temp = tmp_path / "capability-temp"
     temp.mkdir()
     env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
-    command = ["bash", _script().as_posix(), "--json"]
+    command = [bash, _script().as_posix(), "--json"]
     result = _run(command, env=env, expected=None)
-    if result.returncode == 3:
-        ostype = _run(["bash", "-c", 'printf "%s" "$OSTYPE"'], env=env).stdout
-        assert ostype.startswith(("msys", "cygwin", "win32")), _diagnostics(command, result)
-        assert result.stdout == "", _diagnostics(command, result)
-        assert result.stderr == UNSUPPORTED_REASON + "\n", _diagnostics(command, result)
-        pytest.skip(UNSUPPORTED_REASON)
-    assert result.returncode == 0, _diagnostics(command, result)
+    decision, reason = _capability_decision(
+        bash, result.returncode, result.stdout, result.stderr, is_windows=(os.name == "nt")
+    )
+    if decision == "skip":
+        pytest.skip(reason)
+    assert decision == "run", f"{reason}\n{_diagnostics(command, result)}"
     assert result.stdout == "[]\n", _diagnostics(command, result)
     assert list(temp.iterdir()) == []
     assert _snapshot(home) == {}
+    return bash
 
 
-def _restrict_or_skip(directory, env):
+def _restrict_or_skip(bash, directory, env):
     """Probe actual Bash permissions instead of assuming platform or user ID."""
     try:
         directory.chmod(0)
     except OSError as error:
         pytest.skip(f"filesystem cannot remove directory permissions: {type(error).__name__}")
     result = _run(
-        ["bash", "-c", '[[ ! -r "$1" && ! -x "$1" ]]', "permission-probe", directory.as_posix()],
+        [bash, "-c", '[[ ! -r "$1" && ! -x "$1" ]]', "permission-probe", directory.as_posix()],
         env=env, expected=None,
     )
     if result.returncode == 1:
@@ -163,6 +315,7 @@ def _snapshot(home):
     ],
 )
 def test_inventory_classification(tmp_path, inventory_runtime, scenario, status):
+    bash = inventory_runtime
     home = tmp_path / "home"
     workspaces = tmp_path / "workspaces"
     workspaces.mkdir()
@@ -269,10 +422,10 @@ def test_inventory_classification(tmp_path, inventory_runtime, scenario, status)
     before = _snapshot(home)
     script = _script()
     if restricted is not None:
-        _restrict_or_skip(restricted, env)
+        _restrict_or_skip(bash, restricted, env)
     try:
         result = _run(
-            ["bash", script.as_posix(), "--json"], env=env,
+            [bash, script.as_posix(), "--json"], env=env,
         )
         entries = json.loads(result.stdout)
         assert len(entries) == 1
@@ -285,7 +438,7 @@ def test_inventory_classification(tmp_path, inventory_runtime, scenario, status)
         assert entry["munged"] == munged
 
         text = _run(
-            ["bash", script.as_posix()], env=env,
+            [bash, script.as_posix()], env=env,
         ).stdout
         assert "GUESS" not in text
         assert ("[ORPHANED:" in text) is (status == "ORPHANED")
@@ -303,6 +456,7 @@ def test_inventory_classification(tmp_path, inventory_runtime, scenario, status)
 
 @pytest.mark.parametrize("populated", [False, True], ids=["empty", "aggregate"])
 def test_inventory_summary(tmp_path, inventory_runtime, populated):
+    bash = inventory_runtime
     home = tmp_path / "home"
     projects = home / ".claude" / "projects"
     projects.mkdir(parents=True)
@@ -328,11 +482,11 @@ def test_inventory_summary(tmp_path, inventory_runtime, populated):
     script = _script()
     before = _snapshot(home)
     result = _run(
-        ["bash", script.as_posix(), "--json"], env=env,
+        [bash, script.as_posix(), "--json"], env=env,
     )
     assert {entry["munged"]: entry["status"] for entry in json.loads(result.stdout)} == expected
     text = _run(
-        ["bash", script.as_posix()], env=env,
+        [bash, script.as_posix()], env=env,
     ).stdout
     count = int(populated)
     assert text.rstrip().endswith(
@@ -346,6 +500,7 @@ def test_inventory_summary(tmp_path, inventory_runtime, populated):
 @pytest.mark.parametrize("path", ["/mnt/x/leaf", "/mnt/c/Case/leaf", "/media/leaf", "/run/media/leaf", "/Volumes/leaf"])
 def test_known_mount_roots_are_unresolved(tmp_path, inventory_runtime, path):
     """No real mount or drive is inspected; only the lexical guard is exercised."""
+    bash = inventory_runtime
     home = tmp_path / "home"
     (home / ".claude" / "projects").mkdir(parents=True)
     temp = tmp_path / "temp"
@@ -354,7 +509,7 @@ def test_known_mount_roots_are_unresolved(tmp_path, inventory_runtime, path):
     script = _script()
     before = _snapshot(home)
     result = _run(
-        ["bash", "-c", 'source "$1" --json; _decode_try() { _decode_candidate "$1" ORPHANED; }; decode_munged_path "$2"; printf "%s\n" "$decode_status"', "inventory-test", script.as_posix(), _munge(path)],
+        [bash, "-c", 'source "$1" --json; _decode_try() { _decode_candidate "$1" ORPHANED; }; decode_munged_path "$2"; printf "%s\n" "$decode_status"', "inventory-test", script.as_posix(), _munge(path)],
         env=env,
     )
     assert result.stdout.splitlines() == ["[]", "UNRESOLVED"]
@@ -364,6 +519,7 @@ def test_known_mount_roots_are_unresolved(tmp_path, inventory_runtime, path):
 
 @pytest.mark.parametrize("failure", ["device", "malformed_device", "stat_error", "enumeration_error", "locale_error"])
 def test_unexamined_parent_is_unresolved(tmp_path, inventory_runtime, failure):
+    bash = inventory_runtime
     home = tmp_path / "home"
     workspaces = tmp_path / "workspaces"
     workspaces.mkdir()
@@ -395,7 +551,7 @@ def test_unexamined_parent_is_unresolved(tmp_path, inventory_runtime, failure):
     env.update({"PATH": str(commands) + os.pathsep + env["PATH"], "INVENTORY_BLOCKED_PARENT": str(workspaces), "INVENTORY_REAL_COMMAND": real_command})
     script = _script()
     before = _snapshot(home)
-    result = _run(["bash", script.as_posix(), "--json"], env=env)
+    result = _run([bash, script.as_posix(), "--json"], env=env)
     entries = json.loads(result.stdout)
     assert len(entries) == 1
     assert entries[0]["status"] == "UNRESOLVED"
@@ -406,13 +562,14 @@ def test_unexamined_parent_is_unresolved(tmp_path, inventory_runtime, failure):
     assert list(temp.iterdir()) == []
 
 
-def test_failure_diagnostics_preserve_invalid_bytes_and_both_streams(tmp_path):
+def test_failure_diagnostics_preserve_invalid_bytes_and_both_streams(tmp_path, inventory_runtime):
+    bash = inventory_runtime
     home = tmp_path / "home"
     temp = tmp_path / "temp"
     home.mkdir()
     temp.mkdir()
     env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
-    command = ["bash", "-c", r"printf 'stdout\377'; printf 'stderr\376' >&2; exit 7"]
+    command = [bash, "-c", r"printf 'stdout\377'; printf 'stderr\376' >&2; exit 7"]
     with pytest.raises(AssertionError) as failure:
         _run(command, env=env)
     message = str(failure.value)
@@ -424,7 +581,10 @@ def test_failure_diagnostics_preserve_invalid_bytes_and_both_streams(tmp_path):
 
 @pytest.mark.parametrize("ostype", ["msys", "msys_nt", "cygwin", "cygwin_nt", "win32", "win32_nt"])
 @pytest.mark.parametrize("missing_home", [False, True], ids=["empty-projects", "missing-home"])
-def test_windows_guard_precedes_home_lookup_without_modifying_files(tmp_path, ostype, missing_home):
+def test_windows_guard_precedes_home_lookup_without_modifying_files(
+    tmp_path, inventory_runtime, ostype, missing_home
+):
+    bash = inventory_runtime
     home = tmp_path / "home"
     (home / ".claude" / "projects").mkdir(parents=True)
     temp = tmp_path / "temp"
@@ -435,7 +595,7 @@ def test_windows_guard_precedes_home_lookup_without_modifying_files(tmp_path, os
     before = _snapshot(tmp_path)
     paths_before = sorted(str(path.relative_to(tmp_path)) for path in tmp_path.rglob("*"))
     result = _run(
-        ["bash", "-c", 'OSTYPE="$1"; source "$2" --json', "guard-test", ostype, _script().as_posix()],
+        [bash, "-c", 'OSTYPE="$1"; source "$2" --json', "guard-test", ostype, _script().as_posix()],
         env=env, expected=3,
     )
     assert result.stdout == ""
@@ -445,14 +605,15 @@ def test_windows_guard_precedes_home_lookup_without_modifying_files(tmp_path, os
 
 
 @pytest.mark.parametrize("ostype", ["msys", "cygwin", "win32"])
-def test_argument_validation_precedes_windows_guard(tmp_path, ostype):
+def test_argument_validation_precedes_windows_guard(tmp_path, inventory_runtime, ostype):
+    bash = inventory_runtime
     home = tmp_path / "home"
     temp = tmp_path / "temp"
     home.mkdir()
     temp.mkdir()
     env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
     result = _run(
-        ["bash", "-c", 'OSTYPE="$1"; source "$2" --invalid', "guard-test", ostype, _script().as_posix()],
+        [bash, "-c", 'OSTYPE="$1"; source "$2" --invalid', "guard-test", ostype, _script().as_posix()],
         env=env, expected=2,
     )
     assert result.stdout == ""
@@ -462,6 +623,7 @@ def test_argument_validation_precedes_windows_guard(tmp_path, ostype):
 
 def test_unreadable_parent_with_missing_plain_leaf_is_unresolved(tmp_path, inventory_runtime):
     """An orphan-shaped missing leaf cannot establish a readable parent chain."""
+    bash = inventory_runtime
     home = tmp_path / "home"
     parent = tmp_path / "workspaces" / "restricted"
     parent.mkdir(parents=True)
@@ -473,9 +635,9 @@ def test_unreadable_parent_with_missing_plain_leaf_is_unresolved(tmp_path, inven
     temp.mkdir()
     env = _test_env(tmp_path, home, temp)
     before = _snapshot(home)
-    _restrict_or_skip(parent, env)
+    _restrict_or_skip(bash, parent, env)
     try:
-        result = _run(["bash", _script().as_posix(), "--json"], env=env)
+        result = _run([bash, _script().as_posix(), "--json"], env=env)
         entries = json.loads(result.stdout)
         assert len(entries) == 1
         assert entries[0]["status"] == "UNRESOLVED"

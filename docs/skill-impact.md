@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-anywhere/review-bash-ci-reliability — edit
+
+- Motivation: the checklist had the process-substitution case (`set -e` misses a failure inside `<(...)`) but not its opposite, an expected non-zero inside `$(...)` aborting the script; `_agent-guidance`'s `test/run-tests.sh` died mid-file with no `Results:` line for this reason ([#20](https://github.com/Adam-S-Daniel/adam-agentskills/issues/20)).
+- Change: new checklist item 7 (`grep` with no match, `diff`, `cmp` inside `$(...)` under `set -euo pipefail`; guard with `|| true` only where no result is legitimate; a test-harness helper must never abort the run), a matching line in "How to Use", and a new `PURPOSE.md`. `adam-coding-anywhere` bumped 1.2.2 -> 1.2.3.
+- Eval: local `scripts/local_eval.py` run in skills-evals at c1bf71c with `--registry adam-agentskills=<this tree at b79ee1f>`, 3 trials per arm, judged (a local exhibit, not badge input; Claude Code 2.1.289, agent and judge models from the fixture pins), exit 0, 0 errored trials. `with_skill`: objective 8/11 in every trial, judge 6.05 (n=2: one judge call errored). `without_skill`: objective mean 5.67/11 (5-6), judge 4.95 (n=2: one judge call errored). `with_skill` passed commit-signing-safe-for-ci (3/3 vs 0/3), decoy-optional-cleanup-untouched (3/3 vs 0/3) and process-substitution-error-propagates (3/3 vs 2/3). Judge Restraint 7.5 vs 2.0. In the single-trial unjudged pre-run (same configuration) `with_skill` failed commit-signing-safe-for-ci and passed grep-q-avoids-broken-pipe, so per-check differences at this n may be run variance. In all 3 trials of the judged run both arms failed grep-q-avoids-broken-pipe, jq-guaranteed-or-replaced and version-read-does-not-depend-on-unguarded-jq. A seed case for item 7 belongs in that fixture, in that repo.
+- Outcome: pending merge.
+
+## 2026-10-04 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: three Claude Code changes touched this skill's subject ([#9](https://github.com/Adam-S-Daniel/adam-agentskills/issues/9), [#13](https://github.com/Adam-S-Daniel/adam-agentskills/issues/13), [#25](https://github.com/Adam-S-Daniel/adam-agentskills/issues/25)): synced skills are shown by short name and `anthropic-skills`/`claude-ai` became reserved namespaces (2.1.228-2.1.282), a built-in `/skill-doctor` appeared one letter away from this skill (2.1.261), and `digest_skill_dir` followed a symlinked skill root that the bootstrap hook's `digest_dir` refuses.
+- Change: `digest_skill_dir` returns None (reported as unmeasurable) for a symlinked skill directory or any symlink inside it, mirroring the hook (ADR 0008, ADR 0012), with regression tests; SKILL.md states how synced skills are named and shown, the reserved namespaces, the pre-2.1.280 `manifest.json` trash bug, and that `/skill-doctor` is a different tool. The skill's scope is not narrowed. `adam-coding-anywhere` bumped 1.2.2 -> 1.2.3 (one bump covers both entries).
+- Eval: local `scripts/local_eval.py` run of `evals/skills-doctor/bucketed-account-store` in skills-evals at c1bf71c with `--registry adam-agentskills=<this tree at b79ee1f>`, 3 trials per arm, judged (local exhibit, not badge input; Claude Code 2.1.289), exit 0, 0 errored trials. `with_skill`: objective 4/5 in every trial, judge 9.6 (n=2: one judge call errored; which-copy-the-model-reads 9.5). `without_skill`: objective mean 4.33/5 (4-5), judge 7.4 (n=3; which-copy-the-model-reads 3.0). Both arms mostly failed the-account-store-was-read-not-called-empty (0/3 vs 1/3). Pytest on the script: see the PR body.
+- Outcome: pending merge.
+
 ## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
 
 - Motivation: the portability review of [PR #41](https://github.com/Adam-S-Daniel/adam-agentskills/pull/41) found hidden subprocess diagnostics and a native Windows runtime outside the decoder's POSIX path model; the log did not establish a script stderr cause.

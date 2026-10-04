@@ -37,6 +37,14 @@ this skill is a trustworthy account of what the session actually got; an agent
 that silently repairs delivery destroys the evidence and hides a bug that will
 recur on the next surface. Name the defect, name the knob that fixes it, stop.
 
+**Not the built-in `/skill-doctor`.** Claude Code 2.1.261 added a `/skill-doctor`
+command that shows which loaded skills go unused and what they cost in context,
+so you can prune them. This skill answers a different question: where each
+skill came from, and whether delivery matched `skills.lock`. For "what is
+costing me context, and is any of it unused", point the user at `/skill-doctor`
+(or `/context`) rather than reproducing it here; the names differ by one letter,
+so say which one you ran.
+
 ## 1. Name the surface first
 
 Expectations differ per surface, so establish which one this is before judging
@@ -339,8 +347,11 @@ still arrive through `synced/` and are none of this registry's business.
 ### Which surface the account channel is on
 
 From Claude Code 2.1.273+ a **terminal** session signed in with the account
-downloads every skill enabled on it and loads them as
-`anthropic-skills:<name>`. That used to be a cloud/chat/mobile-only channel.
+downloads every skill enabled on it. That used to be a cloud/chat/mobile-only
+channel. A synced skill is named `anthropic-skills:<name>` (cloud sessions since
+2.1.269) and the bare name still works when nothing else uses it; from 2.1.281
+the `/` menu, `/skills`, `/context` and `/plugin` show it by the short name
+unless another command uses that name.
 [ADR 0010](../../../../docs/decisions/0010-let-pinned-channels-own-the-terminal.md)
 opts durable machines out via `setup.sh` and leaves cloud sessions syncing —
 they **cannot** opt out, because the key is read only from user, local or
@@ -460,6 +471,22 @@ figure. No remediation is performed — recommend, do not do.
   `$CLAUDE_CODE_ACCOUNT_UUID`) and refuses rather than guessing when a machine
   has more than one; when you look by hand, glob the bucket. Old-registry issue #157 is
   where both tools were measured reporting a false clean over 21 skills.
+- **`anthropic-skills` and `claude-ai` are reserved namespaces (2.1.282).** A
+  skill folder, command file or workflow command in either no longer loads, and
+  `Skill(anthropic-skills:*)` / `Skill(claude-ai:*)` allow rules cover only skills
+  synced from claude.ai. A plugin so named still loads but ties with the synced
+  skills. So `anthropic-skills:foo` in a listing is a synced skill, not
+  something this registry or a hook install delivered — this registry ships
+  nothing under either name.
+- **Before 2.1.280, a `manifest.json` in `~/.claude/skills/` itself could trash
+  hook installs.** The CLI moved skills there to `~/.claude/skills/.trash/` when
+  such a manifest listed their names. The bootstrap hook never writes a
+  `manifest.json` (its record is `.skills-bootstrap-installed.json`), so it does
+  not cause this; a flat manifest left by an older CLI that names a hook-installed
+  skill could. On a CLI older than 2.1.280, a locked skill that vanished and sits
+  in `.trash/` is the first thing to look for. 2.1.228+ also strips `!` commands
+  and `@` file expansion from synced skill bodies on a machine, so a synced copy
+  may not behave like its registry original.
 - **`~/.claude/skills/synced/` cannot be seeded or simulated.** It is
   manifest-gated: writing a directory there does nothing at all. You can only
   observe it, so never "test" a hypothesis about the account channel by

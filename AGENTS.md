@@ -258,6 +258,11 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   skill's eval (report exit code and counts) or adds its first fixture.
   Skills in DESIGN.md's deliberate-non-coverage table are exempt — the
   table is the record of why.
+- **`claude plugin eval` (Claude Code 2.1.269+) is not this gate.** skills-evals'
+  `DESIGN.md` ("`claude plugin eval`", assessed 2026-08-30) decided to monitor it
+  rather than wrap it: no scriptable grader, so it cannot host the objective
+  scorers. Nothing here re-assessed that; whether to revisit it is the owner's
+  call.
 - **A new or touched skill adds a `PURPOSE.md` beside `SKILL.md`** mapping
   it to the incidents/patterns that motivated it — maintenance context only,
   never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across

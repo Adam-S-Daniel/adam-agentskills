@@ -12416,3 +12416,37 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     # a missing directory that is present in the registry.
     logs = _bootstrap_log(home)
     assert "refused symlinked skill root: plugins/adam/skills/zeta" in logs, logs[-2000:]
+
+
+def test_committed_sessionstart_matcher_includes_fork():
+    settings = json.loads(
+        (REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
+    )
+    groups = settings["hooks"]["SessionStart"]
+    matching = [
+        group for group in groups
+        if any("skills-bootstrap.sh" in hook.get("command", "")
+               for hook in group.get("hooks", []))
+    ]
+    assert len(matching) == 1
+    assert matching[0]["matcher"] == "startup|resume|fork"
+
+
+@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
+def test_setup_script_sessionstart_matcher_includes_fork(script_name):
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    start = 'cat > "$project/.claude/settings.json" <<\'JSON\'\n'
+    end = "\nJSON\necho \"wiring: wrote $project/.claude/settings.json\""
+    assert document.count(start) == 1
+    json_text = document.split(start, 1)[1].split(end, 1)[0]
+    settings = json.loads(json_text)
+    groups = settings["hooks"]["SessionStart"]
+    matching = [
+        group for group in groups
+        if any(script_name in hook.get("command", "")
+               for hook in group.get("hooks", []))
+    ]
+    assert len(matching) == 1
+    assert matching[0]["matcher"] == "startup|resume|fork"

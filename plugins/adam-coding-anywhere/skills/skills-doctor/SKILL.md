@@ -37,6 +37,14 @@ this skill is a trustworthy account of what the session actually got; an agent
 that silently repairs delivery destroys the evidence and hides a bug that will
 recur on the next surface. Name the defect, name the knob that fixes it, stop.
 
+**Not the built-in `/skill-doctor`.** Claude Code 2.1.261 added a `/skill-doctor`
+command that shows which loaded skills go unused and what they cost in context,
+so you can prune them. This skill answers a different question: where each
+skill came from, and whether delivery matched `skills.lock`. For "what is
+costing me context, and is any of it unused", point the user at `/skill-doctor`
+(or `/context`) rather than reproducing it here; the names differ by one letter,
+so say which one you ran.
+
 ## 1. Name the surface first
 
 Expectations differ per surface, so establish which one this is before judging

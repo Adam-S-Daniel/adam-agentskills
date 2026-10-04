@@ -394,6 +394,51 @@ def test_dangling_payload_ref_dedupes_within_one_skill(tmp_path, local_registry)
     assert len(messages(report, check_skills.K_DANGLING_PAYLOAD_REF)) == 1
 
 
+@pytest.mark.parametrize("command, filename", [
+    ("python3 ocr_pdfs.py", "ocr_pdfs.py"),
+    (r".\Compare-OcrPdfs.ps1", "Compare-OcrPdfs.ps1"),
+    ("bash ./convert.sh", "convert.sh"),
+    ("node review.js", "review.js"),
+    ('python3 "review.py"', "review.py"),
+    ("pwsh -File './review.ps1'", "review.ps1"),
+])
+def test_bare_script_in_code_block_requires_a_local_payload(
+    tmp_path, local_registry, command, filename
+):
+    skill_dir = write_skill(tmp_path, "skills/bare-script", body=f"\n```\n{command}\n```\n")
+    missing = run_tool(tmp_path, local_registry)
+    found = messages(missing, check_skills.K_DANGLING_PAYLOAD_REF)
+    assert len(found) == 1 and f"'{filename}'" in found[0]
+
+    (skill_dir / filename).write_text("# local helper\n", encoding="utf-8")
+    assert run_tool(tmp_path, local_registry).errors == []
+
+
+def test_bare_script_in_prose_is_a_dismissed_candidate(tmp_path, local_registry):
+    write_skill(tmp_path, "skills/prose-script", body="\nAnother skill uses `review.py`.\n")
+    report = run_tool(tmp_path, local_registry)
+    assert report.errors == []
+    assert _dismissed(report)["review.py"] == check_skills.PROSE_ONLY_RULE
+
+
+@pytest.mark.parametrize("filename, rule", [
+    ("/opt/tools/review.py", "absolute-path"),
+    (r"..\other\review.ps1", "parent-traversal"),
+    ("https://example.com/review.py", "url-scheme"),
+    ("<helper>.py", "placeholder"),
+    ("*.ps1", "glob-metacharacter"),
+    ("other-skill/review.py", "not-payload-dir"),
+    ("results.csv", "no-slash"),
+])
+def test_bare_script_extension_does_not_expand_external_or_artifact_paths(
+    tmp_path, local_registry, filename, rule
+):
+    write_skill(tmp_path, "skills/external-script", body=f"\n```\n{filename}\n```\n")
+    report = run_tool(tmp_path, local_registry)
+    assert report.errors == []
+    assert _dismissed(report)[check_skills.normalise_candidate(filename)] == rule
+
+
 # ---------------------------------------------------------------------------------
 # Precision guards: the classes that deliberately do NOT gate. Each is a real
 # false-positive shape observed across the three live registries.

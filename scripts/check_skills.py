@@ -22,7 +22,7 @@ Finding classes
   field-type            a field's value is not the shape `field_types:` declares
   length-limit          a string field exceeds its `max_lengths:` entry
   non-spec-field        a frontmatter key outside `known_fields:`
-  dangling-payload-ref  a code block runs `<payload_dir>/…` that is not on disk
+  dangling-payload-ref  a code block names a missing `<payload_dir>/…` or bare script
                         (prose-only mentions deliberately do not gate — see PROSE_ONLY_RULE)
   undeclared-duplicate  a skill basename exists in more than one registry, unwaived
   registry-unresolved   a required registry's path does not exist
@@ -502,6 +502,10 @@ _MARKDOWN = MarkdownIt("commonmark")
 # looks like a real path.
 _TRAILING_PUNCT = "),.:;\"'"
 
+# Bare script filenames in runnable examples are payloads too. Other bare files
+# (CSV inputs, PDF outputs, and similar artifacts) do not imply a shipped helper.
+_SCRIPT_SUFFIXES = {".py", ".ps1", ".sh", ".bash", ".js", ".mjs", ".cjs", ".bat", ".cmd"}
+
 # The one non-structural dismissal. This check deliberately trades RECALL for PRECISION:
 # only a token inside a fenced code block can gate the build, because prose mentions a
 # payload path for many reasons that are not "this skill ships this file" — it names
@@ -548,8 +552,8 @@ def split_code_regions(body: str) -> Tuple[List[str], List[str]]:
 
 
 def normalise_candidate(raw: str) -> str:
-    value = raw.strip().rstrip(_TRAILING_PUNCT)
-    while value.startswith("./"):
+    value = raw.strip().rstrip(_TRAILING_PUNCT).lstrip("\"'")
+    while value.startswith(("./", ".\\")):
         value = value[2:]
     return value
 
@@ -575,16 +579,18 @@ def dismissal_rule(
         return "home-relative"
     if value.startswith("#"):
         return "anchor"
-    segments = value.split("/")
+    segments = value.replace("\\", "/").split("/")
     if any(segment == ".." for segment in segments):
         return "parent-traversal"
     if any(char in value for char in "*?[]"):
         return "glob-metacharacter"
     if any(char in value for char in "<>${}"):
         return "placeholder"
-    if "/" not in value:
+    bare_script = ("/" not in value and "\\" not in value
+                   and Path(value).suffix.lower() in _SCRIPT_SUFFIXES)
+    if "/" not in value and not bare_script:
         return "no-slash"
-    if segments[0] not in payload_dirs:
+    if not bare_script and segments[0] not in payload_dirs:
         return "not-payload-dir"
     if value.endswith("/"):
         return "trailing-slash"          # a bare directory mention, not a file reference

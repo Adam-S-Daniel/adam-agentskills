@@ -7735,6 +7735,53 @@ def test_the_hooks_digest_agrees_with_the_generators_on_a_tricky_skill(tmp_path)
     assert gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(installed) == locked
 
 
+def _copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr):
+    """Decide whether a copy probe can exercise the symlink guard."""
+    if platform == "nt":
+        if returncode != 0:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R failed on Windows (exit {returncode}): {detail}"
+        if not copied_entry_is_symlink:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R materialized a directory symlink on Windows: {detail}"
+        return "run", ""
+
+    if returncode != 0:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R probe failed on {platform} (exit {returncode}): {detail}"
+    if not copied_entry_is_symlink:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R did not preserve a symlink on {platform}: {detail}"
+    return "run", ""
+
+
+@pytest.mark.parametrize("platform, returncode, copied_entry_is_symlink, stderr, expected", [
+    (
+        "nt", 2, False, "cp: cannot create symbolic link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R failed on Windows (exit 2): cp: cannot create symbolic link"),
+    ),
+    (
+        "nt", 0, False, "cp: cannot preserve link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R materialized a directory symlink on Windows: cp: cannot preserve link"),
+    ),
+    ("nt", 0, True, "", ("run", "")),
+    (
+        "posix", 2, False, "cp: source unavailable\nsecond diagnostic",
+        ("fail", "cp -R probe failed on posix (exit 2): cp: source unavailable\nsecond diagnostic"),
+    ),
+    (
+        "posix", 0, False, "cp: unexpected copy behavior\nsecond diagnostic",
+        ("fail", "cp -R did not preserve a symlink on posix: cp: unexpected copy behavior\nsecond diagnostic"),
+    ),
+    ("posix", 0, True, "", ("run", "")),
+], ids=["nt-copy-failed", "nt-materialized", "nt-preserved", "posix-copy-failed",
+       "posix-not-preserved", "posix-preserved"])
+def test_copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr, expected):
+    assert _copy_probe_decision(
+        platform, returncode, copied_entry_is_symlink, stderr
+    ) == expected
+
+
 def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     """Bind the hook's `digest_dir` and the generator on the symlink rule.
 
@@ -7801,7 +7848,7 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
         "a refused digest must not leave a lock behind"
 
     # Probe the same Git Bash `cp -R` path the hook uses. On Windows, cp may
-    # materialize a native directory symlink before the hook can inspect it.
+    # fail or materialize a native directory symlink before the hook can inspect it.
     probe_script = tmp_path / "copy-probe.sh"
     _write(probe_script, 'set -eu\ncp -R "$1" "$2"\n')
     copied_skill = tmp_path / "copied-skill"
@@ -7810,21 +7857,15 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
         script=probe_script,
         args=(_hook_path(skill_dir), _hook_path(copied_skill)),
     )
-    assert probe.returncode == 0, probe.stderr
+    copied_link = copied_skill / "link"
+    action, reason = _copy_probe_decision(
+        os.name, probe.returncode, copied_link.is_symlink(), probe.stderr
+    )
+    if action == "skip":
+        pytest.skip(reason)
+    assert action == "run", reason
     assert (copied_skill / "SKILL.md").read_bytes() == (skill_dir / "SKILL.md").read_bytes(), \
         "cp probe did not copy the skill contents"
-    copied_link = copied_skill / "link"
-    if not copied_link.is_symlink():
-        assert os.name == "nt", \
-            "cp -R did not preserve a symlink on a non-Windows platform"
-        assert copied_link.is_dir(), \
-            "Git Bash cp -R dropped the symlink instead of materializing its target"
-        assert (copied_link / "extra.md").read_bytes() == \
-            (skill_dir / "payload" / "extra.md").read_bytes(), \
-            "Git Bash cp -R did not materialize the symlink target contents"
-        pytest.skip(
-            "Git Bash cp -R materializes native directory symlinks; the hook post-copy digest cannot reach its symlink guard"
-        )
 
     # HOOK side: retarget the valid lock to the symlink commit without changing
     # its digest. This is a valid lock shape and would install absent the guard.

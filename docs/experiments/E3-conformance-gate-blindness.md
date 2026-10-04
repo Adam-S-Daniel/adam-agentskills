@@ -103,3 +103,40 @@ polish pass here, it was the difference between a gate and a nuisance. The same
 failure mode is the predictable one for a CRLF-naive hash comparison of vendored
 mirrors: it would fire on every Windows-touched copy, be correct about nothing
 anyone cares about, and be switched off.
+
+## Retest — 2026-10-04, Claude Code 2.1.289
+
+This retest responds to [registry issue 11](https://github.com/Adam-S-Daniel/adam-agentskills/issues/11).
+It used invented fixtures under `/tmp/c4-validate-probe` and an
+isolated `CLAUDE_CONFIG_DIR=/tmp/c4-cli-config`. No account authentication or
+model invocation was used. The fixtures cover a clean marketplace, a
+marketplace whose plugin contains malformed `SKILL.md` frontmatter, a plugin
+whose valid frontmatter name differs from its directory, a plugin manifest
+without `version`, and a bare `.claude/skills` tree containing a malformed
+skill.
+
+Running
+`CLAUDE_CONFIG_DIR=/tmp/c4-cli-config claude plugin validate <fixture> --strict`
+returned exit 0 for the clean marketplace, malformed-frontmatter marketplace,
+and name-mismatch marketplace. The latter two had the same result as the clean
+control: marketplace validation passed without reporting skill findings.
+Adding `--json` showed `success: true`, `manifest: null`, and `contents: []`
+when validating either the bare fixture root or its `.claude/skills`
+directory, even though
+`/tmp/c4-validate-probe/bare/.claude/skills/example/SKILL.md` contained
+`description: text: bad`. Validating that individual skill directory returned
+exit 1 with one generic `directory` error (no plugin manifest), and no skill
+content findings. PyYAML independently rejected the malformed frontmatter
+with `ScannerError: mapping values are not allowed here` at line 3, column 18.
+The bare-directory result differs from the [v2.1.233 release note](https://github.com/anthropics/claude-code/releases/tag/v2.1.233),
+which says `claude plugin validate` checks a bare `.claude/skills` directory
+and reports frontmatter parse failures; this records the measured 2.1.289
+output for the fixture path above.
+
+The positive failure control remained active: validating the synthetic
+marketplace with a plugin manifest missing `version` and `--strict --json`
+returned exit 1 with `success: false`, zero errors, and one warning at
+`plugins[0] plugin.json → version` (`No version specified`). This confirms the
+validator ran and continued to enforce strict manifest warnings while ignoring
+the skill defects. The experiment's original 2.1.223 results above remain
+historical; this retest confirms the same blind spot in 2.1.289.

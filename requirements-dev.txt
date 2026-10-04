@@ -67,4 +67,10 @@ pytest==9.1.1
 # across four parallel runs. 3.8.0 was published 2025-07-01, clears the
 # 7-day cooling-off and is the newest release; its one runtime dependency,
 # execnet, is left unpinned like the other packages' transitive dependencies.
+# Coordinate both pins with skills-evals: its current
+# `TestIssue63::test_parallel_pins_agree_with_agentskills_requirements` checks
+# them against this registry. The runner also uses a wrapper for its run-wide
+# memory guard and collection cross-check; see merged
+# [skills-evals PR 183](https://github.com/Adam-S-Daniel/skills-evals/pull/183)
+# and [current runner](https://github.com/Adam-S-Daniel/skills-evals/blob/main/test/run_tests.py).
 pytest-xdist==3.8.0

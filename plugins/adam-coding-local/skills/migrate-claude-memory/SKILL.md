@@ -21,7 +21,8 @@ compatibility: Requires bash, GNU coreutils (find, stat, du) and read/write acce
 
 Claude Code's auto-memory feature stores per-project memory files under
 `~/.claude/projects/<munged-absolute-path>/memory/`, where `<munged-absolute-path>`
-is the project's absolute filesystem path with `/` replaced by `-`
+is the project's absolute filesystem path with every non-ASCII-alphanumeric
+UTF-16 code unit replaced by `-`
 (e.g. `/home/user/repos/foo` becomes `-home-user-repos-foo`).
 
 These stores are keyed **per machine**: the same project checked out at a WSL
@@ -82,8 +83,10 @@ unresolved stores. **`memory-inventory.sh` never deletes or modifies anything**
 — it is strictly read-only.
 
 - `EXISTING`: one supported decoded workspace directory exists.
-- `ORPHANED`: one supported decoded path has a missing plain final component
-  beneath an accessible existing parent. The concrete path is reported.
+- `ORPHANED`: exactly one supported decoding has a missing plain
+  ASCII-alphanumeric final component beneath a readable, fully examined parent
+  chain. No matching candidate branch may be uncertain. The concrete path is
+  reported.
 - `UNRESOLVED`: the path is undecodable, ambiguous, unsupported, or cannot be
   checked safely. Multiple candidates, including a mixture of existing and
   missing paths, remain unresolved. **Do not delete a store because it is
@@ -132,19 +135,42 @@ migrated in-repo, it becomes as visible as the rest of the repo.
 
 ## Known limitations: lossy path decoding
 
-Munging also replaces literal `.` in path components with `-`: an invented
-workspace named `example.com` collides with `example-com` and `example/com`.
-The decoder searches supported slash/hyphen splits through existing directory
-prefixes. It inspects actual dotted entries as evidence of ambiguity, but
-never invents dot-substitution candidates. A matching dotted entry therefore
-keeps the store `UNRESOLVED`.
+Claude Code's standard munger replaces every character outside ASCII letters
+and digits with `-`, including separators, dots, underscores, spaces, and
+non-ASCII characters. It operates on UTF-16 code units: `naïve` becomes
+`na-ve`, while `na😀ve` becomes `na--ve`. The decoder enumerates every existing
+entry, including leading-dot names, at every directory level and applies that
+normalization. A normalized entry matching the remaining slug through a
+hyphen boundary or its end is a candidate. A unique supported existing alias
+can be `EXISTING`; multiple decodings, including existing and supported missing
+final paths, are `UNRESOLVED`.
 
-A missing final component containing hyphens, a missing ancestor, a matching
-symlink (including a dangling link), an inaccessible parent, or an unsupported
-store name also remains `UNRESOLVED`. Existing names containing spaces or
-Unicode still decode when unambiguous. These limits prevent a failed decode
-from becoming an orphan claim; they do not identify every deleted workspace.
-Always verify an `ORPHANED` result independently before deleting anything.
+A missing final component containing hyphens, a missing ancestor, any matching
+symlink (including dangling links and loops), a matching non-directory, an
+inaccessible candidate or parent, or an enumeration/stat failure remains
+`UNRESOLVED`. A reachable prefix whose remaining suffix cannot be decoded is
+also uncertainty, even if another branch supports a missing leaf. Invalid
+UTF-8 entries or an unavailable UTF-8 locale also prevent
+an orphan claim. Only standard ASCII-alphanumeric/hyphen store names of at most
+200 characters are supported; longer names use hashing/truncation that this
+decoder does not reverse. Custom aliases that resemble standard names cannot
+be identified from the store filename alone.
+
+**Known mount roots and detected device boundaries are always `UNRESOLVED`.**
+This includes paths under `/mnt/<segment>` (including case-insensitive
+`/mnt/c` drives), `/media`,
+`/run/media`, and `/Volumes`, even when populated, and any traversed directory
+whose device differs from its parent's. No privileged mount inspection is
+used. This conservative policy avoids an unavailable drive's empty mount
+point becoming deletion evidence. Arbitrary former mount points on the same
+device as their parent cannot be detected reliably by these checks.
+
+Classification reflects directory state observed during the scan; concurrent
+filesystem or mount changes can invalidate it. The checks prevent the tested
+decoding failures from becoming orphan claims, but do not identify every
+deleted workspace or every
+custom naming convention. Always verify an `ORPHANED` result independently
+before deleting anything.
 
 The existing inventory format assumes filenames contain no control characters
 (such as newlines or tabs); its line-based file counts and size extraction,

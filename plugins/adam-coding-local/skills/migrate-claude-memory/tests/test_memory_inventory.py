@@ -4,10 +4,45 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import string
+import shutil
 
 import pytest
 
 SCRIPT = Path(__file__).parents[1] / "scripts" / "memory-inventory.sh"
+
+
+def _munge(path):
+    """Mirror the vendor ASCII regex over UTF-16 code units."""
+    ascii_alnum = string.ascii_letters + string.digits
+    return "".join(
+        char if char in ascii_alnum else "-" * (len(char.encode("utf-16-le")) // 2)
+        for char in str(path)
+    )
+
+
+def _test_env(tmp_path, home, temp):
+    # Keep device IDs and unrelated ancestor entries independent of the host.
+    # Inside the controlled fixture root, find still examines every real entry.
+    commands = tmp_path / "baseline-commands"
+    commands.mkdir()
+    shim = commands / "stat"
+    shim.write_text('#!/usr/bin/env bash\nprintf "1\n"\n')
+    shim.chmod(0o700)
+    real_find = shutil.which("find")
+    assert real_find is not None
+    shim = commands / "find"
+    shim.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ "$#" == 6 && "$2" == -mindepth && "$3" == 1 && "$4" == -maxdepth && "$5" == 1 && "$6" == -print0 && "$1" != "$INVENTORY_FIXTURE_ROOT" && "$INVENTORY_FIXTURE_ROOT" == "${1%/}/"* ]]; then\n'
+        '  suffix="${INVENTORY_FIXTURE_ROOT#"${1%/}/"}"\n'
+        '  printf "%s\\0" "${1%/}/${suffix%%/*}"\n'
+        '  exit 0\n'
+        'fi\n'
+        'exec "$INVENTORY_BASE_FIND" "$@"\n'
+    )
+    shim.chmod(0o700)
+    return {**os.environ, "HOME": str(home), "TMPDIR": str(temp), "PATH": str(commands) + os.pathsep + os.environ["PATH"], "INVENTORY_FIXTURE_ROOT": str(tmp_path), "INVENTORY_BASE_FIND": real_find}
 
 
 def _snapshot(home):
@@ -29,7 +64,7 @@ def _snapshot(home):
         ("mixed", "UNRESOLVED"),
         ("multiple_existing", "UNRESOLVED"),
         ("dotted_alias", "UNRESOLVED"),
-        ("dotted_only", "UNRESOLVED"),
+        ("dotted_only", "EXISTING"),
         ("symlink", "UNRESOLVED"),
         ("dangling_symlink", "UNRESOLVED"),
         ("file_target", "UNRESOLVED"),
@@ -38,6 +73,27 @@ def _snapshot(home):
         ("unicode_existing", "EXISTING"),
         ("unreadable_parent", "UNRESOLVED"),
         ("trailing_separator", "UNRESOLVED"),
+        ("underscore_alias", "UNRESOLVED"),
+        ("space_alias", "UNRESOLVED"),
+        ("unicode_alias", "UNRESOLVED"),
+        ("intermediate_alias", "UNRESOLVED"),
+        ("missing_suffix_branch", "UNRESOLVED"),
+        ("unicode_parent", "ORPHANED"),
+        ("consecutive_underscores", "EXISTING"),
+        ("consecutive_mixed", "EXISTING"),
+        ("leading_dot", "EXISTING"),
+        ("astral_existing", "EXISTING"),
+        ("astral_alias", "UNRESOLVED"),
+        ("punctuation_only", "EXISTING"),
+        ("alias_file", "UNRESOLVED"),
+        ("intermediate_file", "UNRESOLVED"),
+        ("alias_symlink_loop", "UNRESOLVED"),
+        ("unreadable_alias", "UNRESOLVED"),
+        ("raw_underscore", "UNRESOLVED"),
+        ("raw_space", "UNRESOLVED"),
+        ("raw_unicode", "UNRESOLVED"),
+        ("long_slug", "UNRESOLVED"),
+        ("invalid_utf8_sibling", "UNRESOLVED"),
     ],
 )
 def test_inventory_classification(tmp_path, scenario, status):
@@ -65,6 +121,8 @@ def test_inventory_classification(tmp_path, scenario, status):
         (workspaces / "example.com").mkdir()
         if scenario == "dotted_alias":
             (workspaces / "example").mkdir()
+        else:
+            workspace = workspaces / "example.com"
     elif scenario in {"symlink", "dangling_symlink"}:
         target = workspaces / "target"
         if scenario == "symlink":
@@ -82,21 +140,68 @@ def test_inventory_classification(tmp_path, scenario, status):
         workspace = restricted / "project"
         restricted.chmod(0)
 
+    if scenario in {"underscore_alias", "space_alias", "unicode_alias", "alias_file", "alias_symlink_loop", "unreadable_alias"}:
+        prefix, alias = {
+            "underscore_alias": ("proj", "proj_old"),
+            "space_alias": ("spc", "spc leaf"),
+            "unicode_alias": ("na", "naïve"),
+        }.get(scenario, ("proj", "proj_old"))
+        (workspaces / prefix).mkdir()
+        workspace = workspaces / alias
+        if scenario == "alias_file":
+            workspace.write_text("Invented replacement for example.net.\n")
+        elif scenario == "alias_symlink_loop":
+            workspace.symlink_to(workspace.name, target_is_directory=True)
+        else:
+            workspace.mkdir()
+            if scenario == "unreadable_alias":
+                if os.geteuid() == 0:
+                    pytest.skip("root bypasses directory access permissions")
+                restricted = workspace
+                restricted.chmod(0)
+    elif scenario == "intermediate_alias":
+        (workspaces / "area-one").mkdir()
+        (workspaces / "area_one").mkdir()
+        workspace = workspaces / "area-one" / "leaf"
+    elif scenario == "missing_suffix_branch":
+        (workspaces / "a-b").mkdir()
+        (workspaces / "a").mkdir()
+        workspace = workspaces / "a-b" / "c"
+    elif scenario == "unicode_parent":
+        (workspaces / "parenté").mkdir()
+        workspace = workspaces / "parenté" / "leaf"
+    elif scenario in {"consecutive_underscores", "consecutive_mixed", "leading_dot", "astral_existing", "astral_alias", "punctuation_only"}:
+        workspace = workspaces / {
+            "consecutive_underscores": "a__b", "consecutive_mixed": "a - b",
+            "leading_dot": ".hidden", "astral_existing": "na😀ve",
+            "astral_alias": "na😀ve", "punctuation_only": "__",
+        }[scenario]
+        workspace.mkdir()
+        if scenario == "astral_alias":
+            (workspaces / "na--ve").mkdir()
+    elif scenario == "intermediate_file":
+        (workspaces / "area-one").mkdir()
+        (workspaces / "area_one").write_text("Invented obstruction for example.com.\n")
+        workspace = workspaces / "area-one" / "leaf"
+    if scenario == "invalid_utf8_sibling":
+        (workspaces / os.fsdecode(b"invalid\xff")).mkdir()
     if scenario == "trailing_separator":
         workspace.mkdir()
-    munged = str(workspace).replace("/", "-")
+    munged = _munge(workspace)
     if scenario == "trailing_separator":
         munged += "-"
     if scenario == "unknown":
         munged = "custom-store"
-    elif scenario == "raw_dot":
-        munged += ".custom"
+    elif scenario in {"raw_dot", "raw_underscore", "raw_space", "raw_unicode"}:
+        munged += {"raw_dot": ".custom", "raw_underscore": "_custom", "raw_space": " custom", "raw_unicode": "é"}[scenario]
+    elif scenario == "long_slug":
+        munged += "x" * (210 - len(munged))
     memory = home / ".claude" / "projects" / munged / "memory"
     memory.mkdir(parents=True)
     (memory / "MEMORY.md").write_text("Invented memory for example.com.\n")
     temp = tmp_path / "temp"
     temp.mkdir()
-    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    env = _test_env(tmp_path, home, temp)
     before = _snapshot(home)
     script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
     try:
@@ -145,8 +250,8 @@ def test_inventory_summary(tmp_path, populated):
         existing.mkdir()
         missing = workspaces / "missing"
         expected = {
-            str(existing).replace("/", "-"): "EXISTING",
-            str(missing).replace("/", "-"): "ORPHANED",
+            _munge(existing): "EXISTING",
+            _munge(missing): "ORPHANED",
             "custom-store": "UNRESOLVED",
         }
         for munged in expected:
@@ -155,7 +260,7 @@ def test_inventory_summary(tmp_path, populated):
             (memory / "MEMORY.md").write_text("Invented memory for example.net.\n")
     temp = tmp_path / "temp"
     temp.mkdir()
-    env = {**os.environ, "HOME": str(home), "TMPDIR": str(temp)}
+    env = _test_env(tmp_path, home, temp)
     script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
     before = _snapshot(home)
     result = subprocess.run(
@@ -172,5 +277,68 @@ def test_inventory_summary(tmp_path, populated):
         f"{3 * count} stores, {count} orphaned (decoded workspace path does not exist), "
         f"{count} unresolved (path could not be determined safely)"
     )
+    assert _snapshot(home) == before
+    assert list(temp.iterdir()) == []
+
+
+@pytest.mark.parametrize("path", ["/mnt/x/leaf", "/mnt/c/Case/leaf", "/media/leaf", "/run/media/leaf", "/Volumes/leaf"])
+def test_known_mount_roots_are_unresolved(tmp_path, path):
+    """No real mount or drive is inspected; only the lexical guard is exercised."""
+    home = tmp_path / "home"
+    (home / ".claude" / "projects").mkdir(parents=True)
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    env = _test_env(tmp_path, home, temp)
+    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    before = _snapshot(home)
+    result = subprocess.run(
+        ["bash", "-c", 'source "$1" --json; _decode_try() { _decode_candidate "$1" ORPHANED; }; decode_munged_path "$2"; printf "%s\n" "$decode_status"', "inventory-test", str(script), _munge(path)],
+        env=env, check=True, capture_output=True, text=True,
+    )
+    assert result.stdout.splitlines() == ["[]", "UNRESOLVED"]
+    assert _snapshot(home) == before
+    assert list(temp.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure", ["device", "malformed_device", "stat_error", "enumeration_error", "locale_error"])
+def test_unexamined_parent_is_unresolved(tmp_path, failure):
+    home = tmp_path / "home"
+    workspaces = tmp_path / "workspaces"
+    workspaces.mkdir()
+    workspace = workspaces / "leaf"
+    memory = home / ".claude" / "projects" / _munge(workspace) / "memory"
+    memory.mkdir(parents=True)
+    (memory / "MEMORY.md").write_text("Invented memory for example.com.\n")
+    temp = tmp_path / "temp"
+    temp.mkdir()
+    commands = tmp_path / "commands"
+    commands.mkdir()
+    command = {"enumeration_error": "find", "locale_error": "locale"}.get(failure, "stat")
+    real_command = shutil.which(command)
+    assert real_command is not None
+    shim = commands / command
+    shim.write_text(
+        '#!/usr/bin/env bash\n'
+        'for argument in "$@"; do\n'
+        '  if [[ "$argument" == "$INVENTORY_BLOCKED_PARENT" ]]; then\n'
+        + ('    printf "999999999\n"; exit 0\n' if failure == "device" else '    printf "invalid\n"; exit 0\n' if failure == "malformed_device" else '    exit 1\n')
+        + '  fi\ndone\nexec "$INVENTORY_REAL_COMMAND" "$@"\n'
+    )
+    if failure == "locale_error":
+        shim.write_text("#!/usr/bin/env bash\nexit 1\n")
+    shim.chmod(0o700)
+    env = _test_env(tmp_path, home, temp)
+    if command in {"stat", "find"}:
+        real_command = str(tmp_path / "baseline-commands" / command)
+    env.update({"PATH": str(commands) + os.pathsep + env["PATH"], "INVENTORY_BLOCKED_PARENT": str(workspaces), "INVENTORY_REAL_COMMAND": real_command})
+    script = Path(os.environ.get("MEMORY_INVENTORY_TEST_SCRIPT", SCRIPT))
+    before = _snapshot(home)
+    result = subprocess.run(["bash", str(script), "--json"], env=env, check=True, capture_output=True, text=True)
+    entries = json.loads(result.stdout)
+    assert len(entries) == 1
+    assert entries[0]["status"] == "UNRESOLVED"
+    assert entries[0]["path"] is None
+    assert entries[0]["orphaned"] is False
+    assert entries[0]["unresolved"] is True
     assert _snapshot(home) == before
     assert list(temp.iterdir()) == []

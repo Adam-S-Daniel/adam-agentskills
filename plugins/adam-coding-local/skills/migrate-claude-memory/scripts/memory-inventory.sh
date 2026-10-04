@@ -26,18 +26,72 @@ done
 
 [ -d "$HOME/.claude/projects" ] || { echo "ERROR: ~/.claude/projects not found — is this a machine with Claude Code auto-memory?" >&2; exit 1; }
 
-# Decoding is lossy. Collect supported candidates rather than accepting the first
-# existing path or inventing a path by replacing every hyphen with a slash.
-# A missing candidate is supported only for one plain final component beneath an
-# accessible existing parent. Ambiguous, unsupported, or inaccessible paths stay
-# UNRESOLVED and must not become cleanup candidates.
+# Claude Code replaces each non-ASCII-alphanumeric UTF-16 code unit with a
+# hyphen. Validate a UTF-8 locale before interpreting filesystem names.
+decode_locale=""
+for candidate_locale in C.UTF-8 C.utf8 en_US.UTF-8; do
+  if [[ "$(LC_ALL="$candidate_locale" locale charmap 2>/dev/null)" == "UTF-8" ]]; then
+    decode_locale="$candidate_locale"
+    break
+  fi
+done
+
+# Known mount roots are never cleanup candidates, including unavailable drives.
+# Device changes elsewhere are checked separately while traversing directories.
+_decode_mount_root() {
+  case "$1" in
+    /mnt/*|/media|/media/*|/run/media|/run/media/*|/Volumes|/Volumes/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Bash dynamic scope returns a byte count without spawning one process per character.
+_decode_byte_length() {
+  local LC_ALL=C
+  bytes=${#1}
+}
+
+# Return the actual munger's component encoding, rejecting invalid UTF-8 names.
+_decode_encode() {
+  local LC_ALL=C name="$1" char code bytes i
+  if [[ "$name" != *[$'\x80'-$'\xff']* ]]; then
+    encoded="${name//[^a-zA-Z0-9]/-}"
+    return 0
+  fi
+  LC_ALL="$decode_locale"
+  encoded=""
+  for (( i=0; i<${#name}; i++ )); do
+    char="${name:i:1}"
+    printf -v code '%d' "'$char"
+    _decode_byte_length "$char"
+    if (( (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) )); then
+      encoded+="$char"
+    elif (( code < 128 && bytes == 1 )); then
+      encoded+="-"
+    elif (( (code >= 128 && code < 2048 && bytes == 2) || (code >= 2048 && code < 65536 && bytes == 3) )); then
+      encoded+="-"
+    elif (( code >= 65536 && code <= 1114111 && bytes == 4 )); then
+      encoded+="--"
+    else
+      return 1
+    fi
+  done
+}
+
+# Decoding is lossy. Enumerate every actual entry at every level, not just
+# slash/hyphen splits. Only one missing plain ASCII-alphanumeric final leaf
+# beneath a completely examined readable parent can support ORPHANED.
 decode_munged_path() {
-  local munged="$1"
+  local LC_ALL=C munged="$1"
   decoded_path=""
   decode_status="UNRESOLVED"
   decode_count=0
   decode_uncertain=0
-  [[ "$munged" == -* && "$munged" != *.* ]] || return 0
+  [[ -n "$decode_locale" && ${#munged} -le 200 && "$munged" =~ ^-[A-Za-z0-9-]*$ ]] || return 0
+  # Reject known removable roots even when no corresponding entry is present.
+  case "$munged" in
+    -mnt-*|-media|-media-*|-run-media|-run-media-*|-Volumes|-Volumes-*) return 0 ;;
+  esac
   _decode_try "/" "${munged:1}"
   if (( decode_count != 1 || decode_uncertain )); then
     decoded_path=""
@@ -53,12 +107,18 @@ _decode_candidate() {
   fi
 }
 
-# DFS over existing slash/hyphen prefixes. Dotted aliases are inspected only as
-# evidence of ambiguity; this does not invent dot-substitution candidates.
 _decode_try() {
-  local current="$1" remaining="$2"
+  local LC_ALL=C current="$1" remaining="$2" parent device parent_device
   (( decode_count < 2 )) || return 0
-  if [[ ! -r "$current" || ! -x "$current" ]]; then
+  if _decode_mount_root "$current" || [[ -L "$current" || ! -d "$current" || ! -r "$current" || ! -x "$current" ]]; then
+    decode_uncertain=1
+    return 0
+  fi
+  parent="${current%/*}"
+  [[ -n "$parent" ]] || parent="/"
+  if ! device=$(stat -c %d -- "$current" 2>/dev/null) ||
+     ! parent_device=$(stat -c %d -- "$parent" 2>/dev/null) ||
+     [[ ! "$device" =~ ^[0-9]+$ || ! "$parent_device" =~ ^[0-9]+$ || "$device" != "$parent_device" ]]; then
     decode_uncertain=1
     return 0
   fi
@@ -67,43 +127,51 @@ _decode_try() {
     return 0
   fi
 
-  local child name encoded
-  for child in "$current"/* "$current"/.[!.]* "$current"/..?*; do
+  local child name encoded rest matched=0
+  local -a children=()
+  # Checked enumeration includes dotfiles and captures failure instead of
+  # silently treating an unreadable directory as an empty directory.
+  if ! find "$current" -mindepth 1 -maxdepth 1 -print0 > "$find_tmp" 2>/dev/null; then
+    decode_uncertain=1
+    return 0
+  fi
+  while IFS= read -r -d '' child; do
+    children+=("$child")
+  done < "$find_tmp"
+  for child in "${children[@]}"; do
     name="${child##*/}"
-    [[ "$name" == *.* ]] || continue
-    encoded="${name//./-}"
-    if [[ "$remaining" == "$encoded" || "$remaining" == "$encoded-"* ]]; then
+    if ! _decode_encode "$name"; then
+      # An uninterpretable entry may collide with this slug.
       decode_uncertain=1
+      continue
+    fi
+    if [[ "$remaining" == "$encoded" ]]; then
+      rest=""
+    elif [[ "$remaining" == "$encoded-"* ]]; then
+      rest="${remaining:${#encoded}+1}"
+      # A trailing hyphen cannot represent an empty child component.
+      [[ -n "$rest" ]] || continue
+    else
+      continue
+    fi
+    matched=1
+    if [[ -L "$child" || ! -d "$child" ]]; then
+      decode_uncertain=1
+    else
+      _decode_try "$child" "$rest"
     fi
   done
 
-  local n=${#remaining} i component candidate_dir
-  for (( i=n; i>=0; i-- )); do
-    (( decode_count < 2 )) || return 0
-    if (( i < n )) && [[ "${remaining:i:1}" != "-" ]]; then
-      continue
+  if [[ "$remaining" =~ ^[A-Za-z0-9]+$ ]]; then
+    child="${current%/}/$remaining"
+    if [[ ! -e "$child" && ! -L "$child" ]]; then
+      _decode_candidate "$child" "ORPHANED"
     fi
-    # A trailing hyphen is a literal character, not an empty path component.
-    (( i != n - 1 )) || continue
-    component="${remaining:0:i}"
-    [[ -n "$component" ]] || continue
-    candidate_dir="${current%/}/$component"
-    if [[ -L "$candidate_dir" ]]; then
-      decode_uncertain=1
-    elif [[ -d "$candidate_dir" ]]; then
-      if (( i == n )); then
-        _decode_candidate "$candidate_dir" "EXISTING"
-      else
-        _decode_try "$candidate_dir" "${remaining:i+1}"
-      fi
-    elif (( i == n )) && [[ "$remaining" != *-* ]]; then
-      if [[ -e "$candidate_dir" ]]; then
-        decode_uncertain=1
-      else
-        _decode_candidate "$candidate_dir" "ORPHANED"
-      fi
-    fi
-  done
+  elif (( ! matched )); then
+    # A reachable prefix with an unsupported suffix is another possible
+    # original path, even when another branch already supports a candidate.
+    decode_uncertain=1
+  fi
 }
 
 # json_escape <string>

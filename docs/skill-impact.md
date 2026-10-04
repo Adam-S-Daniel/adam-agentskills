@@ -42,6 +42,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
 
+- Motivation: corrective review of the [issue #14 decoder follow-up](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14) found false orphan labels for underscore, space, and Unicode aliases; a further review found reached prefixes with undecodable suffixes were also ignored.
+- Change: enumerate and normalize every existing entry at every level using ASCII-alphanumeric UTF-16 munging, including supplementary characters and consecutive punctuation. Preserve uncertainty for any matching branch that cannot be examined or completed. Known removable roots and detected device boundaries remain unresolved, including populated mounts; document same-device mount, custom-name, long-name, and concurrent-change limits. Temporary-home tests isolate host ancestor listings and device IDs while checking every real entry inside each fixture. The existing 2.0.1 version bump remains sufficient relative to the main branch.
+- Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); focused pytest: exit 0, 50 passed. Sixteen isolated script mutations produced exit 1 for 37 failing test executions covering all 31 added cases and four corrected existing cases, with the two supplementary-character cases repeated under a second mutation. No paid evaluation run.
+- Outcome: pending independent review and merge; the broader issue #14 remains open. This entry corrects the earlier same-day dotted-alias-only claim below.
+
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
 - Motivation: [issue #14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14) tracks naming changes that prompted this scoped follow-up: failed path decoding was labeled `ORPHANED` and the cleanup instructions suggest deleting those stores.
 - Change: inventory distinguishes `EXISTING`, supported missing `ORPHANED` paths, and `UNRESOLVED` paths; ambiguity, dotted aliases, inaccessible parents, and symlinks cannot become orphan claims. Instructions prohibit deletion based on unresolved status, and maintenance context and temporary-home regression tests accompany the change. `adam-coding-local` bumped 2.0.0 -> 2.0.1.
 - Eval: exempt ([skills-evals DESIGN.md deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md)); focused pytest: exit 0, 19 passed. No paid evaluation run.

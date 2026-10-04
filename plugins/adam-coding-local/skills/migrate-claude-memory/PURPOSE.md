@@ -10,10 +10,25 @@ repository memory without deleting its source.
 tracks naming changes that prompted this scoped decoder follow-up. A failed
 decode created a data-loss hazard: failed or lossy path decoding labeled stores
 `ORPHANED`, while the cleanup instructions suggested deleting those stores.
-The inventory now keeps unsupported or ambiguous paths `UNRESOLVED`, including
-collisions with existing dotted names and mixed existing/missing candidates.
-Only one supported missing final component beneath an accessible existing
-parent can be `ORPHANED`; a human must independently verify that result.
+The first decoder follow-up inspected only dotted aliases, but underscores,
+spaces, Unicode, and other punctuation collide under the same munger. The
+corrective review now enumerates every directory entry at every level and
+normalizes non-ASCII-alphanumeric UTF-16 code units, including two hyphens for
+supplementary characters. Matching aliases, mixed existing/missing candidates,
+and candidate branches that cannot be fully examined remain `UNRESOLVED`.
+A second review also found a reached existing prefix with an undecodable
+suffix could be ignored while another branch supported an orphan; that
+dead-end branch now preserves uncertainty too.
+Only exactly one supported missing ASCII-alphanumeric final component beneath
+a readable, fully examined parent chain can be `ORPHANED`.
+
+Known removable roots and detected device boundaries are always unresolved,
+including populated mounts and case-insensitive drive roots. This avoids
+claims based on unavailable mounts without requiring privileged inspection.
+The policy cannot recognize arbitrary former mount points sharing their
+parent's device. Long hashed names and unsupported store formats remain
+unresolved; custom aliases resembling standard names and concurrent changes
+remain limits. A human must independently verify any orphan result.
 
 The focused tests run the inventory with invented temporary homes and cover
 classification, JSON and text output, aggregate counts, and preserved memory

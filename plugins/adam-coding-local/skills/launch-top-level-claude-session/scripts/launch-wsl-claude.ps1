@@ -22,16 +22,16 @@ param(
   [string] $Distro = 'Ubuntu',                    # WSL distro
   [switch] $RemoteControl,                        # optional: adds --remote-control (no name)
   [string] $RemoteControlName,                    # optional: adds --remote-control <name>
-  [switch] $NoWindowsTerminal,                    # fallback: bare wsl.exe (malformed TTY — avoid)
+  [switch] $NoWindowsTerminal,                    # fallback: bare wsl.exe (malformed TTY - avoid)
   [switch] $PrintArgs                             # test hook: print the final command line(s)
                                                    # instead of launching anything
 )
 
 # wt.exe re-parses its OWN command line and treats an unescaped ';' as a
-# subcommand separator (new-tab) — even when the ';' sits inside an argument
+# subcommand separator (new-tab) - even when the ';' sits inside an argument
 # that already arrived as a single, correctly quoted Win32 argv element. Only
 # wt's own documented escape protects it: a literal backslash before the
-# semicolon (`\;`). Apply this ONLY to arguments headed for wt.exe — the
+# semicolon (`\;`). Apply this ONLY to arguments headed for wt.exe - the
 # -NoWindowsTerminal fallback below invokes wsl.exe directly, with no wt
 # tokenizer to strip the backslash back out again.
 function ConvertTo-WtEscaped {
@@ -85,7 +85,7 @@ $resolver = 'command -v claude || for p in "$HOME/.local/bin/claude" "$HOME/.cla
 $claude = wsl.exe -d $Distro -- bash -lc $resolver 2>$null | Select-Object -First 1
 if ($claude) { $claude = $claude.Trim() }
 if (-not $claude) {
-  Write-Error "claude not found in WSL distro '$Distro' — is Claude Code installed there?"
+  Write-Error "claude not found in WSL distro '$Distro' - is Claude Code installed there?"
   exit 1
 }
 
@@ -121,7 +121,7 @@ if ($RemoteControl -and -not $RemoteControlName) { $claudeArgs += '--remote-cont
 # Give the new session the FULL login PATH (/snap/bin -> pwsh, ~/.bun/bin -> bun,
 # ~/.npm-global/bin, ~/.dotnet, ~/.local/bin, ...) so the agent's subprocesses don't fail
 # with "pwsh: command not found". Capture it from an interactive login shell in the distro
-# (`bash -lic` — bun/npm-global are added in ~/.bashrc, which plain `-lc` skips) and inject
+# (`bash -lic` - bun/npm-global are added in ~/.bashrc, which plain `-lc` skips) and inject
 # it with `env PATH=...`. Do NOT wrap claude in an interactive shell: that grabs the
 # ConPTY's process group and the claude TUI exits immediately. `env` is a transparent exec,
 # so claude stays a direct child holding the ConPTY (like the working bare-claude launch).
@@ -138,7 +138,7 @@ $wslArgs = @('-d', $Distro, '--cd', $Dir, '--', 'env', '-u', 'CLAUDE_CODE_CHILD_
 
 if ($NoWindowsTerminal) {
   # Bare wsl.exe gets a malformed TTY; initial-prompt sessions exit immediately here.
-  # No wt.exe involved, so no semicolon escaping — just proper Win32 quoting.
+  # No wt.exe involved, so no semicolon escaping - just proper Win32 quoting.
   $cmdLine = ($wslArgs | ForEach-Object { ConvertTo-WindowsCommandLineArg $_ }) -join ' '
   if ($PrintArgs) { Write-Output $cmdLine; return }
   Start-Process wsl.exe -ArgumentList $cmdLine

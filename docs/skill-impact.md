@@ -40,6 +40,14 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+
+## 2026-10-05 — adam-coding-local/launch-top-level-claude-session, adam-coding-local/sync-cc-settings-between-wsl-and-windows, adam-non-coding-local/add-from-address, adam-non-coding-local/add-received-from-addresses — edit
+
+- Motivation: BOM-less UTF-8 typographic dashes made a valid launcher fail to parse in Windows PowerShell 5.1, which reads such files as the ANSI codepage.
+- Change: all registry PowerShell scripts use ASCII punctuation; a registry byte regression test rejects non-ASCII `.ps1` content without a UTF-8 BOM. The two email triggers and settings script change comments/status punctuation only, preserving behavior.
+- Eval: none — launcher and settings sync are exempt/deferred in skills-evals' `DESIGN.md` deliberate non-coverage table; the two email triggers belong to the deferred Fastmail bundle. No paid evaluation was run. The byte gate was observed failing on the four original BOM-less scripts before normalization.
+- Outcome: local implementation pending independent review and merge.
+
 ## 2026-10-05 — adam-coding-anywhere/github-actions-repo-settings, adam-coding-anywhere/skills-doctor, adam-coding-anywhere/debug-github-workflows, adam-coding-local/windows-elevation-from-wsl — edit
 
 - Motivation: prompt-audit sweep 2026-10-05, [issue #50](https://github.com/Adam-S-Daniel/adam-agentskills/issues/50): stale pointers to fleet guidance, history narrative in SKILL.md bodies, an inconsistent signal count in skills-doctor, a hard-coded `gh` pin, and an emphatic "CRITICAL" lead-in.

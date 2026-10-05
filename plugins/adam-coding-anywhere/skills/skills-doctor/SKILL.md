@@ -6,9 +6,9 @@ description: >
   session's own skill listing, `~/.claude/skills/`, the account
   `synced/manifest.json`, `claude plugin list`), attribute every skill to the
   registry and bundle it came from by reading the bootstrap hook's own install
-  record rather than guessing, and flag silent shadowing, dangling payload references, and always-on context cost. Reports
-  only — it never installs, copies, deletes or repairs anything. Use when a
-  skill you expected is missing or won't trigger, when a repo-owned skill looks
+  record rather than guessing, and flag silent shadowing and dangling payload
+  references. Reports only — it never installs, copies, deletes or repairs
+  anything. Use when a skill you expected is missing or won't trigger, when a repo-owned skill looks
   overridden, when the session-start `skills:` verdict reads DEGRADED, when you
   need to know where a skill came from or whether the hook installed it, or
   when the user says "why didn't that skill load", "which skills do I actually
@@ -40,10 +40,10 @@ recur on the next surface. Name the defect, name the knob that fixes it, stop.
 **Not the built-in `/skill-doctor`.** Claude Code 2.1.261 added a `/skill-doctor`
 command that shows which loaded skills go unused and what they cost in context,
 so you can prune them. This skill answers a different question: where each
-skill came from, and whether delivery matched `skills.lock`. For "what is
-costing me context, and is any of it unused", point the user at `/skill-doctor`
-(or `/context`) rather than reproducing it here; the names differ by one letter,
-so say which one you ran.
+skill came from, and whether delivery matched `skills.lock`. For "which skills
+go unused, what does each cost per turn, which should I turn off", point the
+user at `/skill-doctor` (or `/context`) rather than reproducing it here; the
+names differ by one letter, so say which one you ran.
 
 ## 1. Name the surface first
 
@@ -67,7 +67,7 @@ finding, not a pass.
 `skills-bootstrap.sh` installs on any of those three readings, so a diagnostic
 that recognises fewer of them disagrees with the hook silently: it answers
 `unsure`, which is the quiet reading, on a surface the hook has just installed
-onto. That is how old-registry #85's headline defect survived its own fix.
+onto.
 
 **The second arm is a PREFIX, not the exact string `remote`.** Claude Code's
 entrypoint allowlist has 26 legal values and seven of them begin with `remote`
@@ -133,8 +133,7 @@ from the hook or a hand copy.
 
 **One name can be in both, and there the manifest confirms the collision
 rather than resolving it.** Names reach a cloud session from the hook and the
-account store at once — measured on this registry's own sessions
-(agentskills#122). The listing shows each such name once, and nothing in it,
+account store at once. The listing shows each such name once, and nothing in it,
 on disk, or in any log says which copy the model read.
 `check_provenance.py` reports every one: a `shadowed-by-the-account-store`
 NOTE where the two copies match once CRLF is folded to LF, and a
@@ -425,19 +424,16 @@ python3 -m pip install --ignore-installed PyYAML -r <registry>/requirements-dev.
 
 ### Context cost
 
-Every loaded skill's description is always-on context. `claude plugin details`
-reports it per bundle:
+Not measured here. For per-skill context cost and 7-day usage, run
+`claude -p /skill-doctor` (built-in, Claude Code 2.1.261+; usage is
+machine-local, and the report is unavailable under `--bare` and over Remote
+Control). This skill does not depend on it.
 
-```bash
-claude plugin details adam
-```
-
-Measured: the `adam` bundle is ~1,479 tok always-on for 8 skills (~185
-tok/skill). This is not a tidiness point. At the default listing budget the
-descriptions of the least-used skills are **silently dropped**, so a skill can
-be loaded, present on disk, and still untriggerable — indistinguishable from
-never having been delivered. Report the bundle's total and the skill count, and
-flag it when a session is carrying skills it has no use for.
+What it does keep is the delivery consequence: at the default listing budget
+the descriptions of the least-used skills are **silently dropped**, so a skill
+can be loaded, present on disk, and still untriggerable — indistinguishable
+from never having been delivered. When a skill you expected is loaded but never
+triggers, say so and point at `/skill-doctor` for the cost side.
 
 ## 6. Report shape
 
@@ -454,8 +450,7 @@ which record state the attribution rests on, because it is what separates a
 report that is fact from one that is inference. **Where there is no readable
 record, write `<n> unattributable`, never `0 unattributed`** — the zero is
 arithmetically true and reads as "everything is accounted for", which is the
-exact inversion. Close with the context-cost
-figure. No remediation is performed — recommend, do not do.
+exact inversion. No remediation is performed — recommend, do not do.
 
 ## Traps that will mislead you
 
@@ -469,8 +464,7 @@ figure. No remediation is performed — recommend, do not do.
   reads exactly like an account with no uploads. `check_provenance.py` resolves
   the bucket itself (`oauthAccount` in `~/.claude.json`, then
   `$CLAUDE_CODE_ACCOUNT_UUID`) and refuses rather than guessing when a machine
-  has more than one; when you look by hand, glob the bucket. Old-registry issue #157 is
-  where both tools were measured reporting a false clean over 21 skills.
+  has more than one; when you look by hand, glob the bucket.
 - **`anthropic-skills` and `claude-ai` are reserved namespaces (2.1.282).** A
   skill folder, command file or workflow command in either no longer loads, and
   `Skill(anthropic-skills:*)` / `Skill(claude-ai:*)` allow rules cover only skills

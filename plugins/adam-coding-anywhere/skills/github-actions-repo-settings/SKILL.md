@@ -201,8 +201,8 @@ Rules of thumb used:
 `cms-platform` and the sites that consume it (`adamdaniel.ai`,
 `jodidaniel.com`) manage their **own** settings-as-code from the platform: a
 `repo-settings.yml` manifest + `scripts/audit-repo-settings.js`, propagated to
-consumers when sites are scaffolded/re-synced, using **rulesets** (landing via
-cms-platform PR #168, `feat/109-repo-settings-as-code`).
+consumers when sites are scaffolded/re-synced, using **rulesets** (merged
+2026-07-13 as cms-platform PR #168, `feat/109-repo-settings-as-code`).
 
 **These repos are excluded from the fan-out** (`manage: false`). Reason: the
 fan-out and the platform would otherwise be two independent sources of truth for
@@ -211,14 +211,14 @@ branch protection, and GitHub enforces the **union** of all rulesets/protections
 audit is blind to. Branch protection for these three repos is owned by the
 platform.
 
-**Known gap to close in the platform:** PR #168 manages repo flags +
-branch-protection rulesets but **not** the two Actions-permissions settings this
-skill enforces (`sha_pinning_required`, fork-PR approval). To make the platform
-the single source of truth, add an `actions_permissions` block to its
-`repo-settings.yml` and the matching GET/PUT (`actions/permissions` and
-`.../fork-pr-contributor-approval`, guarding the fork endpoint against 422 on
-private repos) to `audit-repo-settings.js`, plus fixtures/lints. Do **not** let
-the fan-out manage these repos to cover the gap.
+**The platform also manages the two Actions-permissions settings this skill
+enforces** (`sha_pinning_required`, fork-PR `approval_policy`): its
+`repo-settings.yml` carries an `actions_permissions` block, and
+`audit-repo-settings.js` reads and writes `actions/permissions` and
+`.../fork-pr-contributor-approval`, skipping the fork endpoint on private repos
+(HTTP 422). The first version of that work (PR #168) did not, and this file
+once described that as a gap to close. Do **not** let the fan-out manage these
+repos to cover for it.
 
 **Divergence to be aware of:** the platform's `main` ruleset uses
 `bypass_actors: []` (nobody, not even the owner, direct-pushes to main -- safe

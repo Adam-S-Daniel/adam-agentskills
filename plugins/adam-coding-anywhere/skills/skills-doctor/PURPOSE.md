@@ -69,6 +69,18 @@ with the retired account-store uploads; the shadow finding's remedy now says to
 remove a stale account copy instead of re-uploading. Shadow detection and
 `--account-channel` stay.
 
+## Scope narrowed to delivery (2026-10-04)
+
+Claude Code 2.1.261 added a built-in `/skill-doctor` that reports per-skill
+context cost and 7-day usage, with real listing-token numbers and no model
+call. The two names differ by one letter, so the skill's description no longer
+claims "always-on context cost" and its Context cost section points at the
+built-in instead of estimating it. The skill keeps the delivery consequence
+(a loaded skill whose description the listing budget dropped is untriggerable).
+It does not depend on the built-in, which is flag-gated, machine-local and
+empty under `--bare`. The docs gate the command at 2.1.252 and the changelog
+announces it at 2.1.261; the skill cites the changelog.
+
 ## Eval status
 
 No eval existed when old-registry #157 was fixed. `DESIGN.md` names `skills-doctor` as a

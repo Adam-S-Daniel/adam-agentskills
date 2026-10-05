@@ -115,8 +115,9 @@ it is enabled anywhere.
   `SKILL.md` and the skill silently never loads.
 - `autoMemoryDirectory` accepts only absolute or `~/` paths (no repo-relative
   form). Don't assume the in-repo pattern resolves identically on every
-  machine just because repos "live at `~/repos/<name>` everywhere" — see
-  Workstation layout above for the counterexample. That exact assumption once
+  machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
+  guidance's "Workstation layout" section (Windows `D:\repos\<owner>\<repo>`,
+  WSL `~/repos/<repo>`) is the counterexample. That exact assumption once
   broke sync-skills: it guessed `~/repos/<name>` ahead of the checkout it was
   actually running from, a decoy outranked the real clone, and `--all`
   enumerated nothing. Check the resolved path on the machine in front of you;
@@ -139,12 +140,15 @@ it is enabled anywhere.
   git-config sections, so a machine that ran an earlier version still needs
   one `--owner-machine` run to stop failing pushes.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
-  is base.md's "Prove the verifier can fail before you trust it" — the
-  `test_account_zip_selection.py` incident there is this repo's own, so only
-  the repo-specific facts stay here rather than re-narrating it: unless a test
+  is the fleet guidance's "Prove the verifier can fail first" rule. Its
+  worked example there is `test_foo.py`; this repo's own earlier example,
+  `test_account_zip_selection.py`, left base.md when it was condensed and was
+  deleted with the account-zip channel (ADR 0014), so only the
+  repo-specific facts stay here rather than re-narrating it: unless a test
   file ends in an `if __name__ == "__main__"` block that invokes a runner,
   running it directly imports the module and exits 0 having asserted nothing.
-  All 8 files under `scripts/` lack such a block, so all 8 are that trap.
+  None of the `scripts/test_*.py` files has such a block, so every one is that
+  trap.
   Exactly one test file in the repo does not:
   `plugins/adam-non-coding-local/skills/rename-pdfs/scripts/test_extract_pdf_context.py`
   ends with `unittest.main()`, and running THAT one directly really does run
@@ -178,9 +182,10 @@ it is enabled anywhere.
   `/usr/local/lib/python3.11/dist-packages`, Debian's lives in
   `/usr/lib/python3/dist-packages`, and the former precedes the latter, so
   `import yaml` gives **6.0.3** — `requirements-dev.txt`'s pin — with the full
-  suite green (1943 passed, 11 skipped). Verified 2026-08-30 on a hosted
-  session that started with `yaml` at Debian's 6.0.1 and `pytest`,
-  `jsonschema` and `markdown_it` all absent.
+  suite green. Verified 2026-08-30 on a hosted session that started with
+  `yaml` at Debian's 6.0.1 and `pytest`, `jsonschema` and `markdown_it` all
+  absent. The counts that run showed (1943 passed, 11 skipped) are dropped
+  because they change with every PR; take the current ones from the run.
 
   That distinction is the whole reason to write this down. A hook that
   installed only the three genuinely-MISSING modules would exit 0 and look

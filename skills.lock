@@ -1,6 +1,6 @@
 {
   "registry": "Adam-S-Daniel/adam-agentskills",
-  "ref": "20e7647d434c78427435892da03600f9e28e378c",
+  "ref": "f6d474ff168b6b9a6c44f5e9138684a4e2a22187",
   "bundles": [
     "adam-anything-anywhere",
     "adam-coding-anywhere"
@@ -8,13 +8,13 @@
   "skills": {
     "adam-anything-anywhere/finding-unknowns": "sha256:a67b7663b5b44d07cfddeb923ce19f3cf79447e052658a69cf7fcb985fc0130d",
     "adam-anything-anywhere/writing-adrs": "sha256:4e9a4b9472bd3d92501bf0d7f882544ba66e8b03aa48bac7fa1689c45d903820",
-    "adam-coding-anywhere/debug-github-workflows": "sha256:a695b854250e5c6b8255558354108a406ba2197c500d27173cb7a83b9beb1ffd",
+    "adam-coding-anywhere/debug-github-workflows": "sha256:d49d633673de88d410f275f1262e5d384bbc32ab78626398e63f59f7bee3f7c5",
     "adam-coding-anywhere/disarm-inherited-reach": "sha256:3e355e35d7012c34d475711e8b438bfc5075deb92982b7561e1f9bb40054b893",
-    "adam-coding-anywhere/github-actions-repo-settings": "sha256:7f9f2b325cbc782c4c265a7d60f26f3c4a1812a2ca778ed3522f5ebd1d41db28",
+    "adam-coding-anywhere/github-actions-repo-settings": "sha256:2476489276479c2c8ee71da2546c8c7646b0f6e585248fb7886127248bef7c3b",
     "adam-coding-anywhere/review-bash-ci-reliability": "sha256:df5ec0ca21602933fec981af7bbd6d8d668a9bb4f463cde44677843d5dc1e880",
-    "adam-coding-anywhere/skills-doctor": "sha256:364d7d56ce1f1353c516eca86050962d9391e9e2bca6748893c4dc2294ad0fef",
+    "adam-coding-anywhere/skills-doctor": "sha256:878cd19bfc0fb4392f755b3c8adea88050ce17033be2a158e37e00e8d1c55e45",
     "adam-coding-anywhere/vendor-release-impact-issues": "sha256:b7bc6f17c002a05b5c5c517ddf598c717820ef808d5d240a5e8e9d6e68a7c426",
     "adam-coding-anywhere/workflow-path-audit": "sha256:8a7c57bcd890bbab38c42473d8705f0b2521954385f03bf5289e3ec84d3fcdde"
   },
-  "generated_from": "20e7647d434c78427435892da03600f9e28e378c"
+  "generated_from": "f6d474ff168b6b9a6c44f5e9138684a4e2a22187"
 }

@@ -29,6 +29,15 @@ Finding classes
   stale-waiver          a declared waiver matched nothing this run
   waiver-invalid        a waiver entry is missing a required field / malformed
 
+Advisories (warn-only — owner decision D5)
+------------------------------------------
+  british-spelling      a word from the fixed list in `british_spellings.yml` (the fleet
+                        writes American English); `agent_markdown_allowlist.txt` exempts
+  dangling-reference    `see "X" above|below` where X names no heading in the same file
+Scanned in every SKILL.md plus each registry root's AGENTS.md and CLAUDE.md; code, block
+quotes, HTML and URLs are exempt. They print (as `::warning` annotations when
+GITHUB_ACTIONS is set) and NEVER change the exit status unless `--strict` is passed.
+
 Usage
 -----
   python3 scripts/check_skills.py
@@ -38,7 +47,8 @@ Usage
 Exit status
 -----------
   0  no non-waived findings, no stale waivers, every required registry resolved
-  1  otherwise
+     (advisories never count, unless --strict)
+  1  otherwise, or an advisory under --strict
   2  cannot run at all — a declared dependency is missing, so NOTHING was checked.
      Distinct from 1 on purpose: 1 is a verdict, 2 is the absence of one.
 """
@@ -48,6 +58,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -892,6 +903,262 @@ def duplicate_findings(groups: Sequence[DuplicateGroup]) -> List[Finding]:
 
 
 # =================================================================================
+# Advisories: british-spelling and dangling-reference (WARN-ONLY)
+# =================================================================================
+#
+# Owner decision D5 ("5. Warn"): these two checks print warnings and NEVER change the
+# exit status unless `--strict` is passed (the tests do). They mirror, rule for rule,
+# Adam-S-Daniel/_agent-guidance's scripts/check-agent-markdown.js (PR #255,
+# https://github.com/Adam-S-Daniel/_agent-guidance/pull/255), so the fleet flags the
+# same words and the same references everywhere. They are not `Finding`s: a finding
+# is waivable and gates the build, an advisory is neither.
+#
+# Scope: every SKILL.md the census reaches, plus `AGENTS.md` and `CLAUDE.md` at each
+# resolved registry's root (the agent-facing Markdown, as in the JS checker). PURPOSE.md
+# is not scanned: it is maintenance context, never loaded at inference.
+#
+# The whole file is parsed, frontmatter included, exactly as the JS checker does: the
+# `---` block parses as an hr plus a setext heading, so a `description:` is spell-checked
+# as prose (it is the one field every session loads) and line numbers stay file lines.
+
+A_BRITISH = "british-spelling"
+A_DANGLING = "dangling-reference"
+
+DEFAULT_SPELLINGS = SCRIPT_DIR / "british_spellings.yml"
+DEFAULT_ALLOWLIST = SCRIPT_DIR / "agent_markdown_allowlist.txt"
+ROOT_AGENT_DOCS = ("AGENTS.md", "CLAUDE.md")
+
+
+@dataclass(frozen=True)
+class Advisory:
+    """One warn-only observation. `path` is registry-relative; `line` is 1-indexed."""
+
+    registry: str
+    path: str
+    line: int
+    rule: str
+    message: str
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {"registry": self.registry, "path": self.path, "line": self.line,
+                "rule": self.rule, "message": self.message}
+
+
+def load_british_words(path: Path) -> frozenset:
+    """Expand the word-list file into the flat set of flagged words (all lowercase)."""
+    data = load_yaml_mapping(path, "british spellings")
+    for key in ("our_stems", "our_suffixes", "ise_stems", "ise_suffixes", "explicit"):
+        if not isinstance(data.get(key), list) or not data[key]:
+            sys.exit(f"ERROR: british spellings file {path} needs a non-empty '{key}:' list")
+    words = {str(w).lower() for w in data["explicit"]}
+    for stem in data["our_stems"]:
+        words.update(f"{stem}{suffix}".lower() for suffix in data["our_suffixes"])
+    for stem in data["ise_stems"]:
+        words.update(f"{stem}{suffix}".lower() for suffix in data["ise_suffixes"])
+    return frozenset(words)
+
+
+def load_allowlist(path: Path, required: bool) -> frozenset:
+    """One lowercase word per line; blank lines and `#` comments ignored. A missing
+    DEFAULT file is an empty list; a missing EXPLICIT one is exit 2 — a check that
+    cannot read its inputs must not certify."""
+    if not path.is_file():
+        if required:
+            sys.stderr.write(f"check_skills.py: allowlist {path} does not exist\n")
+            raise SystemExit(2)
+        return frozenset()
+    words = set()
+    for raw in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        word = raw.split("#", 1)[0].strip().lower()
+        if word:
+            words.add(word)
+    return frozenset(words)
+
+
+# `html=True` (the commonmark preset's default) so raw HTML parses as html_block /
+# html_inline tokens, which are exempt, rather than as prose. `table` so a table cell is
+# checked as prose, as the JS checker's default preset does.
+_ADVISORY_MARKDOWN = MarkdownIt("commonmark").enable("table")
+
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>)\]]*", re.IGNORECASE)
+_WORD_RE = re.compile(r"[^\W\d_]+")
+_OPEN, _CLOSE = "\x01", "\x02"
+
+# `see "X" above`, ``see `## X` below``, `see **X** above`, `see [X](#x) below` (optionally
+# `also`, `the`, `section`, then optionally `section|heading|part` after X). X must be
+# delimited; an undelimited "see the rules above" names no heading and is not guessed at.
+_SEE_RE = re.compile(
+    r"\bsee\s+(?:also\s+)?(?:the\s+)?(?:section\s+)?"
+    r"(?:[\"“]([^\"”]+)[\"”]|`([^`]+)`|\x01([^\x02]+)\x02)"
+    r"(?:\s+(?:section|heading|part))?\s+(above|below)\b",
+    re.IGNORECASE,
+)
+
+
+class _Inline:
+    """One inline token flattened to per-physical-line plain text (code spans, HTML and
+    link targets excluded) plus a single-line "marked" form for reference detection:
+    code spans wrapped in backticks, em/strong/link wrapped in \\x01..\\x02."""
+
+    def __init__(self, token) -> None:
+        self.lines: List[str] = [""]
+        self.marked = ""
+        self._line_starts = [0]
+        self._code_ranges: List[Tuple[int, int]] = []
+        self._walk(token.children or [])
+
+    def _push(self, text: str) -> None:
+        self.lines[-1] += text
+        self.marked += text
+
+    def _walk(self, children) -> None:
+        for child in children:
+            kind = child.type
+            if kind in ("text", "text_special"):
+                self._push(child.content)
+            elif kind in ("softbreak", "hardbreak"):
+                self.lines.append("")
+                self.marked += " "
+                self._line_starts.append(len(self.marked))
+            elif kind == "code_inline":
+                # Exempt from spelling; kept (backticked) for reference detection.
+                self.marked += "`"
+                self._code_ranges.append(
+                    (len(self.marked), len(self.marked) + len(child.content)))
+                self.marked += child.content + "`"
+            elif kind in ("em_open", "strong_open", "link_open"):
+                self.marked += _OPEN
+            elif kind in ("em_close", "strong_close", "link_close"):
+                self.marked += _CLOSE
+            elif kind == "image":
+                self._walk(child.children or [])
+            # html_inline, strikethrough markers, ...: no prose of their own.
+
+    def line_at(self, offset: int) -> int:
+        line = 0
+        for index, start in enumerate(self._line_starts):
+            if start <= offset:
+                line = index
+        return line
+
+    def in_code(self, offset: int) -> bool:
+        return any(start <= offset < end for start, end in self._code_ranges)
+
+
+def _normalize_heading_name(text: str) -> str:
+    text = re.sub(r"[\x01\x02`*_\"“”'‘’]", "", text)
+    text = re.sub(r"^#+\s*", "", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[\s:.]+$", "", text)
+    return text.strip().lower()
+
+
+def _heading_text(inline_token) -> str:
+    out = ""
+    for child in inline_token.children or []:
+        if child.type in ("text", "text_special", "code_inline"):
+            out += child.content
+        elif child.type in ("softbreak", "hardbreak"):
+            out += " "
+    return _normalize_heading_name(out)
+
+
+def scan_advisories(registry: str, path: str, source: str, british: frozenset,
+                    allowed: frozenset) -> List[Advisory]:
+    """Both advisory checks over one Markdown file. Headings come from a real parse, so
+    a `## ` inside a fence is not a heading; block quotes are exempt from both rules
+    because they quote another document."""
+    advisories: List[Advisory] = []
+    tokens = _ADVISORY_MARKDOWN.parse(source)
+    headings = set()
+    refs: List[Tuple[str, str, str, int]] = []   # (normalized, shown, direction, line)
+    quote_depth = 0
+    block_map = None   # nearest enclosing block's [start, end): table cells carry none
+
+    for index, token in enumerate(tokens):
+        if token.map:
+            block_map = token.map
+        if token.type == "blockquote_open":
+            quote_depth += 1
+        elif token.type == "blockquote_close":
+            quote_depth -= 1
+        elif token.type == "heading_open":
+            following = tokens[index + 1] if index + 1 < len(tokens) else None
+            if following is not None and following.type == "inline":
+                headings.add(_heading_text(following))
+        if token.type != "inline" or quote_depth > 0:
+            continue
+        line_map = token.map or block_map
+        if not line_map:
+            continue
+
+        flat = _Inline(token)
+        base_line = line_map[0] + 1
+        for offset, text in enumerate(flat.lines):
+            prose = _URL_RE.sub(" ", text)
+            for match in _WORD_RE.finditer(prose):
+                word = match.group(0).lower()
+                if word in british and word not in allowed:
+                    advisories.append(Advisory(
+                        registry, path, base_line + offset, A_BRITISH,
+                        f'British spelling "{match.group(0)}" — the fleet writes American '
+                        f"English. Reword, or add \"{word}\" to "
+                        f"scripts/{DEFAULT_ALLOWLIST.name} if it is quoted or a proper name."))
+
+        for match in _SEE_RE.finditer(flat.marked):
+            if flat.in_code(match.start()):
+                continue   # "see ..." quoted inside a code span
+            shown = (match.group(1) or match.group(2) or match.group(3)).strip()
+            refs.append((_normalize_heading_name(shown), shown, match.group(4).lower(),
+                         base_line + flat.line_at(match.start())))
+
+    for name, shown, direction, line in refs:
+        if name not in headings:
+            advisories.append(Advisory(
+                registry, path, line, A_DANGLING,
+                f'"see {shown} {direction}" names no heading in this file — fix the name '
+                f"or point at where it lives now."))
+    return advisories
+
+
+def collect_advisories(registries: Sequence[Registry], skills: Sequence[Skill],
+                       british: frozenset, allowed: frozenset) -> List[Advisory]:
+    targets: List[Tuple[str, str, Path]] = [
+        (skill.registry, skill.rel_path, skill.skill_md) for skill in skills]
+    for registry in registries:
+        if not registry.exists:
+            continue
+        for name in ROOT_AGENT_DOCS:
+            candidate = registry.path / name
+            if candidate.is_file():
+                targets.append((registry.name, name, candidate))
+    found: List[Advisory] = []
+    for registry_name, rel_path, file_path in targets:
+        source = file_path.read_bytes().decode("utf-8", errors="replace")
+        found.extend(scan_advisories(registry_name, rel_path, source, british, allowed))
+    order = {registry.name: registry.order for registry in registries}
+    found.sort(key=lambda a: (order.get(a.registry, len(order)), a.path, a.line, a.rule,
+                              a.message))
+    return found
+
+
+def _escape_data(text: str) -> str:
+    return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _escape_property(text: str) -> str:
+    return _escape_data(text).replace(":", "%3A").replace(",", "%2C")
+
+
+def github_annotation(advisory: Advisory, file: Optional[str] = None) -> str:
+    """A `::warning` workflow command; %, CR and LF are escaped in the message, and
+    additionally `:` and `,` in the properties (GitHub's own escaping rules). `file` is
+    the path GitHub should attach the annotation to (default: the advisory's own)."""
+    return (f"::warning file={_escape_property(file or advisory.path)},line={advisory.line},"
+            f"title={_escape_property(advisory.rule)}::{_escape_data(advisory.message)}")
+
+
+# =================================================================================
 # Run
 # =================================================================================
 
@@ -909,6 +1176,8 @@ class Report:
     dismissed: List[Tuple[Skill, List[Candidate]]]
     unresolved_required: int
     stale_waiver_count: int
+    advisories: List[Advisory] = field(default_factory=list)
+    strict: bool = False
 
     @property
     def scanned_registries(self) -> List[Registry]:
@@ -922,6 +1191,9 @@ class Report:
     def exit_code(self) -> int:
         if self.errors or self.stale_waiver_count or self.unresolved_required:
             return 1
+        # Advisories are warn-only (owner decision D5); only --strict lets them gate.
+        if self.strict and self.advisories:
+            return 1
         return 0
 
 
@@ -930,6 +1202,9 @@ def run(
     waivers_path: Path,
     overrides: Dict[str, str],
     repo_root: Path = REPO_ROOT,
+    strict: bool = False,
+    spellings_path: Path = DEFAULT_SPELLINGS,
+    allowlist_path: Optional[Path] = None,
 ) -> Report:
     config = load_yaml_mapping(config_path, "config")
     pattern = config.get("name_pattern")
@@ -974,6 +1249,11 @@ def run(
     errors, waived, stale = apply_waivers(findings, waivers)
     errors.extend(stale)
 
+    allowed = load_allowlist(allowlist_path or DEFAULT_ALLOWLIST,
+                             required=allowlist_path is not None)
+    advisories = collect_advisories(registries, all_skills,
+                                    load_british_words(spellings_path), allowed)
+
     return Report(
         config_path=config_path,
         waivers_path=waivers_path,
@@ -987,6 +1267,8 @@ def run(
         dismissed=dismissed,
         unresolved_required=unresolved_required,
         stale_waiver_count=len(stale),
+        advisories=advisories,
+        strict=strict,
     )
 
 
@@ -1004,7 +1286,23 @@ def _counts_by_registry(report: Report) -> Tuple[Dict[str, int], Dict[str, int]]
     return errors, waived
 
 
-def render_text(report: Report, list_findings: bool) -> str:
+def advisory_file(report: Report, advisory: Advisory) -> str:
+    """The path an annotation attaches to: repo-root-relative when the advisory's registry
+    lives inside this checkout, else `<registry>/<path>` (a sibling checkout has no file
+    in this workspace for GitHub to link, and a bare registry-relative path would point at
+    the wrong one)."""
+    for registry in report.registries:
+        if registry.name != advisory.registry:
+            continue
+        try:
+            return (registry.path.resolve().relative_to(REPO_ROOT)
+                    / advisory.path).as_posix()
+        except ValueError:
+            break
+    return f"{advisory.registry}/{advisory.path}"
+
+
+def render_text(report: Report, list_findings: bool, annotations: bool = False) -> str:
     error_counts, waived_counts = _counts_by_registry(report)
     lines: List[str] = []
     lines.append(f"config:  {report.config_path}")
@@ -1059,6 +1357,17 @@ def render_text(report: Report, list_findings: bool) -> str:
         if not any_dismissed:
             lines.append("  (none)")
         lines.append("")
+
+    mode = "strict: they gate the exit status" if report.strict else "warn-only"
+    lines.append(f"ADVISORIES ({len(report.advisories)}, {mode})")
+    for advisory in report.advisories:
+        if annotations:
+            lines.append(github_annotation(advisory, advisory_file(report, advisory)))
+        else:
+            lines.append(f"  [{advisory.rule}] {advisory.registry} :: "
+                         f"{advisory.path}:{advisory.line}")
+            lines.append(f"      {advisory.message}")
+    lines.append("")
 
     if report.exit_code == 0:
         lines.append(
@@ -1127,6 +1436,8 @@ def render_json(report: Report, list_findings: bool) -> str:
             }
             for group in report.duplicate_groups
         ],
+        "advisories": [advisory.as_dict() for advisory in report.advisories],
+        "strict": report.strict,
         "exit_code": report.exit_code,
     }
     if list_findings:
@@ -1178,17 +1489,34 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--list-findings", action="store_true",
                         help="also list the payload candidates that were extracted and "
                              "dismissed, with the rule that dismissed each one")
+    parser.add_argument("--strict", action="store_true",
+                        help="let the warn-only advisories (british-spelling, "
+                             "dangling-reference) fail the exit status; the tests use this, "
+                             "CI never does")
+    parser.add_argument("--allowlist", default=None, metavar="PATH",
+                        help="advisory allowlist: one lowercase word per line "
+                             "(default: scripts/agent_markdown_allowlist.txt, which may be "
+                             "absent; an explicit path that is missing exits 2)")
+    parser.add_argument("--spellings", default=str(DEFAULT_SPELLINGS), metavar="PATH",
+                        help="the fixed British-spelling word list "
+                             "(default: scripts/british_spellings.yml)")
     args = parser.parse_args(argv)
 
     report = run(
         config_path=Path(args.config).expanduser(),
         waivers_path=Path(args.waivers).expanduser(),
         overrides=parse_overrides(args.registry),
+        strict=args.strict,
+        spellings_path=Path(args.spellings).expanduser(),
+        allowlist_path=Path(args.allowlist).expanduser() if args.allowlist else None,
     )
     if args.json:
         print(render_json(report, args.list_findings))
     else:
-        print(render_text(report, args.list_findings))
+        # `::warning` workflow commands only mean something to GitHub Actions, and would
+        # be noise anywhere else; --json carries the advisories as data instead.
+        print(render_text(report, args.list_findings,
+                          annotations=bool(os.environ.get("GITHUB_ACTIONS"))))
     return report.exit_code
 
 

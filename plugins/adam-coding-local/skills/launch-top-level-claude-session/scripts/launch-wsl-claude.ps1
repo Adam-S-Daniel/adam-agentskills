@@ -27,6 +27,9 @@ param(
                                                    # instead of launching anything
 )
 
+. (Join-Path $PSScriptRoot 'launch-session0-task.ps1')
+$session0 = -not $NoWindowsTerminal -and (Get-LaunchSessionId -DryRun ([bool] $PrintArgs)) -eq 0
+
 # wt.exe re-parses its OWN command line and treats an unescaped ';' as a
 # subcommand separator (new-tab) - even when the ';' sits inside an argument
 # that already arrived as a single, correctly quoted Win32 argv element. Only
@@ -93,6 +96,21 @@ if ($Prompt -and $PromptFile) {
   [Console]::Error.WriteLine('Pass -Prompt or -PromptFile, not both.')
   exit 2
 }
+$windowsPromptFile = $null # Own only files created by this invocation.
+if ($session0 -and $Prompt) {
+  if ($PrintArgs) { $PromptFile = '/tmp/launch-claude-prompt-<guid>.txt' }
+  else {
+    $windowsPromptFile = Join-Path ([IO.Path]::GetTempPath()) ('launch-claude-prompt-' + [guid]::NewGuid().ToString() + '.txt')
+    [IO.File]::WriteAllText($windowsPromptFile, $Prompt, (New-Object Text.UTF8Encoding($false)))
+    $PromptFile = wsl.exe -d $Distro -- wslpath -u $windowsPromptFile | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0 -or -not $PromptFile) {
+      Remove-Item -LiteralPath $windowsPromptFile -ErrorAction SilentlyContinue
+      throw 'Could not convert the temporary prompt path for WSL.'
+    }
+    $PromptFile = $PromptFile.Trim()
+  }
+  $Prompt = ''
+}
 if ($PromptFile) {
   # A long prompt travels as a path the session reads, not as argv text that
   # wt.exe, Win32 quoting and wsl.exe each get a chance to re-split.
@@ -149,6 +167,15 @@ else {
   # multi-word prompt survives as one argv element.
   $wtArgs = @('wsl.exe') + $wslArgs
   $cmdLine = ($wtArgs | ForEach-Object { ConvertTo-WindowsCommandLineArg (ConvertTo-WtEscaped $_) }) -join ' '
+  if ($session0) {
+    try { Invoke-LaunchSession0Task -CommandLine $cmdLine -PrintArgs:$PrintArgs }
+    catch {
+      if ($windowsPromptFile) { Remove-Item -LiteralPath $windowsPromptFile -ErrorAction SilentlyContinue }
+      throw
+    }
+    if (-not $PrintArgs) { Write-Host "Launched detached Claude ($mode) in ${Distro}:${Dir}" }
+    return
+  }
   if ($PrintArgs) { Write-Output $cmdLine; return }
   Start-Process wt.exe -ArgumentList $cmdLine
 }

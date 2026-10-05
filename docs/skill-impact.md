@@ -41,6 +41,13 @@ no backfill is planned; the file adds the fields git does not capture.
 ---
 
 
+## 2026-10-05 — adam-coding-local/launch-top-level-claude-session — edit
+
+- Motivation: Windows session 0 cannot activate the Windows Terminal Store alias, so launchers inherited from an S4U session keeper failed before opening a tab.
+- Change: session-0 launches use a current-user Interactive/Limited one-off task with the prepared command line, check for a logged-on interactive session, and unregister after startup or failure. Prompt text becomes a temporary prompt-file handoff; dry runs print a task preview and register nothing. Ordinary interactive-session launches retain their direct path.
+- Eval: none — exempt/deferred in skills-evals' `DESIGN.md` deliberate non-coverage table (machine-bound launch surface). Deterministic pytest launch and task-lifecycle tests are the regression gate; no paid evaluation was run.
+- Outcome: local implementation pending independent review and merge.
+
 ## 2026-10-05 — adam-coding-local/launch-top-level-claude-session, adam-coding-local/sync-cc-settings-between-wsl-and-windows, adam-non-coding-local/add-from-address, adam-non-coding-local/add-received-from-addresses — edit
 
 - Motivation: BOM-less UTF-8 typographic dashes made a valid launcher fail to parse in Windows PowerShell 5.1, which reads such files as the ANSI codepage.

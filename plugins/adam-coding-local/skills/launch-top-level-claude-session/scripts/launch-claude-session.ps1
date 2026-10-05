@@ -38,6 +38,8 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'launch-session0-task.ps1')
+$session0 = (Get-LaunchSessionId -DryRun ([bool] $PrintArgs)) -eq 0
 
 # Plain stderr plus a chosen exit code: Write-Error under 'Stop' would throw
 # instead, and every failure would look the same.
@@ -97,9 +99,21 @@ if (-not $claude) { Stop-Launch 'claude not found on PATH or in %USERPROFILE%\.l
 $Shell = if ($Shell) { Get-FullCommandPath @($Shell) } else { Get-FullCommandPath @('pwsh', 'powershell') }
 if (-not $Shell) { Stop-Launch 'No shell (pwsh, powershell or -Shell) was found for the new tab.' 1 }
 
+# Session 0 must not put prompt content in the scheduled task XML, including
+# an encoded command. Keep the file until the new session has read it.
+$generatedPromptFile = $session0 -and [bool] $Prompt
+if ($generatedPromptFile) {
+  if ($PrintArgs) { $PromptFile = Join-Path ([IO.Path]::GetTempPath()) 'launch-claude-prompt-<guid>.txt' }
+  else {
+    $PromptFile = Join-Path ([IO.Path]::GetTempPath()) ('launch-claude-prompt-' + [guid]::NewGuid().ToString() + '.txt')
+    [IO.File]::WriteAllText($PromptFile, $Prompt, (New-Object Text.UTF8Encoding($false)))
+  }
+  $Prompt = ''
+}
+
 if ($PromptFile) {
-  if (-not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { Stop-Launch "Prompt file not found: $PromptFile" 2 }
-  $PromptFile = (Resolve-Path -LiteralPath $PromptFile).ProviderPath
+  if (-not ($generatedPromptFile -and $PrintArgs) -and -not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { Stop-Launch "Prompt file not found: $PromptFile" 2 }
+  if (-not ($generatedPromptFile -and $PrintArgs)) { $PromptFile = (Resolve-Path -LiteralPath $PromptFile).ProviderPath }
   # A long prompt travels as a path the session reads, not as argv text.
   $Prompt = "Read the file $PromptFile and follow the instructions in it."
 }
@@ -131,6 +145,16 @@ $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($t
 # argument; only -d can carry one here (the script is base64).
 $wtArgs = @('new-tab', '-d', ($Dir -replace ';', '\;'), $Shell, '-NoLogo', '-NoExit', '-EncodedCommand', $encoded)
 $cmdLine = ($wtArgs | ForEach-Object { ConvertTo-WindowsCommandLineArg $_ }) -join ' '
+
+if ($session0) {
+  try { Invoke-LaunchSession0Task -CommandLine $cmdLine -PrintArgs:$PrintArgs }
+  catch {
+    if ($generatedPromptFile -and -not $PrintArgs) { Remove-Item -LiteralPath $PromptFile -ErrorAction SilentlyContinue }
+    throw
+  }
+  if (-not $PrintArgs) { Write-Host "Launched Claude ($mode) in an interactive Windows Terminal tab at $Dir" }
+  return
+}
 
 if ($PrintArgs) {
   Write-Output $cmdLine

@@ -378,7 +378,8 @@ jobs:
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
       # test_check_agent_plugins.py — 157 tests) once existed while this job ran
-      # only the sync-skills directory, so they executed NOWHERE for three PRs.
+      # only the sync-skills directory (since retired, ADR 0014), so they
+      # executed NOWHERE for three PRs.
       # Every target is a DIRECTORY rather than a file precisely so a new
       # scripts/test_*.py, or a new skills/<skill>/tests/ dir, is picked up with
       # no edit here and cannot silently go unrun again.
@@ -518,6 +519,11 @@ jobs:
       # them it is the same as -n 4. It must stay in both jobs' step together:
       # scripts/test_ci_workflow.py pins the two run lines equal, so an edit
       # to one that misses the other fails the suite rather than drifting.
+      # skills-evals uses the same -n auto/-rfEs flags and shared pytest/xdist
+      # pins through test/run_tests.py --jobs auto; its wrapper preserves the
+      # run-wide memory guard and collection cross-check. See the merged
+      # skills-evals PR 183:
+      # https://github.com/Adam-S-Daniel/skills-evals/pull/183.
       - name: Run every test suite in the repo
         if: steps.salient.outputs.run == 'true'
         run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto

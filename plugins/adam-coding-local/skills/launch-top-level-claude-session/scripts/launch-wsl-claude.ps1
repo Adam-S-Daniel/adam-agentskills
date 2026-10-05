@@ -22,16 +22,19 @@ param(
   [string] $Distro = 'Ubuntu',                    # WSL distro
   [switch] $RemoteControl,                        # optional: adds --remote-control (no name)
   [string] $RemoteControlName,                    # optional: adds --remote-control <name>
-  [switch] $NoWindowsTerminal,                    # fallback: bare wsl.exe (malformed TTY — avoid)
+  [switch] $NoWindowsTerminal,                    # fallback: bare wsl.exe (malformed TTY - avoid)
   [switch] $PrintArgs                             # test hook: print the final command line(s)
                                                    # instead of launching anything
 )
 
+. (Join-Path $PSScriptRoot 'launch-session0-task.ps1')
+$session0 = -not $NoWindowsTerminal -and (Get-LaunchSessionId -DryRun ([bool] $PrintArgs)) -eq 0
+
 # wt.exe re-parses its OWN command line and treats an unescaped ';' as a
-# subcommand separator (new-tab) — even when the ';' sits inside an argument
+# subcommand separator (new-tab) - even when the ';' sits inside an argument
 # that already arrived as a single, correctly quoted Win32 argv element. Only
 # wt's own documented escape protects it: a literal backslash before the
-# semicolon (`\;`). Apply this ONLY to arguments headed for wt.exe — the
+# semicolon (`\;`). Apply this ONLY to arguments headed for wt.exe - the
 # -NoWindowsTerminal fallback below invokes wsl.exe directly, with no wt
 # tokenizer to strip the backslash back out again.
 function ConvertTo-WtEscaped {
@@ -85,13 +88,28 @@ $resolver = 'command -v claude || for p in "$HOME/.local/bin/claude" "$HOME/.cla
 $claude = wsl.exe -d $Distro -- bash -lc $resolver 2>$null | Select-Object -First 1
 if ($claude) { $claude = $claude.Trim() }
 if (-not $claude) {
-  Write-Error "claude not found in WSL distro '$Distro' — is Claude Code installed there?"
+  Write-Error "claude not found in WSL distro '$Distro' - is Claude Code installed there?"
   exit 1
 }
 
 if ($Prompt -and $PromptFile) {
   [Console]::Error.WriteLine('Pass -Prompt or -PromptFile, not both.')
   exit 2
+}
+$windowsPromptFile = $null # Own only files created by this invocation.
+if ($session0 -and $Prompt) {
+  if ($PrintArgs) { $PromptFile = '/tmp/launch-claude-prompt-<guid>.txt' }
+  else {
+    $windowsPromptFile = Join-Path ([IO.Path]::GetTempPath()) ('launch-claude-prompt-' + [guid]::NewGuid().ToString() + '.txt')
+    [IO.File]::WriteAllText($windowsPromptFile, $Prompt, (New-Object Text.UTF8Encoding($false)))
+    $PromptFile = wsl.exe -d $Distro -- wslpath -u $windowsPromptFile | Select-Object -First 1
+    if ($LASTEXITCODE -ne 0 -or -not $PromptFile) {
+      Remove-Item -LiteralPath $windowsPromptFile -ErrorAction SilentlyContinue
+      throw 'Could not convert the temporary prompt path for WSL.'
+    }
+    $PromptFile = $PromptFile.Trim()
+  }
+  $Prompt = ''
 }
 if ($PromptFile) {
   # A long prompt travels as a path the session reads, not as argv text that
@@ -121,7 +139,7 @@ if ($RemoteControl -and -not $RemoteControlName) { $claudeArgs += '--remote-cont
 # Give the new session the FULL login PATH (/snap/bin -> pwsh, ~/.bun/bin -> bun,
 # ~/.npm-global/bin, ~/.dotnet, ~/.local/bin, ...) so the agent's subprocesses don't fail
 # with "pwsh: command not found". Capture it from an interactive login shell in the distro
-# (`bash -lic` — bun/npm-global are added in ~/.bashrc, which plain `-lc` skips) and inject
+# (`bash -lic` - bun/npm-global are added in ~/.bashrc, which plain `-lc` skips) and inject
 # it with `env PATH=...`. Do NOT wrap claude in an interactive shell: that grabs the
 # ConPTY's process group and the claude TUI exits immediately. `env` is a transparent exec,
 # so claude stays a direct child holding the ConPTY (like the working bare-claude launch).
@@ -138,7 +156,7 @@ $wslArgs = @('-d', $Distro, '--cd', $Dir, '--', 'env', '-u', 'CLAUDE_CODE_CHILD_
 
 if ($NoWindowsTerminal) {
   # Bare wsl.exe gets a malformed TTY; initial-prompt sessions exit immediately here.
-  # No wt.exe involved, so no semicolon escaping — just proper Win32 quoting.
+  # No wt.exe involved, so no semicolon escaping - just proper Win32 quoting.
   $cmdLine = ($wslArgs | ForEach-Object { ConvertTo-WindowsCommandLineArg $_ }) -join ' '
   if ($PrintArgs) { Write-Output $cmdLine; return }
   Start-Process wsl.exe -ArgumentList $cmdLine
@@ -149,6 +167,15 @@ else {
   # multi-word prompt survives as one argv element.
   $wtArgs = @('wsl.exe') + $wslArgs
   $cmdLine = ($wtArgs | ForEach-Object { ConvertTo-WindowsCommandLineArg (ConvertTo-WtEscaped $_) }) -join ' '
+  if ($session0) {
+    try { Invoke-LaunchSession0Task -CommandLine $cmdLine -PrintArgs:$PrintArgs }
+    catch {
+      if ($windowsPromptFile) { Remove-Item -LiteralPath $windowsPromptFile -ErrorAction SilentlyContinue }
+      throw
+    }
+    if (-not $PrintArgs) { Write-Host "Launched detached Claude ($mode) in ${Distro}:${Dir}" }
+    return
+  }
   if ($PrintArgs) { Write-Output $cmdLine; return }
   Start-Process wt.exe -ArgumentList $cmdLine
 }

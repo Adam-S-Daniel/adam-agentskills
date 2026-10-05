@@ -170,7 +170,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|fork",
         "hooks": [
           {
             "type": "command",
@@ -180,7 +180,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
         ]
       },
       {
-        "matcher": "startup|resume",
+        "matcher": "startup|resume|fork",
         "hooks": [
           {
             "type": "command",
@@ -196,6 +196,11 @@ JSON
 echo "wiring: wrote $project/.claude/settings.json"
 exit 0
 ```
+
+Both groups use `startup|resume|fork`: since Claude Code
+[2.1.214](https://github.com/anthropics/claude-code/releases/tag/v2.1.214) a
+forked session reports source `fork` instead of `resume`, so
+`startup|resume` leaves it without the bundles and fleet guidance.
 
 `$CLAUDE_PROJECT_DIR` **inside** the hook command is correct and must stay: that
 one is expanded at hook time, by Claude Code, which does set it. Only the outer

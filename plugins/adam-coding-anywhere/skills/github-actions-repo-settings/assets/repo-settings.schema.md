@@ -74,6 +74,11 @@ ruleset:
   #   bypass_mode: always | pull_request   (default: always)
   # Omit or leave empty for no extra actors -- the default AND the policy
   # default: generated data belongs on an unprotected results branch instead.
+  # Name a branch meant to persist across PRs (a results branch, a routine's
+  # accumulation branch) `persistent/<purpose>` (lowercase kebab-case), so one
+  # deletion-only ruleset on `persistent/**` can protect them all. That ruleset
+  # is declared per repo as an `extra_rulesets` entry in the fleet manifest,
+  # not in this schema (repo-settings' ADR 0007).
   # In fleet configs, a defaults-level entry is reserved for fleet-standard bots.
   bypass_actors: []
 ```

@@ -41,6 +41,7 @@ here.
 from __future__ import annotations
 
 import base64
+import json
 import os
 import re
 import shutil
@@ -66,9 +67,10 @@ PS1_SCRIPT = Path(
 BASH = shutil.which("bash")
 PWSH = os.environ.get("LAUNCH_WSL_CLAUDE_PWSH") or shutil.which("pwsh")
 
-# Decode subprocess output explicitly and never die on a stray byte — see
-# sync-skills' tests for why `text=True` alone (locale-decoded, cp1252 on
-# Windows) is not safe here.
+# Decode subprocess output explicitly and never die on a stray byte:
+# `text=True` alone lets the OS/locale choose the decoder (cp1252 on
+# Windows), which raises UnicodeDecodeError on a byte outside that codepage;
+# utf-8 with errors=replace is deterministic across platforms.
 TEXT = {"text": True, "encoding": "utf-8", "errors": "replace"}
 
 
@@ -310,16 +312,20 @@ _WRAPPER_PS1 = textwrap.dedent(
     )
 
     function wsl.exe {
+      $global:LASTEXITCODE = 0
       $joined = $args -join ' '
-      if ($joined -match 'printf') {
+      if ($joined -match 'wslpath') { Write-Output '/tmp/mapped-prompt.txt' }
+      elseif ($joined -match 'printf') {
         Write-Output $env:LAUNCH_WSL_CLAUDE_TEST_LOGIN_PATH
       } else {
         Write-Output $env:LAUNCH_WSL_CLAUDE_TEST_CLAUDE_PATH
       }
     }
-    function wt.exe {
-      Write-Output "WT_STUB_SHOULD_NOT_BE_CALLED: $args"
-    }
+    function wt.exe { throw 'wt.exe must not run' }
+    function Start-Process { throw 'Start-Process must not run in dry-run' }
+    function Register-ScheduledTask { throw 'Register-ScheduledTask must not run in dry-run' }
+    function Start-ScheduledTask { throw 'Start-ScheduledTask must not run in dry-run' }
+    function Unregister-ScheduledTask { throw 'Unregister-ScheduledTask must not run in dry-run' }
 
     $splat = @{}
     foreach ($k in $PSBoundParameters.Keys) { $splat[$k] = $PSBoundParameters[$k] }
@@ -362,6 +368,7 @@ def ps1_argv(tmp_path):
         assert lines, proc.stdout + proc.stderr
         return lines[-1]
 
+    run.env = env
     return run
 
 
@@ -480,15 +487,25 @@ def native(tmp_path):
     env = dict(os.environ)
     env["PATH"] = f"{bin_dir}{os.pathsep}{env.get('PATH', '')}"
     env.pop("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", None)
+    env.update(TMPDIR=str(tmp_path), TEMP=str(tmp_path), TMP=str(tmp_path))
 
     class Native:
         pass
 
     n = Native()
     n.tmp, n.stub, n.work, n.env = tmp_path, stub, work, env
+    wrapper = tmp_path / "native-wrapper.ps1"
+    wrapper.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        "function Start-Process { throw 'Start-Process must not run in tests' }\n"
+        "function Register-ScheduledTask { throw 'Register-ScheduledTask must not run in tests' }\n"
+        "function Start-ScheduledTask { throw 'Start-ScheduledTask must not run in tests' }\n"
+        "& $env:LAUNCH_CLAUDE_NATIVE_REAL_SCRIPT @args\nexit $LASTEXITCODE\n"
+    )
+    env["LAUNCH_CLAUDE_NATIVE_REAL_SCRIPT"] = str(NATIVE_PS1)
 
     def raw(*args: str, shell: list[str] | None = None) -> subprocess.CompletedProcess:
-        cmd = (shell or [PWSH, "-NoProfile", "-File"]) + [str(NATIVE_PS1), *args]
+        cmd = (shell or [PWSH, "-NoProfile", "-File"]) + [str(wrapper), *args]
         return subprocess.run(cmd, env=env, capture_output=True, timeout=60, **TEXT)
 
     def run(*args: str, shell: list[str] | None = None) -> tuple[str, str]:
@@ -609,3 +626,348 @@ def test_native_runs_under_windows_powershell_5_1(native):
     shell = [WINDOWS_POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]
     _, script = native.run("-Dir", str(native.work), "-Prompt", "hi", shell=shell)
     assert "$env:CLAUDE_CODE_FORCE_SESSION_PERSISTENCE = '1'" in script.splitlines()
+
+
+# ---------------------------------------------------------------------------
+# Windows session 0: no Store alias activation outside the user's desktop.
+# All tests stop at a dry-run or shadow every scheduling/process cmdlet.
+# ---------------------------------------------------------------------------
+
+SESSION0_HELPER = SKILL_DIR / "scripts" / "launch-session0-task.ps1"
+
+
+def _task_preview(output):
+    lines = [line for line in output.splitlines() if line.startswith("TASK ")]
+    assert len(lines) == 1, output
+    return json.loads(lines[0][5:])
+
+
+def _assert_interactive_task(task):
+    assert task["TaskName"].startswith("launch-claude-session-")
+    assert task["Principal"] == {
+        "UserId": "<current-user>", "LogonType": "Interactive", "RunLevel": "Limited"
+    }
+    assert task["Action"]["Execute"] == "wt.exe"
+
+
+def test_native_session0_prints_interactive_task_without_prompt_text(native):
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    proc = native.raw("-Dir", str(native.work), "-Prompt", "private test prompt; unchanged", "-PrintArgs")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    task = _task_preview(proc.stdout)
+    _assert_interactive_task(task)
+    script = _decode_encoded_command(task["Action"]["Arguments"])
+    assert "private test prompt" not in script
+    assert "Read the file " in script
+    assert "launch-claude-prompt-<guid>.txt" in script
+    assert not list(native.tmp.rglob("launch-claude-prompt*"))
+    encoded = task["Action"]["Arguments"].split("-EncodedCommand ", 1)[1]
+    launched = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], env=dict(native.env, CLAUDE_CODE_CHILD_SESSION="1"), capture_output=True, timeout=60, **TEXT)
+    assert launched.returncode == 0, launched.stdout + launched.stderr
+    assert any(line in ("CHILD=[]", "CHILD=[unset]") for line in launched.stdout.splitlines())
+    assert "FORCE=[1]" in launched.stdout.splitlines()
+
+
+def test_native_session1_keeps_direct_encoded_command(native):
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "0"
+    command, script = native.run("-Dir", str(native.work), "-Prompt", "direct; text")
+    assert command.startswith("new-tab -d ")
+    if not sys.platform.startswith("win"):
+        encoded = command.split("-EncodedCommand ", 1)[1]
+        proc = subprocess.run([PWSH, "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], env=native.env, capture_output=True, timeout=60, **TEXT)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert proc.stdout.splitlines()[-1] == "ARG:direct; text"
+
+
+def test_native_session0_preserves_directory_semicolon_escape(native):
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    odd = native.tmp / "a;b"
+    odd.mkdir()
+    proc = native.raw("-Dir", str(odd), "-PrintArgs")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    arguments = _task_preview(proc.stdout)["Action"]["Arguments"]
+    assert "a\\;b" in arguments
+    assert "a;b'" in _decode_encoded_command(arguments)
+
+
+def test_ps1_session0_keeps_wt_argv_for_prompt_file(ps1_argv):
+    args = ("-Dir", "/home/x/repo", "-PromptFile", "/tmp/handoff;notes.txt", "-RemoteControlName", "rc;name", "-PrintArgs")
+    ps1_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "0"
+    direct = ps1_argv(*args)
+    ps1_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    task = _task_preview(ps1_argv(*args))
+    _assert_interactive_task(task)
+    assert task["Action"]["Arguments"] == direct
+    assert _PS1_PERSIST in direct
+    assert "rc\\;name" in direct and "handoff\\;notes" in direct
+
+
+def test_ps1_session0_prompt_becomes_path_only(ps1_argv):
+    ps1_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    task = _task_preview(ps1_argv("-Dir", "/home/x/repo", "-Prompt", "private; prompt", "-PrintArgs"))
+    assert "private" not in task["Action"]["Arguments"]
+    assert "Read the file /tmp/launch-claude-prompt-<guid>.txt" in task["Action"]["Arguments"]
+
+
+def test_ps1_no_windows_terminal_remains_direct_in_session0(ps1_argv):
+    ps1_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    output = ps1_argv("-Dir", "/home/x/repo", "-Prompt", "direct; prompt", "-NoWindowsTerminal", "-PrintArgs")
+    assert "TASK " not in output
+    assert output.endswith('"direct; prompt"')
+
+
+def _stub_windows_ps_for_bash(sh_argv):
+    if not PWSH:
+        pytest.skip("pwsh is not on PATH")
+    wrapper = sh_argv.tmp / "bash-ps-wrapper.ps1"
+    wrapper.write_text(
+        "function Register-ScheduledTask { throw 'No registration in tests' }\n"
+        "function Start-ScheduledTask { throw 'No scheduled start in tests' }\n"
+        "$target = $args[0]\n$forward = $args[1..($args.Length - 1)]\n& $target @forward\n"
+    )
+    sh_argv.env["TEST_PS_WRAPPER"] = str(wrapper)
+    _make_executable_stub(sh_argv.bin_dir / "pwsh.exe", '#!/usr/bin/env bash\nwhile [ "$1" != -File ]; do shift; done\nshift\nexec "$TEST_PWSH" -NoProfile -File "$TEST_PS_WRAPPER" "$@"\n')
+    _make_executable_stub(sh_argv.bin_dir / "wslpath", '#!/usr/bin/env bash\nprintf "%s\\n" "$2"\n')
+    sh_argv.env["TEST_PWSH"] = PWSH
+
+
+def test_sh_session0_task_preserves_argv_and_hides_prompt(sh_argv):
+    _stub_windows_ps_for_bash(sh_argv)
+    sh_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    proc = sh_argv.raw("--dir", "/home/x/repo;one", "--prompt", "private; prompt", "--remote-control-name", "rc;one")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    task = _task_preview(proc.stdout)
+    _assert_interactive_task(task)
+    arguments = task["Action"]["Arguments"]
+    assert arguments.startswith("wsl.exe -d Ubuntu --cd /home/x/repo\\;one -- env ")
+    assert "-u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1" in arguments
+    assert "PATH=" in arguments and "/claude" in arguments
+    assert "rc\\;one" in arguments
+    assert "private" not in arguments
+    assert arguments.endswith('"Read the file /tmp/launch-claude-prompt-<guid>.txt and follow the instructions in it."')
+
+
+def test_sh_session1_keeps_direct_argv(sh_argv):
+    sh_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "0"
+    argv = sh_argv("--dir", "/home/x/repo", "--prompt", "direct; prompt")
+    assert argv[0].endswith("/wt.exe")
+    assert argv[-1] == "direct\\; prompt"
+
+
+_TASK_STUBS = r"""
+$ErrorActionPreference = 'Stop'
+. $env:TEST_SESSION0_HELPER
+function Get-LaunchCurrentUser { [pscustomobject] @{ Name = 'EXAMPLE\fictional'; User = @{ Value = 'fictional-sid' } } }
+function Test-LaunchInteractiveSession { $env:TEST_TASK_SCENARIO -ne 'no-user' }
+function Get-Command { [pscustomobject] @{ Source = 'C:\example\wt.exe' } }
+function New-ScheduledTaskPrincipal {
+  param($UserId, $LogonType, $RunLevel)
+  if ($UserId -ne 'EXAMPLE\fictional' -or $LogonType -ne 'Interactive' -or $RunLevel -ne 'Limited') { throw 'Bad principal' }
+  'principal'
+}
+function New-ScheduledTaskAction {
+  param($Execute, $Argument)
+  if ($Execute -ne 'C:\example\wt.exe' -or $Argument -ne 'unchanged\; args') { throw 'Bad action' }
+  'action'
+}
+function New-ScheduledTaskSettingsSet { param([switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries) 'settings' }
+function Register-ScheduledTask {
+  param($TaskName, $TaskPath, $Action, $Principal, $Settings, $Description, $ErrorAction)
+  if ($env:TEST_TASK_SCENARIO -ne 'register-no-create') { $script:taskDescription = $Description }
+  'REGISTER'
+  if ($env:TEST_TASK_SCENARIO -in @('register-fails', 'register-no-create')) { throw 'registration failed' }
+}
+function Start-ScheduledTask {
+  param($TaskName, $TaskPath, $ErrorAction)
+  'START'
+  if ($env:TEST_TASK_SCENARIO -eq 'start-fails') { throw 'start failed' }
+}
+function Get-ScheduledTask {
+  param($TaskName, $TaskPath, $ErrorAction)
+  if (-not $TaskName) { throw 'Dedicated folder absent' }
+  if ($env:TEST_TASK_SCENARIO -eq 'poll-fails') { throw 'poll failed' }
+  $state = if ($env:TEST_TASK_SCENARIO -eq 'running') { 'Running' } else { 'Ready' }
+  [pscustomobject] @{ State = $state; Description = $script:taskDescription }
+}
+$script:infoCalls = 0
+function Get-ScheduledTaskInfo {
+  param($TaskName, $TaskPath, $ErrorAction)
+  $script:infoCalls++
+  $result = if ($env:TEST_TASK_SCENARIO -eq 'result-fails') { 5 } elseif ($env:TEST_TASK_SCENARIO -eq 'running') { 267009 } else { 0 }
+  $run = if ($script:infoCalls -gt 1 -and $env:TEST_TASK_SCENARIO -notin @('timeout', 'running')) { 1 } else { 0 }
+  [pscustomobject] @{ LastRunTime = $run; LastTaskResult = $result }
+}
+function Start-Sleep { param($Milliseconds) }
+function Unregister-ScheduledTask { param($TaskName, $TaskPath, $Confirm, $ErrorAction) 'UNREGISTER' }
+function Start-Process { throw 'No direct launch is allowed' }
+try { Invoke-LaunchSession0Task -CommandLine 'unchanged\; args'; 'OK' }
+catch { 'FAIL: ' + $_.Exception.Message; exit 1 }
+"""
+
+
+@pytest.mark.parametrize("scenario, registered, expected", [
+    ("success", True, 0), ("running", True, 0),
+    ("no-user", False, 1), ("register-fails", True, 1), ("register-no-create", False, 1),
+    ("start-fails", True, 1), ("result-fails", True, 1),
+    ("timeout", True, 1), ("poll-fails", True, 1),
+])
+def test_session0_task_lifecycle_is_always_cleaned_up(tmp_path, scenario, registered, expected):
+    if not PWSH:
+        pytest.skip("pwsh is not on PATH")
+    wrapper = tmp_path / "task-stubs.ps1"
+    wrapper.write_text(_TASK_STUBS)
+    env = dict(os.environ, TEST_SESSION0_HELPER=str(SESSION0_HELPER), TEST_TASK_SCENARIO=scenario)
+    proc = subprocess.run([PWSH, "-NoProfile", "-File", str(wrapper)], env=env, capture_output=True, timeout=60, **TEXT)
+    assert proc.returncode == expected, proc.stdout + proc.stderr
+    assert ("UNREGISTER" in proc.stdout) is registered, proc.stdout + proc.stderr
+    if scenario == "no-user":
+        assert "Log on to Windows" in proc.stdout
+        assert "REGISTER" not in proc.stdout
+    if scenario == "timeout":
+        assert "did not start" in proc.stdout
+
+
+def test_session0_override_is_ignored_outside_dry_run(tmp_path):
+    if not PWSH:
+        pytest.skip("pwsh is not on PATH")
+    wrapper = tmp_path / "session-id.ps1"
+    wrapper.write_text(". $env:TEST_SESSION0_HELPER\nGet-LaunchSessionId -DryRun $false\n")
+    env = dict(os.environ, TEST_SESSION0_HELPER=str(SESSION0_HELPER), LAUNCH_CLAUDE_FORCE_SESSION0="1")
+    # On Windows query the actual id before setting the override; on Linux the
+    # test implementation returns 1, because Windows SessionId is inapplicable.
+    if sys.platform.startswith("win"):
+        expected = subprocess.run([PWSH, "-NoProfile", "-Command", "[System.Diagnostics.Process]::GetCurrentProcess().SessionId"], capture_output=True, **TEXT).stdout.strip()
+    else:
+        expected = "1"
+    proc = subprocess.run([PWSH, "-NoProfile", "-File", str(wrapper)], env=env, capture_output=True, timeout=60, **TEXT)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert proc.stdout.strip() == expected
+
+
+@pytest.mark.parametrize("content", [b"", b"wsl.exe", b"\x00", b"wt.exe\x00"])
+def test_session0_rejects_malformed_argument_handoff(tmp_path, content):
+    if not PWSH:
+        pytest.skip("pwsh is not on PATH")
+    handoff = tmp_path / "argv.bin"
+    handoff.write_bytes(content)
+    wrapper = tmp_path / "bad-handoff.ps1"
+    wrapper.write_text("function Register-ScheduledTask { throw 'No registration in tests' }\n& $env:TEST_SESSION0_HELPER -ArgumentFile $env:TEST_ARGV_FILE -PrintArgs\n")
+    env = dict(os.environ, TEST_SESSION0_HELPER=str(SESSION0_HELPER), TEST_ARGV_FILE=str(handoff))
+    proc = subprocess.run([PWSH, "-NoProfile", "-File", str(wrapper)], env=env, capture_output=True, timeout=60, **TEXT)
+    assert proc.returncode != 0
+    assert "Invalid argv handoff" in proc.stderr
+    assert "TASK " not in proc.stdout
+
+
+def test_native_session0_prompt_file_keeps_prepared_argv(native):
+    handoff = native.tmp / "handoff.md"
+    handoff.write_text("file-only prompt")
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "0"
+    direct, _ = native.run("-Dir", str(native.work), "-PromptFile", str(handoff))
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    proc = native.raw("-Dir", str(native.work), "-PromptFile", str(handoff), "-PrintArgs")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _task_preview(proc.stdout)["Action"]["Arguments"] == direct
+
+
+def test_native_session0_rejects_missing_prompt_file_in_dry_run(native):
+    native.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
+    proc = native.raw("-Dir", str(native.work), "-PromptFile", str(native.tmp / "missing.md"), "-PrintArgs")
+    assert proc.returncode == 2
+    assert "TASK " not in proc.stdout
+
+
+_PROMPT_TASK_SHIM = """
+. $env:TEST_SESSION0_HELPER
+function Get-LaunchSessionId { param($DryRun) 0 }
+function Invoke-LaunchSession0Task {
+  param($CommandLine, [switch]$PrintArgs)
+  if ($PrintArgs) { throw 'This fixture exercises real file creation' }
+  'ACTION ' + (@{ Arguments = $CommandLine } | ConvertTo-Json -Compress)
+  if ($env:TEST_PROMPT_TASK_FAIL -eq '1') { throw 'Simulated task startup failure' }
+}
+"""
+
+
+def _copy_launcher_with_task_shim(tmp_path, source):
+    directory = tmp_path / "isolated-launcher"
+    directory.mkdir()
+    script = directory / source.name
+    script.write_bytes(source.read_bytes())
+    (directory / "launch-session0-task.ps1").write_text(_PROMPT_TASK_SHIM)
+    # Only source payloads are copied; this fixture carries no .git/config.
+    assert not (directory / ".git").exists()
+    return script
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_native_session0_real_prompt_file_lifetime(native, failed):
+    script = _copy_launcher_with_task_shim(native.tmp, NATIVE_PS1)
+    native.env.update(
+        LAUNCH_CLAUDE_NATIVE_REAL_SCRIPT=str(script),
+        TEST_SESSION0_HELPER=str(SESSION0_HELPER),
+        TEST_PROMPT_TASK_FAIL="1" if failed else "0",
+    )
+    proc = native.raw("-Dir", str(native.work), "-Prompt", "file content; only")
+    files = list(native.tmp.glob("launch-claude-prompt-*.txt"))
+    if failed:
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        assert not files
+    else:
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert len(files) == 1
+        assert files[0].read_text() == "file content; only"
+        action_line = next(line[7:] for line in proc.stdout.splitlines() if line.startswith("ACTION "))
+        decoded = _decode_encoded_command(json.loads(action_line)["Arguments"])
+        assert "file content; only" not in decoded
+        assert str(files[0]) in decoded
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_ps1_session0_real_prompt_file_lifetime(ps1_argv, tmp_path, failed):
+    script = _copy_launcher_with_task_shim(tmp_path, PS1_SCRIPT)
+    ps1_argv.env.update(
+        LAUNCH_WSL_CLAUDE_REAL_SCRIPT=str(script),
+        TEST_SESSION0_HELPER=str(SESSION0_HELPER),
+        TEST_PROMPT_TASK_FAIL="1" if failed else "0",
+        TMPDIR=str(tmp_path), TEMP=str(tmp_path), TMP=str(tmp_path),
+    )
+    # The shared wrapper forbids real scheduling/process creation. Its wsl.exe
+    # function resolves a deterministic mapped path without invoking Windows.
+    wrapper = tmp_path / "real-file-wrapper.ps1"
+    wrapper.write_text(_WRAPPER_PS1)
+    proc = subprocess.run([PWSH, "-NoProfile", "-File", str(wrapper), "-Dir", "/home/x/repo", "-Prompt", "file content; only"], env=ps1_argv.env, capture_output=True, timeout=60, **TEXT)
+    files = list(tmp_path.glob("launch-claude-prompt-*.txt"))
+    if failed:
+        assert proc.returncode != 0, proc.stdout + proc.stderr
+        assert not files
+    else:
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+        assert len(files) == 1
+        assert files[0].read_text() == "file content; only"
+        assert "file content; only" not in proc.stdout
+        assert "Read the file /tmp/mapped-prompt.txt" in proc.stdout
+
+
+
+def test_ps1_session0_failed_supplied_prompt_preserves_caller_files(ps1_argv, tmp_path):
+    script = _copy_launcher_with_task_shim(tmp_path, PS1_SCRIPT)
+    supplied = tmp_path / "supplied.md"
+    decoy = tmp_path / "unrelated.md"
+    supplied.write_text("caller supplied prompt")
+    decoy.write_text("unrelated caller file")
+    ps1_argv.env.update(
+        LAUNCH_WSL_CLAUDE_REAL_SCRIPT=str(script),
+        TEST_SESSION0_HELPER=str(SESSION0_HELPER),
+        TEST_PROMPT_TASK_FAIL="1",
+        TEST_CALLER_DECOY=str(decoy),
+    )
+    wrapper = tmp_path / "caller-scope-wrapper.ps1"
+    wrapper.write_text(_WRAPPER_PS1.replace(
+        "& $env:LAUNCH_WSL_CLAUDE_REAL_SCRIPT @splat",
+        "$windowsPromptFile = $env:TEST_CALLER_DECOY\n& $env:LAUNCH_WSL_CLAUDE_REAL_SCRIPT @splat",
+    ))
+    proc = subprocess.run([PWSH, "-NoProfile", "-File", str(wrapper), "-Dir", "/home/x/repo", "-PromptFile", str(supplied)], env=ps1_argv.env, capture_output=True, timeout=60, **TEXT)
+    assert proc.returncode != 0, proc.stdout + proc.stderr
+    assert supplied.read_text() == "caller supplied prompt"
+    assert decoy.read_text() == "unrelated caller file"

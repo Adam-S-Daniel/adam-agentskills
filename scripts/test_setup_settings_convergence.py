@@ -54,7 +54,7 @@ def convergence_block() -> str:
     return text[start:text.index(CLOSE, start)]
 
 
-def run_convergence(home: Path, existing=None) -> str:
+def run_convergence(home: Path, existing=None, host: str = "linux") -> str:
     """Run the shipped block against `home`, and return the file's RAW text.
 
     `existing` seeds ~/.claude/settings.json first — the state every real run
@@ -63,6 +63,10 @@ def run_convergence(home: Path, existing=None) -> str:
     Raw rather than parsed, because one case below is specifically about a
     file that does not parse, and a helper that parsed unconditionally would
     fail that test inside itself rather than letting it assert.
+
+    `host` is the OS the block should believe it runs on, passed through its
+    AGENTSKILLS_HOST_OS seam so the result never depends on the machine running
+    the suite (pytest-windows runs this file on Windows too).
     """
     settings = home / ".claude" / "settings.json"
     if existing is not None:
@@ -72,16 +76,17 @@ def run_convergence(home: Path, existing=None) -> str:
             else json.dumps(existing, indent=2) + "\n", encoding="utf-8")
     proc = subprocess.run([sys.executable, "-c", convergence_block()],
                           env={"HOME": str(home), "USERPROFILE": str(home),
-                               "PATH": "/usr/bin:/bin"},
+                               "PATH": "/usr/bin:/bin",
+                               "AGENTSKILLS_HOST_OS": host},
                           capture_output=True, text=True, encoding="utf-8",
                           errors="replace")
     assert proc.returncode == 0, proc.stderr + proc.stdout
     return settings.read_text(encoding="utf-8") if settings.exists() else ""
 
 
-def converge(home: Path, existing=None) -> dict:
+def converge(home: Path, existing=None, host: str = "linux") -> dict:
     """`run_convergence`, parsed. What every test but the invalid-JSON one wants."""
-    raw = run_convergence(home, existing)
+    raw = run_convergence(home, existing, host)
     return json.loads(raw) if raw else {}
 
 
@@ -111,17 +116,98 @@ def test_a_fresh_machine_gets_both_marketplaces_and_the_plugins(tmp_path):
     assert enabled["adam-private-anything-anywhere@adam-agentskills-private"] is True
 
 
-def test_the_cowork_plugin_is_not_enabled_in_terminals(tmp_path):
-    """ADR 0013: `adam-non-coding-local` is for the Desktop app's local
-    Cowork. The durable-machine convergence neither enables nor disables it."""
-    assert "adam-non-coding-local@adam-agentskills" not in converge(tmp_path)["enabledPlugins"]
+# ADR 0015: `adam-non-coding-local` is per OS. Off in WSL/Linux under every key
+# it can arrive by; left exactly as it is on Windows and macOS.
+NON_CODING_LOCAL = ("adam-non-coding-local@synced",
+                    "adam-non-coding-local@adam-agentskills")
+
+
+@pytest.mark.parametrize("key", NON_CODING_LOCAL)
+def test_the_non_coding_bundle_is_off_on_linux_under_every_key(tmp_path, key):
+    """WSL arrives as `@synced` (account sync, even with `syncClaudeAiSkills:
+    false`) and may also be installed as `@adam-agentskills`; disabling one
+    copy leaves the other loading, so both are written. `False`, the JSON
+    boolean."""
+    assert converge(tmp_path, host="linux")["enabledPlugins"][key] is False
+
+
+@pytest.mark.parametrize("key", NON_CODING_LOCAL)
+def test_the_non_coding_bundle_overrides_an_enabled_linux_copy(tmp_path, key):
+    settings = converge(tmp_path, {"enabledPlugins": {key: True}}, host="linux")
+    assert settings["enabledPlugins"][key] is False
+
+
+@pytest.mark.parametrize("host", ["windows", "macos"])
+def test_the_non_coding_bundle_is_not_written_off_windows_or_macos(tmp_path, host):
+    """Windows keeps it on and macOS has no decision: neither key is added."""
+    enabled = converge(tmp_path, host=host)["enabledPlugins"]
+    assert not [k for k in enabled if k.startswith("adam-non-coding-local@")]
+
+
+@pytest.mark.parametrize("host", ["windows", "macos"])
+@pytest.mark.parametrize("key", NON_CODING_LOCAL)
+def test_an_enabled_non_coding_bundle_stays_enabled_on_windows_and_macos(tmp_path, key, host):
+    """The Windows home is where the bundle is used: convergence must never
+    flip a copy it finds there, whichever source key it arrived under."""
+    settings = converge(tmp_path, {"enabledPlugins": {key: True}}, host=host)
+    assert settings["enabledPlugins"][key] is True
+
+
+def test_the_non_coding_policy_does_not_touch_other_plugins(tmp_path):
+    settings = converge(tmp_path, {"enabledPlugins": {
+        "theirs@someone-elses": True,
+        "adam-coding-local@adam-agentskills": True}}, host="linux")
+    assert settings["enabledPlugins"]["theirs@someone-elses"] is True
+    assert settings["enabledPlugins"]["adam-coding-local@adam-agentskills"] is True
+
+
+@pytest.mark.parametrize("host", ["windows", "macos", "linux"])
+def test_converging_twice_changes_nothing_on_every_host(tmp_path, host):
+    converge(tmp_path, host=host)
+    path = tmp_path / ".claude" / "settings.json"
+    before = path.read_bytes()
+    converge(tmp_path, host=host)
+    assert path.read_bytes() == before
+
+
+def test_an_unknown_host_override_fails_clearly(tmp_path):
+    proc = subprocess.run([sys.executable, "-c", convergence_block()],
+                          env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+                               "PATH": "/usr/bin:/bin", "AGENTSKILLS_HOST_OS": "plan9"},
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    assert proc.returncode != 0
+    assert "AGENTSKILLS_HOST_OS" in proc.stderr
+    assert not (tmp_path / ".claude" / "settings.json").exists()
+
+
+@pytest.mark.parametrize("platform, off", [
+    ("linux", True), ("win32", False), ("cygwin", False), ("msys", False),
+    ("darwin", False)])
+def test_the_host_is_detected_from_sys_platform_without_the_override(tmp_path, platform, off):
+    """No AGENTSKILLS_HOST_OS: the block asks the interpreter running it. Each
+    platform string is faked in-process, so one Linux runner covers Git Bash
+    (msys), Cygwin and macOS too."""
+    code = "import sys; sys.platform = %r; exec(compile(%r, 'block', 'exec'))" % (
+        platform, convergence_block())
+    proc = subprocess.run([sys.executable, "-c", code],
+                          env={"HOME": str(tmp_path), "USERPROFILE": str(tmp_path),
+                               "PATH": "/usr/bin:/bin"},
+                          capture_output=True, text=True, encoding="utf-8",
+                          errors="replace")
+    assert proc.returncode == 0, proc.stderr + proc.stdout
+    enabled = json.loads((tmp_path / ".claude" / "settings.json").read_text(
+        encoding="utf-8"))["enabledPlugins"]
+    wrote = {k: v for k, v in enabled.items() if k.startswith("adam-non-coding-local@")}
+    assert wrote == ({k: False for k in NON_CODING_LOCAL} if off else {})
 
 
 def test_the_machine_bound_bundle_is_enabled_from_the_marketplace(tmp_path):
     """ADR 0010: the machine-bound plugin (now `adam-coding-local`, ADR 0013)
     comes from the marketplace, pinned, where it had been drifting on the account. Enabling it is half the decision — the other
     half is the opt-out below, and neither is safe alone: opting out without
-    enabling would take sync-skills off the laptop entirely."""
+    enabling would take this plugin's machine-bound skills off the laptop
+    entirely."""
     settings = converge(tmp_path)
     assert settings["enabledPlugins"]["adam-coding-local@adam-agentskills"] is True
 

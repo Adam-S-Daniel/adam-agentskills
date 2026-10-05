@@ -4659,7 +4659,7 @@ def test_every_test_this_repo_cites_by_name_exists():
     Scanned over every non-test source this repo tracks, so a citation in the
     hook counts the same as one in the generator. A name resolves if some
     tracked module defines it as a function OR is a test module of that name
-    (`scripts/account_zip_selection.py` names its own test file).
+    (`scripts/check_skills.py` names its own test file, `test_check_skills.py`).
     """
     tracked = subprocess.run(
         ["git", "ls-files", "*.py", "*.sh"],
@@ -6671,7 +6671,8 @@ _WINDOWS_BASE_ENV = (
 
 def _run_hook(home: Path, project_dir: Path = None, extra_env: dict = None,
               script: Path = HOOK, cwd: Path = None,
-              timeout: float = None) -> subprocess.CompletedProcess:
+              timeout: float = None,
+              args: tuple[str, ...] = ()) -> subprocess.CompletedProcess:
     """Run the hook with HOME forced into a tmp dir.
 
     The tmp HOME is mandatory and constructed here rather than by the caller's
@@ -6708,7 +6709,7 @@ def _run_hook(home: Path, project_dir: Path = None, extra_env: dict = None,
         env["CLAUDE_PROJECT_DIR"] = str(project_dir)
     env.update(extra_env or {})
     return subprocess.run(
-        [BASH, str(script)],
+        [BASH, str(script), *args],
         input='{"hook_event_name":"SessionStart","source":"startup"}',
         env=env, cwd=str(cwd) if cwd else None, capture_output=True, text=True,
         timeout=timeout,
@@ -7061,6 +7062,132 @@ def test_hook_installs_and_verifies_the_locked_skills(tmp_path, registry):
     assert _verdict(again) == verdict, _verdict(again)
     # Byte-identical, so a nested copy or a re-copy that lost a file reddens.
     assert _tree(home / ".claude" / "skills") == installed
+
+
+def test_codex_cloud_installs_verified_skills_without_claude_writes(tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {
+        "SKILLS_BOOTSTRAP_FORCE": "",
+        "CLAUDE_CODE_REMOTE_SESSION_ID": "",
+        "CLAUDE_CODE_ENTRYPOINT": "",
+    }, args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).startswith("skills: 2/2 ")
+    assert _verdict(proc).endswith("OK")
+    for name in ("alpha", "beta"):
+        assert (home / ".agents" / "skills" / name / "SKILL.md").is_file()
+    assert (home / ".agents" / "skills" / "alpha" / "notes.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_digest_failure_exits_nonzero_and_purges_stale_copy(
+        tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    lock_path = make_project(project, root, sha)
+    home = tmp_path / "home"
+    first = _run_hook(home, project, args=("--codex-cloud",))
+    assert first.returncode == 0, first.stderr
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["skills"]["adam/alpha"] = "0" * 64
+    lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    failed = _run_hook(home, project, args=("--codex-cloud",))
+    assert failed.returncode != 0, failed.stdout
+    assert "digest mismatch (alpha)" in _verdict(failed)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_federated_lock_installs_both_sources(tmp_path, federated):
+    project = tmp_path / "project"
+    _federated_project(project, federated)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).startswith("skills: 2/2 ")
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+    assert (home / ".agents" / "skills" / "deploy" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_uses_only_own_lock_and_respects_project_skill(
+        tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    make_project(project / "child", root, sha)
+    _write(project / ".agents" / "skills" / "alpha" / "SKILL.md",
+           "---\nname: alpha\n---\nproject-owned\n")
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, args=("--codex-cloud",))
+    assert proc.returncode != 0
+    assert "1/2" in _verdict(proc)
+    assert "alpha" in _verdict(proc)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_cached_rerun_and_changed_lock_cleanup(tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    lock_path = make_project(project, root, sha)
+    full = json.loads(lock_path.read_text(encoding="utf-8"))
+    home = tmp_path / "home"
+
+    first = _run_hook(home, project, args=("--codex-cloud",))
+    assert first.returncode == 0, first.stderr
+    installed = _tree(home / ".agents" / "skills")
+    again = _run_hook(home, project, args=("--codex-cloud",))
+    assert again.returncode == 0, again.stderr
+    assert _tree(home / ".agents" / "skills") == installed
+    _relock(lock_path, full, {"beta"})
+    changed = _run_hook(home, project, args=("--codex-cloud",))
+    assert changed.returncode == 0, changed.stderr
+    assert "removed 1 skill no longer in the lock (alpha)" in _verdict(changed)
+    assert not (home / ".agents" / "skills" / "alpha").exists()
+    assert (home / ".agents" / "skills" / "beta" / "SKILL.md").is_file()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_missing_lock_opts_out_without_fallback_or_child_scan(
+        tmp_path, registry):
+    root, sha = registry
+    hook_repo = tmp_path / "hook-repo"
+    script = _hook_copy(hook_repo)
+    make_project(hook_repo, root, sha)
+    project = tmp_path / "project"
+    project.mkdir()
+    make_project(project / "child", root, sha)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, None, script=script, cwd=project,
+                     args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert "skipped" in _verdict(proc)
+    assert "opted out" in _verdict(proc)
+    assert not (project / "skills.lock").exists()
+    assert not (home / ".agents").exists()
+    assert not (home / ".claude").exists()
+
+
+def test_codex_cloud_rejects_unsupported_arguments(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    home = tmp_path / "home"
+    proc = _run_hook(home, project, args=("--codex-cloud", "extra"))
+    assert proc.returncode != 0
+    assert "unsupported argument" in _verdict(proc)
+    assert not (home / ".agents").exists()
 
 
 def test_hook_skips_a_skill_the_project_already_owns(tmp_path, registry):
@@ -7608,6 +7735,53 @@ def test_the_hooks_digest_agrees_with_the_generators_on_a_tricky_skill(tmp_path)
     assert gsl.LOCK_DIGEST_PREFIX + gsl.digest_skill_dir(installed) == locked
 
 
+def _copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr):
+    """Decide whether a copy probe can exercise the symlink guard."""
+    if platform == "nt":
+        if returncode != 0:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R failed on Windows (exit {returncode}): {detail}"
+        if not copied_entry_is_symlink:
+            detail = stderr.splitlines()[0] if stderr else "no stderr"
+            return "skip", f"Git Bash cp -R materialized a directory symlink on Windows: {detail}"
+        return "run", ""
+
+    if returncode != 0:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R probe failed on {platform} (exit {returncode}): {detail}"
+    if not copied_entry_is_symlink:
+        detail = stderr if stderr else "no stderr"
+        return "fail", f"cp -R did not preserve a symlink on {platform}: {detail}"
+    return "run", ""
+
+
+@pytest.mark.parametrize("platform, returncode, copied_entry_is_symlink, stderr, expected", [
+    (
+        "nt", 2, False, "cp: cannot create symbolic link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R failed on Windows (exit 2): cp: cannot create symbolic link"),
+    ),
+    (
+        "nt", 0, False, "cp: cannot preserve link\nsecond diagnostic",
+        ("skip", "Git Bash cp -R materialized a directory symlink on Windows: cp: cannot preserve link"),
+    ),
+    ("nt", 0, True, "", ("run", "")),
+    (
+        "posix", 2, False, "cp: source unavailable\nsecond diagnostic",
+        ("fail", "cp -R probe failed on posix (exit 2): cp: source unavailable\nsecond diagnostic"),
+    ),
+    (
+        "posix", 0, False, "cp: unexpected copy behavior\nsecond diagnostic",
+        ("fail", "cp -R did not preserve a symlink on posix: cp: unexpected copy behavior\nsecond diagnostic"),
+    ),
+    ("posix", 0, True, "", ("run", "")),
+], ids=["nt-copy-failed", "nt-materialized", "nt-preserved", "posix-copy-failed",
+       "posix-not-preserved", "posix-preserved"])
+def test_copy_probe_decision(platform, returncode, copied_entry_is_symlink, stderr, expected):
+    assert _copy_probe_decision(
+        platform, returncode, copied_entry_is_symlink, stderr
+    ) == expected
+
+
 def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     """Bind the hook's `digest_dir` and the generator on the symlink rule.
 
@@ -7615,23 +7789,27 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     the two on content they must both HASH the same. This binds them on the one
     input they must both REFUSE — the other half of the same contract, and the
     half that a re-implementation is most likely to drop, because refusing is
-    the behaviour with no output to compare.
+    the behavior with no output to compare.
 
-    TRICKY_SKILL deliberately does NOT carry the symlink: a fixture that is
-    refused cannot also be the fixture that proves the two agree on a digest,
-    so the symlink case needs its own registry or it would delete the coverage
-    it was added to extend.
-
-    The hook side is asserted through the VERDICT rather than by calling
-    `digest_dir`: the hook is the side that consumes locks authored elsewhere,
-    so what matters is not that its hasher errors but that a symlink-bearing
-    skill ends up NOT INSTALLED and reported — fail-closed, with the unverified
-    bytes removed rather than left live in ~/.claude/skills for the model to
-    load on turn one.
+    Generate a valid lock while the registry has an ordinary payload file,
+    then commit a relative directory symlink into that same skill. Retaining
+    the original digest means the hook without its symlink guard would hash
+    the same bytes and install the skill; the assertion therefore reaches the
+    guard rather than merely exercising a hash mismatch.
     """
     root = tmp_path / "registry"
     root.mkdir(parents=True)
-    sha = make_registry(root, {"adam/alpha": SKILL_A})
+    skill = {**SKILL_A, "payload/extra.md": "a subtree included in the locked digest\n"}
+    sha = make_registry(root, {"adam/alpha": skill})
+    project = tmp_path / "project"
+    project.mkdir()
+    lock_path = project / "skills.lock"
+    proc = run_generator("--repo", str(root), "--registry",
+                         root.resolve().as_uri(), "--ref", sha,
+                         "--bundles", "adam", "-o", str(lock_path))
+    assert proc.returncode == 0, proc.stderr
+    clean_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+
     # The symlink is added to the registry's WORKING TREE and committed, which
     # is how it would really arrive: git tracks a symlink as mode 120000, so
     # this is reachable from ordinary committed content, not just a local write.
@@ -7644,10 +7822,10 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
     # `'plugins/adam/skills/alpha/link' is a link to an absolute path`, from
     # `git archive`, before `digest_skill_dir` was ever called. A relative
     # symlink extracts cleanly and lands in the tree the digest walks, which is
-    # exactly the gap #132 is about.
+    # exactly the gap in issue #24 is about.
     skill_dir = root / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
-    _write(skill_dir / "payload" / "extra.md", "a subtree the digest never saw\n")
     _make_symlink(skill_dir / "link", "payload", to_directory=True)
+    assert (skill_dir / "link").is_symlink()
     _git(root, "add", "-A")
     _git(root, "commit", "-q", "-m", "add a symlink")
     sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
@@ -7658,39 +7836,53 @@ def test_both_digest_implementations_refuse_a_symlink(tmp_path):
                            check=True, capture_output=True, text=True).stdout
     assert "120000" in modes, f"git did not record a symlink here:\n{modes}"
 
-    # GENERATOR side: it refuses to WRITE a lock naming such a skill, which is
-    # this repo's usual posture — don't emit a lock the hook would reject.
-    project = tmp_path / "project"
-    project.mkdir()
+    # GENERATOR side: it refuses to write a lock naming such a skill. Keep
+    # this output separate from the valid lock the hook will consume below.
+    refusal_path = project / "refusal.lock"
     proc = run_generator("--repo", str(root), "--registry",
                          root.resolve().as_uri(), "--ref", sha,
-                         "--bundles", "adam", "-o", str(project / "skills.lock"))
+                         "--bundles", "adam", "-o", str(refusal_path))
     assert proc.returncode != 0, proc.stdout
     assert "symlink in skill directory" in (proc.stderr + proc.stdout)
-    assert not (project / "skills.lock").exists(), \
+    assert not refusal_path.exists(), \
         "a refused digest must not leave a lock behind"
 
-    # HOOK side: hand it a lock that names the skill anyway (an attacker does
-    # not run our generator), and the install must fail closed.
-    (project / ".git").mkdir()
-    _write(project / "skills.lock", json.dumps({
-        "registry": "fixture/registry",
-        "ref": sha,
-        "bundles": ["adam"],
-        "skills": {"adam/alpha": gsl.LOCK_DIGEST_PREFIX + "0" * 64},
-        "generated_from": sha,
-        "sources": [{"name": "fixture/registry",
-                     "url": root.resolve().as_uri(),
-                     "ref": sha, "bundles": ["adam"]}],
-    }, indent=2) + "\n")
+    # Probe the same Git Bash `cp -R` path the hook uses. On Windows, cp may
+    # fail or materialize a native directory symlink before the hook can inspect it.
+    probe_script = tmp_path / "copy-probe.sh"
+    _write(probe_script, 'set -eu\ncp -R "$1" "$2"\n')
+    copied_skill = tmp_path / "copied-skill"
+    probe = _run_hook(
+        tmp_path / "copy-probe-home",
+        script=probe_script,
+        args=(_hook_path(skill_dir), _hook_path(copied_skill)),
+    )
+    copied_link = copied_skill / "link"
+    action, reason = _copy_probe_decision(
+        os.name, probe.returncode, copied_link.is_symlink(), probe.stderr
+    )
+    if action == "skip":
+        pytest.skip(reason)
+    assert action == "run", reason
+    assert (copied_skill / "SKILL.md").read_bytes() == (skill_dir / "SKILL.md").read_bytes(), \
+        "cp probe did not copy the skill contents"
+
+    # HOOK side: retarget the valid lock to the symlink commit without changing
+    # its digest. This is a valid lock shape and would install absent the guard.
+    clean_lock["ref"] = sha
+    clean_lock["generated_from"] = sha
+    _write(lock_path, json.dumps(clean_lock, indent=2) + "\n")
     home = tmp_path / "home"
     hook = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     assert hook.returncode == 0, hook.stderr
     verdict = _verdict(hook)
-    assert not verdict.startswith("skills: 1/1 "), verdict
+    assert verdict.startswith("skills: 0/1 "), verdict
+    assert "digest mismatch (alpha)" in verdict, verdict
     installed = home / ".claude" / "skills" / "alpha"
     assert not installed.exists(), \
         f"unverified bytes were left in place: {verdict}"
+    logs = _bootstrap_log(home)
+    assert "symlink in skill directory: link" in logs, logs[-2000:]
 
 
 def test_hook_bundle_override_narrows_what_is_installed(tmp_path):
@@ -8326,6 +8518,21 @@ def test_hook_reports_two_lock_rows_that_want_the_same_destination(tmp_path):
     assert "share a destination name" in verdict
     assert "adam/alpha" in verdict and "fastmail/alpha" in verdict
     # Neither wins. Installing either one is the silent overwrite being caught.
+    assert not (home / ".claude" / "skills" / "alpha").exists()
+
+
+def test_hook_duplicate_wins_over_project_collision(tmp_path):
+    """The hook reports a duplicate before considering a project-owned copy."""
+    project = _duplicate_basename_project(tmp_path)
+    _write(project / ".claude" / "skills" / "alpha" / "SKILL.md",
+           "---\nname: alpha\n---\nproject-owned\n")
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert "share a destination name" in verdict
+    assert "collision skipped" not in verdict
     assert not (home / ".claude" / "skills" / "alpha").exists()
 
 
@@ -12210,3 +12417,36 @@ def test_the_hook_refuses_a_symlinked_skill_root(tmp_path):
     logs = _bootstrap_log(home)
     assert "refused symlinked skill root: plugins/adam/skills/zeta" in logs, logs[-2000:]
 
+
+def test_committed_sessionstart_matcher_includes_fork():
+    settings = json.loads(
+        (REPO_ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
+    )
+    groups = settings["hooks"]["SessionStart"]
+    matching = [
+        group for group in groups
+        if any("skills-bootstrap.sh" in hook.get("command", "")
+               for hook in group.get("hooks", []))
+    ]
+    assert len(matching) == 1
+    assert matching[0]["matcher"] == "startup|resume|fork"
+
+
+@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
+def test_setup_script_sessionstart_matcher_includes_fork(script_name):
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    start = 'cat > "$project/.claude/settings.json" <<\'JSON\'\n'
+    end = "\nJSON\necho \"wiring: wrote $project/.claude/settings.json\""
+    assert document.count(start) == 1
+    json_text = document.split(start, 1)[1].split(end, 1)[0]
+    settings = json.loads(json_text)
+    groups = settings["hooks"]["SessionStart"]
+    matching = [
+        group for group in groups
+        if any(script_name in hook.get("command", "")
+               for hook in group.get("hooks", []))
+    ]
+    assert len(matching) == 1
+    assert matching[0]["matcher"] == "startup|resume|fork"

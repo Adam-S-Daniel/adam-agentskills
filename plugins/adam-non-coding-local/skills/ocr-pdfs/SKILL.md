@@ -1,101 +1,84 @@
 ---
 name: ocr-pdfs
-description: Batch-OCR scanned PDFs flagged as needing OCR, then visually review results with a WPF side-by-side comparison tool.
+description: OCR scanned PDFs with OCRmyPDF, preserve the originals, and review page appearance and searchable text before replacing any files.
 metadata:
-  version: "1.0.0"
+  version: "1.0.1"
   tools: "Bash, Read, Write, WebSearch"
   triggers: "ocr my pdfs; run OCR on scanned PDFs; batch OCR pipeline; process scanned documents; make PDFs searchable; ocr-pdfs"
 ---
 
-# OCR PDF Batch Pipeline
+# OCR PDFs
 
-This skill runs OCR on scanned PDFs using **OCRmyPDF** (backed by Tesseract) and provides a **WPF PowerShell tool** for visually reviewing before/after results.
+Use [OCRmyPDF](https://ocrmypdf.readthedocs.io/en/latest/cookbook.html)
+(backed by Tesseract) to add searchable text to scanned PDFs. This skill
+uses the installed CLI directly; it does not ship a batch runner or a
+Windows review application.
 
-## Quick Start
+## Choose the inputs
 
-### 1. Generate an audit CSV (if not already done)
-Use the `pdf-ocr-audit` skill to produce `ocr-audit-results-full-YYYY-MM-DD.csv` with columns:
-`path, total_pages, text_pages, verdict, notes`
+Use the existing audit, or the sibling [pdf-ocr-audit skill](../pdf-ocr-audit/SKILL.md), to identify
+PDFs that need OCR. Read the CSV with a CSV parser rather than splitting
+lines or commas: filenames can contain both. Confirm that each selected
+path exists in the current environment; paths from an earlier session may
+need remapping.
 
-### 2. Install OCRmyPDF (Linux/WSL)
+Choose a separate output folder and preserve each input's relative path
+under it so equal basenames from different folders cannot collide. Keep
+originals untouched. If an output already exists, review it before deciding
+whether to skip or rerun that input; existence alone does not prove that
+OCR completed successfully.
+
+## Check the environment
+
 ```bash
-# Python 3.11+ → latest version
-pip install ocrmypdf --break-system-packages
-
-# Python 3.10 (Ubuntu 22.04 default in VM)
-pip install ocrmypdf==16.13.0 --break-system-packages
-
-# Verify
+command -v ocrmypdf tesseract
 ocrmypdf --version
+tesseract --list-langs
 ```
 
-### 3. Run the batch OCR script
+If a dependency is missing, follow the
+[OCRmyPDF installation instructions](https://ocrmypdf.readthedocs.io/en/latest/installation.html)
+for this machine and Python version. Use a compatible stable release that
+has been available for at least seven days. Install the Tesseract language
+packs needed by the documents; do not assume that English fits every input.
+
+## Run OCR and record results
+
+Create the output parent directory, then run one selected input at a time.
+Replace these example paths with the resolved input and distinct output:
+
 ```bash
-python3 ocr_pdfs.py \
-  --csv  /path/to/ocr-audit-results-full-YYYY-MM-DD.csv \
-  --log  /path/to/ocr-progress.log \
-  --workers 2
-
-# Dry-run first to preview
-python3 ocr_pdfs.py --dry-run
-
-# Resume from file N (0-based)
-python3 ocr_pdfs.py --start-at 150
+ocrmypdf --skip-text --output-type pdf --optimize 0 \
+  "/path/to/input/document.pdf" \
+  "/path/to/ocr-output/document.pdf"
 ```
 
-**What the script does per file:**
-1. Renames `document.pdf` → `document-needsocr.pdf`
-2. Runs `ocrmypdf --skip-text` on the backup → outputs `document.pdf`
-3. Logs result to `ocr-progress.log`
-4. Skips files where `-needsocr.pdf` + OCR output already exist
-5. On failure: restores original, logs error, continues
+`--skip-text` leaves pages that already have text out of OCR. Use `-l` with
+the installed language codes when the input requires another language.
+Avoid rotation, deskewing, or cleanup options unless the user requests
+those image changes.
 
-### 4. Review results with the WPF comparison tool (Windows)
+For a batch, repeat this command for the selected paths. Record each
+input/output pair and the command's actual exit code in a local progress
+report. A nonzero exit is a failed item: keep its original, exclude any
+partial output from the successful set, and report the failure. Resume
+from that report rather than an assumed file index. Do not log extracted
+document text or publish file paths.
 
-**Prerequisites:**
-```powershell
-winget install oschwartz10612.poppler   # provides pdftoppm
-```
+## Review before replacement
 
-**Run the reviewer:**
-```powershell
-.\Compare-OcrPdfs.ps1 `
-  -FolderPath "C:\Users\<user>\OneDrive\<folder>" `
-  -FrameDelay 500 `
-  -StartAt 0
-```
+Open each successful output and its original in the installed PDF viewer.
+Check page count, order, orientation, legibility, and missing or altered
+content; also search or select representative OCR text, including names,
+numbers, and accented characters where present. Rerun [pdf-ocr-audit](../pdf-ocr-audit/SKILL.md) on
+the output set to confirm that text is present, while recognizing that a
+text layer alone does not prove its accuracy.
 
-**Key bindings:**
+If the inputs already use the `name.pdf` / `name-needsocr.pdf` pairing
+convention, the sibling [compare-pdfpairs skill](../compare-pdfpairs/SKILL.md) can additionally compare
+rendered pages and extracted text. Follow that skill's own instructions
+and prerequisites; it is not a WPF reviewer supplied by this skill.
 
-| Key | Action |
-|-----|--------|
-| `K` | Keep — leave backup, advance to next |
-| `D` | Delete backup (`-needsocr.pdf`), advance |
-| `←` / `→` | Step through pages manually |
-| `Space` | Pause / resume animation |
-| `Q` | Quit reviewer |
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `ocr_pdfs.py` | Batch OCR runner (Python 3.10+) |
-| `Compare-OcrPdfs.ps1` | WPF side-by-side review tool (Windows PowerShell 5+) |
-
-## Notes
-
-- **Version cool-off rule:** Do not install any OCRmyPDF version released within the last 7 days. If needed, pin to the previous stable release.
-- **Path remapping:** The script auto-translates session-scoped VM paths (e.g. `/sessions/old-session/mnt/...`) to the current mount point.
-- **Parallelism:** Default `--workers 2` is conservative. On a machine with 8+ cores and fast storage, `--workers 4` is safe.
-- **Tesseract language packs:** English is installed by default (`tesseract-ocr-eng`). Add more: `sudo apt install tesseract-ocr-fra` etc.
-- **Already-processed check:** A file is skipped if both `document-needsocr.pdf` (backup) and `document.pdf` (OCR output) exist and are non-empty.
-
-## Dependencies
-
-| Tool | Install |
-|------|---------|
-| `tesseract-ocr` | `sudo apt install tesseract-ocr` |
-| `ocrmypdf` | `pip install ocrmypdf==16.13.0 --break-system-packages` |
-| `pdftoppm` (Poppler) | `winget install oschwartz10612.poppler` (Windows) |
-| Python 3.10+ | pre-installed in VM |
-| PowerShell 5+ | pre-installed on Windows 10/11 |
+Report successful, failed, and unreviewed items separately. Keep the
+originals until the user has reviewed the proposed replacements or
+deletions and explicitly authorized them.

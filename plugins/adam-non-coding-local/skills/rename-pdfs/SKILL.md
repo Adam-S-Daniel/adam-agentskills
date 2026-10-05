@@ -74,11 +74,11 @@ Use a **range** `YYYYMMDD-YYYYMMDD` when the document _is fundamentally about a 
 - a multi-month account statement where the period matters more than the issue date
 - a travel receipt covering multiple nights
 
-When in doubt, single date wins — the document-generation date is usually the right answer.
+When in doubt, single date wins — the document-generation date is usually the right answer. The exception is a statement whose only date is its billing period (for example "Service period: 3 Mar 2025 to 2 Apr 2025", with no statement or issue date): there is no single date to prefer, so use the range form, even for one month.
 
 ## What to skip
 
-- **`*-needsocr.pdf`** — these are pre-OCR backups produced by the `ocr-pdfs` skill. They must stay paired with their searchable counterpart; rename them only if the user explicitly asks (and then to the same new base name plus the `-needsocr` suffix).
+- **`*-needsocr.pdf`** — an existing convention for legacy pre-OCR backups. They must stay paired with their searchable counterpart; rename them only if the user explicitly asks (and then to the same new base name plus the `-needsocr` suffix). The current [OCR skill](../ocr-pdfs/SKILL.md) preserves originals and writes searchable PDFs to a separate output folder.
 - **Image-only or inaccessible PDFs** — verdicts "Yes" or "Inaccessible" from `pdf-ocr-audit`. Content extraction isn't reliable. Tell the user and offer to run `ocr-pdfs` first.
 - The rename log file itself (`pdf-rename-log-*.csv`).
 
@@ -142,7 +142,7 @@ For folders with mostly long PDFs, `--pages 2` is faster and usually enough.
 
 ## Date selection priority
 
-1. **Document body** — `Statement Date`, `Invoice Date`, `Date:`, ISO dates, US dates, or "Month DD, YYYY". When multiple dates appear, prefer the most prominent (header/footer) or the latest one.
+1. **Document body** — `Statement Date`, `Invoice Date`, `Date:`, ISO dates, US dates (`MM/DD/YYYY`), "Month DD, YYYY", or "DD Month YYYY". Numeric day-first dates such as `03/04/2024` are ambiguous and are read as US dates, so confirm those with the user. When multiple dates appear, prefer the most prominent (header/footer) or the latest one.
 2. **Filename** — `YYYY-MM-DD`, `YYYYMMDD`, `MM-DD-YYYY` patterns.
 3. **File mtime** — `stat -c %y "$file" | cut -d' ' -f1`. Last resort; tell the user.
 
@@ -164,5 +164,5 @@ For folders with mostly long PDFs, `--pages 2` is faster and usually enough.
 | Skill | How it fits |
 |-------|-------------|
 | `pdf-ocr-audit` | Run first to confirm a folder's PDFs are searchable. |
-| `ocr-pdfs` | Run before this skill on any folder that contains scans. Leaves `-needsocr.pdf` backups, which this skill skips. |
+| [ocr-pdfs](../ocr-pdfs/SKILL.md) | Run before this skill on any folder that contains scans. Preserves originals and writes searchable PDFs to a separate output folder. This skill still skips legacy `-needsocr.pdf` backups. |
 | `rename-pdfs` (this) | Final pass — turn scanner-junk names into descriptive ones. |

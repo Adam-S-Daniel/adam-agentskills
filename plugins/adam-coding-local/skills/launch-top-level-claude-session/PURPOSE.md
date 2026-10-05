@@ -48,3 +48,16 @@ in a hosted session. It is a machine-bound coding skill;
   that path; its tab script travels as `-EncodedCommand` so no prompt text
   meets `wt.exe`'s `;` tokenizer. A bare `--remote-control` is placed last
   because it takes an optional name and would otherwise swallow the prompt.
+
+- **Windows session 0 cannot activate the Store alias (2026-10-04/05).** A
+  launcher inherited session 0 from the wsl-automation Session Keeper's S4U
+  task. WSL `wt.exe` failed with "Invalid argument" and PowerShell
+  `Start-Process wt.exe` with "Access is denied." A one-off Interactive/Limited
+  task now activates the same command in the current user's logged-on session,
+  without elevation. Prompt content is stored separately so task XML exposes
+  only the prompt-file instruction. Deterministic task-cmdlet stubs cover
+  success, startup failure, stale results, and cleanup.
+- **BOM-less UTF-8 broke Windows PowerShell 5.1 parsing (2026-10-05).**
+  Typographic dashes in `launch-wsl-claude.ps1` were read as Windows-1252.
+  PowerShell payloads now use ASCII, and the registry has a byte-level gate
+  for non-ASCII `.ps1` content without a UTF-8 BOM.

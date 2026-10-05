@@ -6,10 +6,9 @@ description: >
   session's own skill listing, `~/.claude/skills/`, the account
   `synced/manifest.json`, `claude plugin list`), attribute every skill to the
   registry and bundle it came from by reading the bootstrap hook's own install
-  record rather than guessing, and flag silent shadowing, account-store
-  staleness, dangling payload references, and always-on context cost. Reports
-  only — it never installs, copies, deletes or repairs anything. Use when a
-  skill you expected is missing or won't trigger, when a repo-owned skill looks
+  record rather than guessing, and flag silent shadowing and dangling payload
+  references. Reports only — it never installs, copies, deletes or repairs
+  anything. Use when a skill you expected is missing or won't trigger, when a repo-owned skill looks
   overridden, when the session-start `skills:` verdict reads DEGRADED, when you
   need to know where a skill came from or whether the hook installed it, or
   when the user says "why didn't that skill load", "which skills do I actually
@@ -38,6 +37,14 @@ this skill is a trustworthy account of what the session actually got; an agent
 that silently repairs delivery destroys the evidence and hides a bug that will
 recur on the next surface. Name the defect, name the knob that fixes it, stop.
 
+**Not the built-in `/skill-doctor`.** Claude Code 2.1.261 added a `/skill-doctor`
+command that shows which loaded skills go unused and what they cost in context,
+so you can prune them. This skill answers a different question: where each
+skill came from, and whether delivery matched `skills.lock`. For "which skills
+go unused, what does each cost per turn, which should I turn off", point the
+user at `/skill-doctor` (or `/context`) rather than reproducing it here; the
+names differ by one letter, so say which one you ran.
+
 ## 1. Name the surface first
 
 Expectations differ per surface, so establish which one this is before judging
@@ -60,7 +67,7 @@ finding, not a pass.
 `skills-bootstrap.sh` installs on any of those three readings, so a diagnostic
 that recognises fewer of them disagrees with the hook silently: it answers
 `unsure`, which is the quiet reading, on a surface the hook has just installed
-onto. That is how old-registry #85's headline defect survived its own fix.
+onto.
 
 **The second arm is a PREFIX, not the exact string `remote`.** Claude Code's
 entrypoint allowlist has 26 legal values and seven of them begin with `remote`
@@ -89,8 +96,9 @@ expectation the rest of this skill can only describe, never verdict.
 
 ## 3. Collect the actual
 
-Five independent signals. Gather all five — each one is blind to something the
-others see.
+Seven independent signals: the five commands below, the session's own skill
+listing, and on a terminal the `--account-channel` check. Gather them all —
+each one is blind to something the others see.
 
 ```bash
 ls -1 ~/.claude/skills/                    # personal store: hook-installed or hand-placed
@@ -100,11 +108,11 @@ cat ~/.claude/skills/synced/*/manifest.json  # per skill: skillId, source, updat
 claude plugin list --json                  # installed bundles + the commit SHA each resolved to
 ```
 
-On a terminal, add a sixth: `--account-channel` below, because from 2.1.273+
+On a terminal, add the `--account-channel` check below, because from 2.1.273+
 the account store loads there too and `ls` alone cannot tell you whether it is
 switched on.
 
-The sixth signal is **the session's own skill listing** — the names offered to
+The listing signal is **the session's own skill listing** — the names offered to
 the Skill tool in this context. It is the only signal that says what the model
 can actually *trigger*, and it is the authority when it disagrees with disk.
 Read it out of context; do not reconstruct it from the filesystem.
@@ -126,8 +134,7 @@ from the hook or a hand copy.
 
 **One name can be in both, and there the manifest confirms the collision
 rather than resolving it.** Names reach a cloud session from the hook and the
-account store at once — measured on this registry's own sessions
-(agentskills#122). The listing shows each such name once, and nothing in it,
+account store at once. The listing shows each such name once, and nothing in it,
 on disk, or in any log says which copy the model read.
 `check_provenance.py` reports every one: a `shadowed-by-the-account-store`
 NOTE where the two copies match once CRLF is folded to LF, and a
@@ -174,10 +181,9 @@ the project dir's own `skills.lock`; when the project dir has none it resolves
 the `skills.lock` of every child GIT REPOSITORY one level below and reports per
 lock — a plain subdirectory carrying a lock is not one, because the hook does
 not read it either (ADR 0007). That second case is
-the multi-repo session, and it is the one the old bare default got wrong: it
-resolved to nothing at the parent and reported the absence of a lock as though
-it were the absence of a problem — 0 findings, exit 0, over nine undelivered
-skills. Naming a lock explicitly is still honoured exactly, and never widened
+the multi-repo session, where a bare default that resolved to nothing would
+report the absence of a lock as the absence of a problem (incident: see
+PURPOSE.md). Naming a lock explicitly is still honoured exactly, and never widened
 into a scan. Several locks judging one store names **no winner** among them;
 every finding says which lock declared it, and identical findings from several
 locks are folded into one that names them all.
@@ -326,55 +332,25 @@ does claim that pair joins the session, which brings it back in scope and makes
 the next run remove it. `stale-out-of-scope` is therefore a statement about the
 session as it stands, not about the directory.
 
-### Staleness of the account store
+### The account store is no longer a delivery channel for this registry
 
-The account store carries **no content hash and no version**, so the only
-honest drift signal is the content itself. Run the comparison rather than
-reconstructing it:
-
-```bash
-python3 <skills-doctor>/scripts/check_provenance.py --account-drift <registry>
-```
-
-It is repeatable (`--account-drift A --account-drift B`), reads both registry
-layouts, and reports per skill: `identical`, `DRIFTED`, `not in any registry
-given`, or `UNREADABLE`. Exit 1 means something drifted, 0 means nothing did, 2
-means it could not run at all.
-
-**Do not verdict on `updatedAt` against a commit date.** This is the trap, and
-it is the one this section used to prescribe. `updatedAt` records when the
-account copy was uploaded; `git log -1 --format=%cI -- <path>` records when that
-PATH was last touched by any commit — **including a commit that only moved it**.
-The two clocks measure different things, so every repo-wide restructure re-flags
-every skill it touched, whether or not a byte changed.
-
-Measured 2026-08-25 on this registry: `pdf-ocr-audit` and `bell-schedule` both
-read STALE that way against commit `88526d1` ("Prune skills that left the
-lock…"), which moved paths across the whole tree — and a content comparison
-showed both byte-identical to the registry. Two false positives out of ten
-comparisons, in the one run that happened to check. A drift signal that fires on
-skills nobody edited is a check that gets ignored, which is worse than no check.
-The timestamp is at most a cheap pre-filter that over-reports; it is never the
-verdict.
-
-**If you compare by hand anyway, fold line endings first.** Account copies are
-CRLF, the registry is LF, so a raw `diff` or hash marks *every* skill as drifted:
-
-```bash
-diff <(tr -d '\r' < ~/.claude/skills/synced/<org>_<account>/<skill>/SKILL.md) \
-     <(tr -d '\r' < <registry>/plugins/<plugin>/skills/<skill>/SKILL.md)
-```
-
-That compares one file. `--account-drift` compares every file an upload
-carries — so it also catches a payload dropped from one side, which a
-`SKILL.md` diff cannot see — and applies the upload filter to both sides, so a
-`__pycache__` in the working tree is not mistaken for a divergence.
+[ADR 0014](../../../../docs/decisions/0014-retire-the-account-zip-upload-channel.md)
+retired the ZIP uploads: every surface takes this registry's skills from the
+marketplace plugins, and the owner emptied the account store of them. There is
+therefore no drift audit to run (the old `--account-drift` mode is gone), and a
+registry-named skill still found in `synced/` is a stale leftover from before the
+retirement. It surfaces as a shadow note or finding below; the fix is to remove it
+from the claude.ai account, not to re-upload. Anthropic's own skills (docx, pdf, …)
+still arrive through `synced/` and are none of this registry's business.
 
 ### Which surface the account channel is on
 
 From Claude Code 2.1.273+ a **terminal** session signed in with the account
-downloads every skill enabled on it and loads them as
-`anthropic-skills:<name>`. That used to be a cloud/chat/mobile-only channel.
+downloads every skill enabled on it. That used to be a cloud/chat/mobile-only
+channel. A synced skill is named `anthropic-skills:<name>` (cloud sessions since
+2.1.269) and the bare name still works when nothing else uses it; from 2.1.281
+the `/` menu, `/skills`, `/context` and `/plugin` show it by the short name
+unless another command uses that name.
 [ADR 0010](../../../../docs/decisions/0010-let-pinned-channels-own-the-terminal.md)
 opts durable machines out via `setup.sh` and leaves cloud sessions syncing —
 they **cannot** opt out, because the key is read only from user, local or
@@ -427,13 +403,9 @@ python3 <registry>/scripts/check_skills.py
 **A hand-rolled grep for those paths does not approximate this check — it
 inverts it.** The rule that matters is `PROSE_ONLY_RULE` in that script: only a
 path inside a *fenced code block* gates, because a skill legitimately names
-paths belonging to OTHER repos in prose and in backticks. Measured 2026-08-25: a
-grep for `(scripts|references|assets|templates)/…` over the installed store
-reported **21 missing payloads**, every one of them a reference to a script in
-the cms-platform repo (`bash <cms-platform>/scripts/set-repo-variables.sh`).
-`check_skills.py` on the same tree reported **0 findings**. The hand version is
-not a weaker check, it is a wrong one, and 21 confident false positives will
-bury the real finding if there ever is one.
+paths belonging to OTHER repos in prose and in backticks. The hand version is
+not a weaker check, it is a wrong one, and confident false positives will
+bury the real finding if there ever is one (measurement: see PURPOSE.md).
 
 If the script cannot run, say the check is **unavailable** rather than
 substituting the grep. It exits **2** — distinct from 1, which is findings —
@@ -448,19 +420,16 @@ python3 -m pip install --ignore-installed PyYAML -r <registry>/requirements-dev.
 
 ### Context cost
 
-Every loaded skill's description is always-on context. `claude plugin details`
-reports it per bundle:
+Not measured here. For per-skill context cost and 7-day usage, run
+`claude -p /skill-doctor` (built-in, Claude Code 2.1.261+; usage is
+machine-local, and the report is unavailable under `--bare` and over Remote
+Control). This skill does not depend on it.
 
-```bash
-claude plugin details adam
-```
-
-Measured: the `adam` bundle is ~1,479 tok always-on for 8 skills (~185
-tok/skill). This is not a tidiness point. At the default listing budget the
-descriptions of the least-used skills are **silently dropped**, so a skill can
-be loaded, present on disk, and still untriggerable — indistinguishable from
-never having been delivered. Report the bundle's total and the skill count, and
-flag it when a session is carrying skills it has no use for.
+What it does keep is the delivery consequence: at the default listing budget
+the descriptions of the least-used skills are **silently dropped**, so a skill
+can be loaded, present on disk, and still untriggerable — indistinguishable
+from never having been delivered. When a skill you expected is loaded but never
+triggers, say so and point at `/skill-doctor` for the cost side.
 
 ## 6. Report shape
 
@@ -477,8 +446,7 @@ which record state the attribution rests on, because it is what separates a
 report that is fact from one that is inference. **Where there is no readable
 record, write `<n> unattributable`, never `0 unattributed`** — the zero is
 arithmetically true and reads as "everything is accounted for", which is the
-exact inversion. Close with the context-cost
-figure. No remediation is performed — recommend, do not do.
+exact inversion. No remediation is performed — recommend, do not do.
 
 ## Traps that will mislead you
 
@@ -492,8 +460,23 @@ figure. No remediation is performed — recommend, do not do.
   reads exactly like an account with no uploads. `check_provenance.py` resolves
   the bucket itself (`oauthAccount` in `~/.claude.json`, then
   `$CLAUDE_CODE_ACCOUNT_UUID`) and refuses rather than guessing when a machine
-  has more than one; when you look by hand, glob the bucket. Old-registry issue #157 is
-  where both tools were measured reporting a false clean over 21 skills.
+  has more than one; when you look by hand, glob the bucket.
+- **`anthropic-skills` and `claude-ai` are reserved namespaces (2.1.282).** A
+  skill folder, command file or workflow command in either no longer loads, and
+  `Skill(anthropic-skills:*)` / `Skill(claude-ai:*)` allow rules cover only skills
+  synced from claude.ai. A plugin so named still loads but ties with the synced
+  skills. So `anthropic-skills:foo` in a listing is a synced skill, not
+  something this registry or a hook install delivered — this registry ships
+  nothing under either name.
+- **Before 2.1.280, a `manifest.json` in `~/.claude/skills/` itself could trash
+  hook installs.** The CLI moved skills there to `~/.claude/skills/.trash/` when
+  such a manifest listed their names. The bootstrap hook never writes a
+  `manifest.json` (its record is `.skills-bootstrap-installed.json`), so it does
+  not cause this; a flat manifest left by an older CLI that names a hook-installed
+  skill could. On a CLI older than 2.1.280, a locked skill that vanished and sits
+  in `.trash/` is the first thing to look for. 2.1.228+ also strips `!` commands
+  and `@` file expansion from synced skill bodies on a machine, so a synced copy
+  may not behave like its registry original.
 - **`~/.claude/skills/synced/` cannot be seeded or simulated.** It is
   manifest-gated: writing a directory there does nothing at all. You can only
   observe it, so never "test" a hypothesis about the account channel by
@@ -502,24 +485,17 @@ figure. No remediation is performed — recommend, do not do.
   session, one repo's committed skills are advertised while you are working in
   another. Enumerate all workspace roots before concluding a skill "came from
   nowhere".
-- **The shadow guard used to be INERT in a multi-repo shape, and both halves
-  moved together when it was fixed.** The hook and `check_provenance.py` both
-  looked for repo-owned skills at `$PROJECT_DIR/.claude/skills/<name>/SKILL.md`
-  alone. When the project dir is the parent of several repos that directory
-  does not exist at all, so the guard could never fire for ANY of them, and
-  `delivered-by-the-project` could never be the reason a locked skill was
-  absent — worse, the doctor's lookup returned a confident measured *empty set*
-  rather than "unknown", so it reported the next run as replacing a directory
-  that run deletes. Both now consult the project dir **plus every accepted
-  lock's own repo**, first answer wins, and the report NAMES the directory that
-  won because "repo-owned" no longer identifies a single repo. ADR 0005's
-  footnote is why the two had to move in one change: the doctor's lookup exists
-  to *suppress* a finding, so widening one side alone makes the net effect
-  unreadable. One residual is recorded rather than fixed — under a union, one
-  repo's project-owned skill now suppresses delivery of a locked skill the
-  other repos asked for. Still worth doing the shadowing comparison by hand
-  against each workspace root, per the `comm` recipe above, when the answer
-  matters.
+- **The shadow guard consults every repo in a multi-repo shape.** The hook and
+  `check_provenance.py` both look for repo-owned skills in the project dir
+  **plus every accepted lock's own repo**, first answer wins, and the report
+  NAMES the directory that won because "repo-owned" no longer identifies a
+  single repo. The two had to move in one change (ADR 0005's footnote): the
+  doctor's lookup exists to *suppress* a finding, so widening one side alone
+  makes the net effect unreadable. One residual is recorded rather than fixed
+  — under a union, one repo's project-owned skill now suppresses delivery of a
+  locked skill the other repos asked for. Still worth doing the shadowing
+  comparison by hand against each workspace root, per the `comm` recipe above,
+  when the answer matters. (History: see PURPOSE.md.)
 - **Absence from the listing is not absence from disk.** Deduplication and the
   listing budget both drop entries. Check disk *and* listing; a mismatch
   between them is itself a finding.

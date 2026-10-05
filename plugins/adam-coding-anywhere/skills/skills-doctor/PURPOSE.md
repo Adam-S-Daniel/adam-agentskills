@@ -22,7 +22,7 @@ record rather than inferring, and it **reports, never repairs**.
 - **old-registry #84 — every file correct, nothing ever runs.** The lock and the hook were
   both right; what was missing was a settings file at a level the hook chain
   actually reads (ADR 0005, ADR 0007).
-- **False drift from timestamps.** Account drift was judged by `updatedAt`
+- **False drift from timestamps (historical; `--account-drift` retired by ADR 0014).** Account drift was judged by `updatedAt`
   against `git log`, so a repo-wide path move re-flagged every skill it
   touched: `pdf-ocr-audit` and `bell-schedule` both read STALE while being
   byte-identical once CRLF was folded. Content is the verdict now and the
@@ -40,8 +40,7 @@ record rather than inferring, and it **reports, never repairs**.
   syncs the account store into every terminal session signed in with the
   account. E5 §7 had called the exposure "the exact inverse of the delivery" —
   the channel that drifts served the surfaces with no lock coverage — and that
-  stopped being true: it now serves all of them, `sync-skills` included, which
-  is the one skill that must run on the laptop. ADR 0010 opts durable machines
+  stopped being true: it now serves all of them. (ADR 0014 later retired the uploads; the opt-out now only keeps Anthropic's account skills out of terminals.) ADR 0010 opts durable machines
   out and leaves cloud sessions syncing, because they cannot opt out, so two
   surfaces now load different sets on purpose. `--account-channel` reports
   which: the settings-chain verdict for both keys, every account skill whose
@@ -59,13 +58,53 @@ exists at all (ADR 0002, E5).
 ## The rule every finding is written to
 
 A verdict that could not be measured must never be printed as a clean one.
-`store_findings` raises when the personal store is unreadable, `account_drift`
-distinguishes "0 drifted" from "could not resolve the store", and
-`DriftReport.blocked` is a separate field rather than a magic zero for exactly
-that reason.
+`store_findings` raises when the personal store is unreadable, and
+`resolve_account_store` REFUSES (`path is None`) rather than returning an empty
+store, which the shadow and `--account-channel` reports treat as "not compared".
+
+## ADR 0014 change (2026-09-28)
+
+`--account-drift`, `account_drift`, `DriftReport` and `registry_copy` were removed
+with the retired account-store uploads; the shadow finding's remedy now says to
+remove a stale account copy instead of re-uploading. Shadow detection and
+`--account-channel` stay.
+
+## Scope narrowed to delivery (2026-10-04)
+
+Claude Code 2.1.261 added a built-in `/skill-doctor` that reports per-skill
+context cost and 7-day usage, with real listing-token numbers and no model
+call. The two names differ by one letter, so the skill's description no longer
+claims "always-on context cost" and its Context cost section points at the
+built-in instead of estimating it. The skill keeps the delivery consequence
+(a loaded skill whose description the listing budget dropped is untriggerable).
+It does not depend on the built-in, which is flag-gated, machine-local and
+empty under `--bare`. The docs gate the command at 2.1.252 and the changelog
+announces it at 2.1.261; the skill cites the changelog.
 
 ## Eval status
 
 No eval existed when old-registry #157 was fixed. `DESIGN.md` names `skills-doctor` as a
 Class B (diagnosis/triage) candidate with no fixture yet; the first fixture
 is `evals/skills-doctor/` in skills-evals.
+
+## History moved from SKILL.md (2026-10-05)
+
+- **Bare `--lock` default in a multi-repo session.** The old bare default
+  resolved to nothing at the parent and reported the absence of a lock as though
+  it were the absence of a problem: 0 findings, exit 0, over nine undelivered
+  skills. It now resolves the `skills.lock` of every child git repository.
+- **Hand-rolled grep vs `check_skills.py` (measured 2026-08-25).** A grep for
+  `(scripts|references|assets|templates)/…` over the installed store reported
+  21 missing payloads, every one a reference to a script in the cms-platform
+  repo (`bash <cms-platform>/scripts/set-repo-variables.sh`). `check_skills.py`
+  on the same tree reported 0 findings. Only fenced-code paths gate, because
+  skills legitimately name other repos' paths in prose.
+- **The shadow guard used to be INERT in a multi-repo shape.** The hook and
+  `check_provenance.py` both looked for repo-owned skills at
+  `$PROJECT_DIR/.claude/skills/<name>/SKILL.md` alone. When the project dir is
+  the parent of several repos that directory does not exist, so the guard could
+  never fire for any of them and `delivered-by-the-project` could never be the
+  reason a locked skill was absent. Worse, the doctor's lookup returned a
+  confident measured empty set rather than "unknown", so it reported the next
+  run as replacing a directory that run deletes. Both now consult the project
+  dir plus every accepted lock's own repo.

@@ -151,7 +151,7 @@ function Get-FileNewline {
         if ($bytes[$i] -eq 10) { return "`n" }
         if ($bytes[$i] -eq 13) { return "`r" }
     }
-    # No newline found — fall back based on path heuristic.
+    # No newline found - fall back based on path heuristic.
     if ($Path -match '^(\\\\wsl|/)') { return "`n" }
     return "`r`n"
 }
@@ -585,7 +585,7 @@ function Write-PlanForSide {
 
 if ($DryRun) {
     Write-Host ""
-    Write-Host "DRY RUN — no files written. Values are not shown." -ForegroundColor Magenta
+    Write-Host "DRY RUN - no files written. Values are not shown." -ForegroundColor Magenta
     Write-Host "Windows would become:"; Write-PlanForSide -Before $win -After $winOut
     Write-Host "WSL would become:";     Write-PlanForSide -Before $wsl -After $wslOut
     return

@@ -1,0 +1,98 @@
+# The fixed British-spelling word list for check_skills.py's WARN-ONLY
+# `british-spelling` advisory.
+#
+# PROVENANCE: copied verbatim from Adam-S-Daniel/_agent-guidance,
+# scripts/check-agent-markdown.js (OUR_STEMS, OUR_SUFFIXES, ISE_STEMS,
+# ISE_SUFFIXES, EXPLICIT) at commit 551f36d9284e1b6f2e46d1e1f4d45a84b54c6bcc
+# (merge of PR #255, https://github.com/Adam-S-Daniel/_agent-guidance/pull/255).
+# Keep the two lists in step: a word added there is added here, in the same
+# change, so the fleet flags the same words everywhere.
+#
+# There is deliberately NO generic `-ise` rule: `-ise` is also a legitimate
+# American ending (exercise, promise, otherwise). A word is flagged only when it
+# is in `explicit`, or is `<stem> + <suffix>` from one of the two families below.
+# Words that are ordinary American English too (analyses, cancelled, judgement)
+# are deliberately absent. Matching is case-insensitive and whole-word.
+
+# <stem> + each suffix: behaviour, colour, honourable, ...
+our_stems: [behavi, col, hon, fav, neighb, lab, flav, harb, rum, hum, endeav, vap, arm, sav]
+our_suffixes: [our, ours, oured, ouring, ourable, ourite, ourites, oural, ourally,
+               ourful, ourless, ourhood, ourhoods]
+
+# `-ise` verbs, from an explicit stem list (the part before `ise`).
+ise_stems: [organ, recogn, initial, normal, optim, summar, standard, synchron, minim,
+            maxim, custom, serial, util, priorit, author, final, real, emphas, apolog,
+            categor, general, visual, special, sanit, material, capital, random,
+            central, familiar, memor, mobil, modern, penal, legal, local, digit,
+            stabil, formal]
+ise_suffixes: [ise, ised, ises, ising, isation, isations]
+
+# Words that do not follow the patterns above. `analyse` is here by hand, with no
+# `analyses`, because that is also the American plural of "analysis".
+explicit:
+  - analyse
+  - analysed
+  - analysing
+  - analyser
+  - organisational
+  - recognisable
+  - recognisably
+  - catalogue
+  - catalogues
+  - catalogued
+  - cataloguing
+  - centre
+  - centres
+  - centred
+  - centring
+  - centrepiece
+  - licence
+  - licences
+  - grey
+  - greys
+  - greyed
+  - defence
+  - defences
+  - offence
+  - offences
+  - pretence
+  - practise
+  - practised
+  - practises
+  - practising
+  - programme
+  - programmes
+  - metre
+  - metres
+  - litre
+  - litres
+  - theatre
+  - fibre
+  - calibre
+  - artefact
+  - artefacts
+  - fulfil
+  - fulfils
+  - enrol
+  - enrols
+  - instalment
+  - instalments
+  - skilful
+  - sceptic
+  - sceptical
+  - sceptics
+  - learnt
+  - whilst
+  - amongst
+  - aluminium
+  - tyre
+  - tyres
+  - kerb
+  - cheque
+  - cheques
+  - mould
+  - moulds
+  - plough
+  - storey
+  - storeys
+  - ageing

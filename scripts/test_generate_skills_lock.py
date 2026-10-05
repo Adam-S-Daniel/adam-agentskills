@@ -8811,6 +8811,29 @@ def tarpit():
     thread.join(timeout=5)
 
 
+def _hook_logs(home: Path) -> str:
+    """The hook's own `mktemp`'d logs, for when `tarpit.held` comes up empty.
+
+    An empty `tarpit.held` says only that git never dialed the tarpit, not
+    why: `init` or `remote add` failed first (the `&&` chain in
+    `fetch_source` then never reaches the fetch), or the budget ran out
+    before the fetch connected. The verdict reads "could not fetch" either
+    way. `_run_hook` points TMPDIR at `home / "tmp"`, where the hook's $LOG
+    lives (`mktemp "$TMPDIR/skills-bootstrap.XXXXXX"`), carrying git's
+    output for each step plus a `source[0] ... ok=` line -- only that log
+    can say which.
+    """
+    log_dir = home / "tmp"
+    logs = sorted(log_dir.glob("skills-bootstrap.*")) if log_dir.is_dir() else []
+    if not logs:
+        return f"no skills-bootstrap.* log files under {log_dir}"
+    parts = []
+    for log in logs:
+        parts.append(f"--- {log.name} ---\n"
+                      f"{log.read_text(encoding='utf-8', errors='replace')}")
+    return "\n".join(parts)
+
+
 def _tarpit_project(tmp_path: Path, port: int) -> Path:
     project = tmp_path / "project"
     project.mkdir(parents=True, exist_ok=True)
@@ -8842,8 +8865,15 @@ def test_the_fetch_budget_ends_a_stalled_fetch(tmp_path, tarpit, timeout_on_path
     verdict = _verdict(proc)
     assert "could not fetch" in verdict, verdict
     assert f"127.0.0.1:{tarpit.port}" in verdict, verdict
-    # The stall was reached at all -- otherwise the rest asserts nothing.
-    assert tarpit.held, "git never connected, so nothing was stalled"
+    # The stall was reached at all -- otherwise the rest asserts nothing. If
+    # this fires, the hook log (and proc.stderr) say whether git ever dialed
+    # the tarpit or something upstream of that failed first.
+    if not tarpit.held:
+        pytest.fail(
+            "git never connected, so nothing was stalled\n"
+            f"{_hook_logs(tmp_path / 'home')}\n"
+            f"--- proc.stderr ---\n{proc.stderr}"
+        )
     assert tarpit.clients_all_gone(within=20), (
         "a git helper outlived the fetch that spawned it -- the deadline killed "
         "git but not its process group"

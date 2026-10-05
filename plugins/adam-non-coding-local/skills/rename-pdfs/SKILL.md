@@ -74,7 +74,7 @@ Use a **range** `YYYYMMDD-YYYYMMDD` when the document _is fundamentally about a 
 - a multi-month account statement where the period matters more than the issue date
 - a travel receipt covering multiple nights
 
-When in doubt, single date wins — the document-generation date is usually the right answer. The exception is a statement whose only date is its billing period (for example "Billing Period: 1 Jan 2026 to 31 Jan 2026", with no statement or issue date): there is no single date to prefer, so use the range form, even for one month.
+When in doubt, single date wins — the document-generation date is usually the right answer. The exception is a statement whose only date is its billing period (for example "Service period: 3 Mar 2025 to 2 Apr 2025", with no statement or issue date): there is no single date to prefer, so use the range form, even for one month.
 
 ## What to skip
 

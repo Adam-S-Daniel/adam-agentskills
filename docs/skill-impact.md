@@ -42,7 +42,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ## 2026-10-04 — adam-non-coding-local/rename-pdfs — edit (correction)
 
-- Motivation: a prompt-audit triage of the local rename-pdfs evals (6 of 6 `with_skill` trials dated a January statement from the scan filename) traced part of the date miss to the helper: `scripts/extract_pdf_context.py` had no day-first month-name pattern, so "1 Jan 2026" produced an empty `dates_in_text` and the priority list fell through to the filename.
+- Motivation: a prompt-audit triage of the local rename-pdfs evals (3 of 6 `with_skill` trials, qualify t2 and t3 and pr45-n3 t1, fell back to the scan filename for the statement date and scored date priority 1; the other three scored 8, 5 and 5) traced part of the date miss to the helper: `scripts/extract_pdf_context.py` had no day-first month-name pattern, so "1 Jan 2026" produced an empty `dates_in_text` and the priority list fell through to the filename.
 - Change: the helper now reads `D Mon YYYY` and `D Month YYYY` (leading zero, ordinal suffix, trailing period or comma accepted); numeric day/month forms stay US-only because they are ambiguous. [rename-pdfs](../plugins/adam-non-coding-local/skills/rename-pdfs/SKILL.md) lists the new format in its date priority and says a statement dated only by its billing period takes the range form, even for one month. Bundle `adam-non-coding-local` 1.0.1 -> 1.0.2.
 - Eval: outstanding. The skills-evals `evals/rename-pdfs` fixture was not re-run for this change (touch gate); the helper change is covered by unit tests, and the fixture's headless-confirmation confound still caps the objective score for `with_skill` regardless of this edit.
 - Outcome: pending independent review and merge.

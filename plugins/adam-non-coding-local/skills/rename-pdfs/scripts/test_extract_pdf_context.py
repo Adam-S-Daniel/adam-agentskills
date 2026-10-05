@@ -60,6 +60,10 @@ class TestFindDates(unittest.TestCase):
     def test_day_first_rejects_invalid_day(self):
         self.assertEqual(find_dates("bogus 31 Feb 2026"), [])
 
+    def test_day_first_needs_a_leading_word_boundary(self):
+        # "121 Jan 2026" must not read its trailing "21 Jan 2026" as a date.
+        self.assertEqual(find_dates("ref 121 Jan 2026"), [])
+
     def test_month_first_not_double_counted_as_day_first(self):
         # "Mar 15 2024" is month-first; the day-first pattern must not also
         # read "15 2024" or a neighboring token into a second date.

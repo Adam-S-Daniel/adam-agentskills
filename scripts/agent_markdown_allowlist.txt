@@ -1,0 +1,6 @@
+# Words the `british-spelling` advisory in check_skills.py must not flag.
+# One lowercase word per line; blank lines and `#` comments are ignored.
+#
+# Add a word ONLY when it is a proper noun or a quoted external name (a product,
+# a person, a vendor string) that cannot be respelled. A word that is merely
+# British belongs in a respelling of the text, not here. Empty on purpose.

@@ -17,6 +17,7 @@ Run: python3 -m pytest scripts/test_check_skills.py -q
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1084,3 +1085,325 @@ def test_a_missing_dependency_exits_2_and_names_the_remedy(tmp_path, dependency)
     assert "--ignore-installed PyYAML" in proc.stderr
     # Nothing may be reported as a result, because nothing ran.
     assert proc.stdout == ""
+
+
+# =================================================================================
+# Advisories: british-spelling and dangling-reference (warn-only, owner decision D5)
+# =================================================================================
+#
+# The tables mirror _agent-guidance's test/test-check-agent-markdown.js (PR #255), so
+# the two checkers stay in step. Every WARN row is run through `main` twice: without
+# --strict it must exit 0 (the warn-only contract) and with --strict it must exit 1 —
+# the negative control that shows each rule really fires and really is the thing
+# --strict gates, so a table row cannot pass by the checker doing nothing.
+#
+# A body is written to the registry ROOT's AGENTS.md, which has no frontmatter, so the
+# expected line numbers are the body's own.
+
+ADVISORY_SPELLING_WARN = [
+    ("-our family", "Check the behaviour here.\n", [("british-spelling", 1)]),
+    ("-our, capitalized", "Colour matters.\n", [("british-spelling", 1)]),
+    ("-our derived form", "An honourable exit.\n", [("british-spelling", 1)]),
+    ("favour", "We favour tests.\n", [("british-spelling", 1)]),
+    ("-ise verb", "Please organise the files.\n", [("british-spelling", 1)]),
+    ("-isation noun", "The organisation owns it.\n", [("british-spelling", 1)]),
+    ("recognise", "We recognise the form.\n", [("british-spelling", 1)]),
+    ("analyse", "Analyse the log.\n", [("british-spelling", 1)]),
+    ("catalogue", "See the catalogue.\n", [("british-spelling", 1)]),
+    ("centre", "Centre the text.\n", [("british-spelling", 1)]),
+    ("licence", "The licence file.\n", [("british-spelling", 1)]),
+    ("summarise", "Summarise the diff.\n", [("british-spelling", 1)]),
+    ("artefact", "Keep the artefact.\n", [("british-spelling", 1)]),
+    ("authorise", "Authorise the push.\n", [("british-spelling", 1)]),
+    ("in a heading", "# The behaviour\n", [("british-spelling", 1)]),
+    ("in a list item", "- first\n- the colour red\n", [("british-spelling", 2)]),
+    ("in a table cell", "| a | b |\n|---|---|\n| x | colour |\n", [("british-spelling", 3)]),
+    ("in link text", "[behaviour](https://example.com/x)\n", [("british-spelling", 1)]),
+    ("on the second line of a paragraph", "fine line\nthe colour here\n",
+     [("british-spelling", 2)]),
+    ("after a code fence closes", "```\ncolour\n```\n\ncolour\n", [("british-spelling", 5)]),
+    ("two words, one line", "behaviour and colour\n",
+     [("british-spelling", 1), ("british-spelling", 1)]),
+]
+
+ADVISORY_SPELLING_QUIET = [
+    ("American spellings", "The behavior, color, honor, organize and analyze.\n"),
+    ("exercise/promise/otherwise are not flagged", "Exercise the promise otherwise.\n"),
+    ("analyses (American plural) is not flagged", "Two analyses agree.\n"),
+    ("cancelled (API value) is not flagged", "The run was cancelled.\n"),
+    ("fenced code", "```\nthe colour and behaviour\n```\n"),
+    ("tilde-fenced code", "~~~\nthe colour\n~~~\n"),
+    ("fenced code with a language", "```yaml\ncolour: red\n```\n"),
+    ("indented code", "text\n\n    colour = 1\n"),
+    ("inline code", "Set `colour` to red.\n"),
+    ("block quote", "> The vendor writes behaviour here.\n"),
+    ("nested block quote", "> > colour\n"),
+    ("lazy block quote continuation", "> quoted\ncolour continues the quote\n"),
+    ("URL in prose", "See https://example.com/colour/behaviour for it.\n"),
+    ("autolink", "See <https://example.com/organisation>.\n"),
+    ("link target", "[docs](https://example.com/behaviour)\n"),
+    ("HTML comment", "<!-- colour -->\n"),
+    ("whole-word match only", "xcolour colourx behavioral.\n"),
+]
+
+ADVISORY_REF_WARN = [
+    ("quoted name, no such heading", '# Top\n\nSee "Missing" above.\n', [("dangling-reference", 3)]),
+    ("curly quotes", "# Top\n\nsee “Missing” below.\n", [("dangling-reference", 3)]),
+    ("backticked heading marker", "# Top\n\nsee `## Missing` below.\n",
+     [("dangling-reference", 3)]),
+    ("bold name", "# Top\n\nsee **Missing** above.\n", [("dangling-reference", 3)]),
+    ("italic name", "# Top\n\nsee *Missing* above.\n", [("dangling-reference", 3)]),
+    ("link text", "# Top\n\nsee [Missing](#missing) below.\n", [("dangling-reference", 3)]),
+    ("with 'the' and 'section'", '# Top\n\nSee the "Missing" section above.\n',
+     [("dangling-reference", 3)]),
+    ("with 'also'", '# Top\n\nSee also "Missing" below.\n', [("dangling-reference", 3)]),
+    ("inside a list item", '# Top\n\n- one\n- (see "Missing" above)\n',
+     [("dangling-reference", 4)]),
+    ("on a later line of the paragraph", '# Top\n\nline one\nand see "Missing"\nabove.\n',
+     [("dangling-reference", 4)]),
+    ("a '## ' inside a fence is not a heading (real parser)",
+     '# Top\n\n```\n## Ghost\n```\n\nsee "Ghost" above.\n', [("dangling-reference", 7)]),
+    ("an indented heading-looking line is code",
+     '# Top\n\n    ## Ghost\n\nsee "Ghost" above.\n', [("dangling-reference", 5)]),
+    ("a near miss is still dangling", '## The rule\n\nsee "The rules" above.\n',
+     [("dangling-reference", 3)]),
+    ("two refs, one good one bad", '## Good\n\nsee "Good" above, see "Bad" below.\n',
+     [("dangling-reference", 3)]),
+]
+
+ADVISORY_REF_QUIET = [
+    ("quoted name matches an h2", '## Setup\n\ntext\n\nsee "Setup" above.\n'),
+    ("match is case-insensitive", '## Setup\n\nsee "setup" above.\n'),
+    ("match ignores trailing colon and spacing", '## Setup:\n\nsee "Setup" above.\n'),
+    ("matches an h3", '### Deep\n\nsee "Deep" above.\n'),
+    ("a later heading satisfies 'below'", 'see "Later" below.\n\n## Later\n'),
+    ("backticked name with ## marker", '## Setup\n\nsee `## Setup` above.\n'),
+    ("a heading with inline code compares by rendered text",
+     '## The `foo` flag\n\nsee "The foo flag" above.\n'),
+    ("a setext heading counts", 'Setup\n=====\n\nsee "Setup" above.\n'),
+    ("undelimited name is not guessed at", "## Top\n\nsee the rules above and the notes below.\n"),
+    ("'above' without 'see' is not a reference",
+     '## Top\n\nthe "Missing" thing is described above.\n'),
+    ("inside a block quote", '## Top\n\n> see "Missing" above.\n'),
+    ("inside a fence", '## Top\n\n```\nsee "Missing" above\n```\n'),
+    ("inside inline code", '## Top\n\n`see "Missing" above`\n'),
+]
+
+
+def _advisory_args(tmp_path, registry_root: Path, *extra: str) -> list:
+    return ["--config", str(_absolute_registry_config(tmp_path, registry_root)),
+            "--waivers", str(_empty_waivers(tmp_path)), *extra]
+
+
+def _registry_with_root_doc(tmp_path, body: str, name: str = "AGENTS.md") -> Path:
+    registry_root = tmp_path / "reg"
+    registry_root.mkdir()
+    (registry_root / name).write_text(body, encoding="utf-8")
+    return registry_root
+
+
+def _scan(body: str, allowed=frozenset()) -> list:
+    british = check_skills.load_british_words(check_skills.DEFAULT_SPELLINGS)
+    found = check_skills.scan_advisories("alpha", "AGENTS.md", body, british, allowed)
+    return [(a.rule, a.line) for a in found]
+
+
+@pytest.mark.parametrize("name, body, want", ADVISORY_SPELLING_WARN + ADVISORY_REF_WARN,
+                         ids=[row[0] for row in ADVISORY_SPELLING_WARN + ADVISORY_REF_WARN])
+def test_an_advisory_warns_but_only_strict_fails_the_exit_status(
+        tmp_path, capsys, name, body, want):
+    assert _scan(body) == want
+    registry_root = _registry_with_root_doc(tmp_path, body)
+    assert check_skills.main(_advisory_args(tmp_path, registry_root)) == 0
+    assert "ADVISORIES (%d, warn-only)" % len(want) in capsys.readouterr().out
+    assert check_skills.main(_advisory_args(tmp_path, registry_root, "--strict")) == 1
+
+
+@pytest.mark.parametrize("name, body", ADVISORY_SPELLING_QUIET + ADVISORY_REF_QUIET,
+                         ids=[row[0] for row in ADVISORY_SPELLING_QUIET + ADVISORY_REF_QUIET])
+def test_text_the_advisories_exempt_stays_quiet_even_under_strict(tmp_path, name, body):
+    assert _scan(body) == []
+    registry_root = _registry_with_root_doc(tmp_path, body)
+    assert check_skills.main(_advisory_args(tmp_path, registry_root, "--strict")) == 0
+
+
+def test_the_allowlist_silences_a_word_case_insensitively_and_ignores_comments(tmp_path):
+    allowed = tmp_path / "allow.txt"
+    allowed.write_text("# vendor quote\nGREY  # a name\n\n", encoding="utf-8")
+    words = check_skills.load_allowlist(allowed, required=True)
+    assert words == {"grey"}
+    assert _scan("A Grey area and colour.\n", words) == [("british-spelling", 1)]
+    assert _scan("A Grey area and colour.\n") == [("british-spelling", 1)] * 2
+
+
+def test_allowlisting_one_word_does_not_silence_another():
+    assert _scan("colour behaviour\n", frozenset({"colour"})) == [("british-spelling", 1)]
+
+
+def test_an_explicit_allowlist_replaces_the_default_and_a_missing_one_exits_two(
+        tmp_path, capsys):
+    registry_root = _registry_with_root_doc(tmp_path, "colour\n")
+    allowed = tmp_path / "elsewhere.txt"
+    allowed.write_text("colour\n", encoding="utf-8")
+    assert check_skills.main(
+        _advisory_args(tmp_path, registry_root, "--strict", "--allowlist", str(allowed))) == 0
+    with pytest.raises(SystemExit) as raised:
+        check_skills.main(_advisory_args(
+            tmp_path, registry_root, "--allowlist", str(tmp_path / "nope.txt")))
+    assert raised.value.code == 2
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_the_shipped_allowlist_and_word_list_both_load():
+    check_skills.load_allowlist(check_skills.DEFAULT_ALLOWLIST, required=True)
+    assert check_skills.load_british_words(check_skills.DEFAULT_SPELLINGS)
+
+
+def test_the_fixed_list_holds_the_words_the_owner_named_and_no_generic_ise():
+    words = check_skills.load_british_words(check_skills.DEFAULT_SPELLINGS)
+    for word in ["behaviour", "colour", "honour", "favour", "organise", "organisation",
+                 "recognise", "analyse", "catalogue", "centre", "licence", "artefact",
+                 "authorise", "summarise", "normalised", "neighbouring"]:
+        assert word in words, f"{word} should be listed"
+    for word in ["exercise", "promise", "otherwise", "advise", "revise", "analyses",
+                 "cancelled", "judgement", "license"]:
+        assert word not in words, f"{word} must not be listed"
+
+
+@pytest.mark.parametrize("missing", ["our_stems", "our_suffixes", "ise_stems",
+                                     "ise_suffixes", "explicit"])
+def test_a_word_list_file_missing_a_section_is_a_usage_error(tmp_path, missing):
+    data = yaml.safe_load(check_skills.DEFAULT_SPELLINGS.read_text(encoding="utf-8"))
+    del data[missing]
+    broken = tmp_path / "words.yml"
+    broken.write_text(yaml.safe_dump(data), encoding="utf-8")
+    with pytest.raises(SystemExit) as raised:
+        check_skills.load_british_words(broken)
+    assert missing in str(raised.value)
+
+
+def test_a_heading_in_another_file_does_not_satisfy_a_reference(tmp_path):
+    registry_root = tmp_path / "reg"
+    registry_root.mkdir()
+    (registry_root / "AGENTS.md").write_text('# A\n\nsee "Other" above.\n', encoding="utf-8")
+    (registry_root / "CLAUDE.md").write_text("## Other\n", encoding="utf-8")
+    report = check_skills.run(
+        write_config(tmp_path / "config.yml", [registry_entry("alpha", str(registry_root))]),
+        _empty_waivers(tmp_path), {}, repo_root=tmp_path)
+    assert [(a.path, a.rule, a.line) for a in report.advisories] == [
+        ("AGENTS.md", "dangling-reference", 3)]
+
+
+def test_advisories_scan_skills_and_registry_root_agent_docs_and_nothing_else(tmp_path):
+    bad = "colour\n"
+    registry_root = tmp_path / "reg"
+    # In scope: a SKILL.md (frontmatter and all) and the root AGENTS.md / CLAUDE.md.
+    write_skill(registry_root, "skills/good-skill", body=bad)
+    (registry_root / "AGENTS.md").write_text(bad, encoding="utf-8")
+    (registry_root / "CLAUDE.md").write_text(bad, encoding="utf-8")
+    # Out of scope: other Markdown, PURPOSE.md, a nested AGENTS.md, a skill's reference.
+    (registry_root / "README.md").write_text(bad, encoding="utf-8")
+    (registry_root / "docs").mkdir()
+    (registry_root / "docs" / "notes.md").write_text(bad, encoding="utf-8")
+    (registry_root / "skills" / "good-skill" / "PURPOSE.md").write_text(bad, encoding="utf-8")
+    (registry_root / "skills" / "good-skill" / "references").mkdir()
+    (registry_root / "skills" / "good-skill" / "references" / "AGENTS.md").write_text(
+        bad, encoding="utf-8")
+    report = check_skills.run(
+        write_config(tmp_path / "config.yml", [registry_entry("alpha", str(registry_root))]),
+        _empty_waivers(tmp_path), {}, repo_root=tmp_path)
+    # SKILL.md: 4 frontmatter lines, so the body's line 1 is file line 5.
+    assert [(a.path, a.line) for a in report.advisories] == [
+        ("AGENTS.md", 1), ("CLAUDE.md", 1), ("skills/good-skill/SKILL.md", 5)]
+
+
+def test_a_british_word_in_the_frontmatter_description_is_flagged_at_its_file_line(tmp_path):
+    registry_root = tmp_path / "reg"
+    write_skill(registry_root, "skills/good-skill",
+                frontmatter="---\nname: good-skill\ndescription: Tidy the colour.\n---\n")
+    report = check_skills.run(
+        write_config(tmp_path / "config.yml", [registry_entry("alpha", str(registry_root))]),
+        _empty_waivers(tmp_path), {}, repo_root=tmp_path)
+    assert [(a.rule, a.line) for a in report.advisories] == [("british-spelling", 3)]
+
+
+def test_advisories_never_hide_or_mask_a_real_finding(tmp_path):
+    registry_root = tmp_path / "reg"
+    write_skill(registry_root, "skills/on-disk", name="in-frontmatter", body="colour\n")
+    report = check_skills.run(
+        write_config(tmp_path / "config.yml", [registry_entry("alpha", str(registry_root))]),
+        _empty_waivers(tmp_path), {}, repo_root=tmp_path)
+    assert klasses(report) == [check_skills.K_NAME_DIR_MISMATCH]
+    assert len(report.advisories) == 1
+    assert report.exit_code == 1
+
+
+def test_exit_status_by_default_and_strict(tmp_path):
+    config = write_config(tmp_path / "config.yml", [registry_entry(
+        "alpha", str(_registry_with_root_doc(tmp_path, "colour\n")))])
+    waivers = _empty_waivers(tmp_path)
+    assert check_skills.run(config, waivers, {}, repo_root=tmp_path).exit_code == 0
+    assert check_skills.run(config, waivers, {}, repo_root=tmp_path, strict=True).exit_code == 1
+
+
+def test_a_clean_tree_exits_zero_under_strict(tmp_path):
+    registry_root = _registry_with_root_doc(tmp_path, "# Fine\n\nAll good.\n")
+    write_skill(registry_root, "skills/good-skill", body="# Fine\n\nAll good.\n")
+    assert check_skills.main(_advisory_args(tmp_path, registry_root, "--strict")) == 0
+
+
+def test_annotation_escapes_percent_cr_lf_and_property_colon_and_comma():
+    advisory = check_skills.Advisory(
+        "alpha", "a,b:c.md", 3, "dangling-reference", 'see 50% above\r\nnext: line, here')
+    line = check_skills.github_annotation(advisory)
+    assert line == ("::warning file=a%2Cb%3Ac.md,line=3,title=dangling-reference::"
+                    "see 50%25 above%0D%0Anext: line, here")
+    assert "\r" not in line and "\n" not in line
+    # An explicit file replaces the advisory's own path, escaped the same way.
+    assert check_skills.github_annotation(advisory, "x:y,z.md").startswith(
+        "::warning file=x%3Ay%2Cz.md,line=3,")
+
+
+def test_annotations_print_only_under_github_actions(tmp_path, capsys, monkeypatch):
+    registry_root = _registry_with_root_doc(tmp_path, "ok\n\nthe colour\n")
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
+    check_skills.main(_advisory_args(tmp_path, registry_root))
+    assert "::warning" not in capsys.readouterr().out
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert check_skills.main(_advisory_args(tmp_path, registry_root)) == 0
+    out = capsys.readouterr().out
+    # The registry lives outside this checkout, so the file is `<registry>/<path>`.
+    assert re.search(
+        r"^::warning file=alpha/AGENTS\.md,line=3,title=british-spelling::British spelling "
+        r'"colour"', out, re.MULTILINE), out
+
+
+def test_json_mode_carries_advisories_as_data_and_never_prints_annotations(
+        tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    registry_root = _registry_with_root_doc(tmp_path, "the colour\n")
+    code = check_skills.main(_advisory_args(tmp_path, registry_root, "--json"))
+    payload = json.loads(capsys.readouterr().out)   # raises if anything else was printed
+    assert code == payload["exit_code"] == 0
+    assert payload["strict"] is False
+    assert [(a["rule"], a["path"], a["line"]) for a in payload["advisories"]] == [
+        ("british-spelling", "AGENTS.md", 1)]
+    strict_code = check_skills.main(_advisory_args(tmp_path, registry_root, "--json", "--strict"))
+    capsys.readouterr()
+    assert strict_code == 1
+
+
+def test_ci_never_passes_strict_to_the_census():
+    """D5: CI warns. A `--strict` in any workflow step that runs check_skills.py would
+    turn the advisories into a gate, so the workflows are parsed, not grepped."""
+    workflows = Path(__file__).resolve().parent.parent / ".github" / "workflows"
+    steps = []
+    for path in sorted(workflows.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job in (doc.get("jobs") or {}).values():
+            steps.extend(step for step in job.get("steps") or []
+                         if "check_skills.py" in str(step.get("run", "")))
+    assert steps, "no workflow step runs check_skills.py any more"
+    for step in steps:
+        assert "--strict" not in step["run"]
+        assert "continue-on-error" not in step

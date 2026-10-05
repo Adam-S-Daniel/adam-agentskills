@@ -86,3 +86,25 @@ announces it at 2.1.261; the skill cites the changelog.
 No eval existed when old-registry #157 was fixed. `DESIGN.md` names `skills-doctor` as a
 Class B (diagnosis/triage) candidate with no fixture yet; the first fixture
 is `evals/skills-doctor/` in skills-evals.
+
+## History moved from SKILL.md (2026-10-05)
+
+- **Bare `--lock` default in a multi-repo session.** The old bare default
+  resolved to nothing at the parent and reported the absence of a lock as though
+  it were the absence of a problem: 0 findings, exit 0, over nine undelivered
+  skills. It now resolves the `skills.lock` of every child git repository.
+- **Hand-rolled grep vs `check_skills.py` (measured 2026-08-25).** A grep for
+  `(scripts|references|assets|templates)/…` over the installed store reported
+  21 missing payloads, every one a reference to a script in the cms-platform
+  repo (`bash <cms-platform>/scripts/set-repo-variables.sh`). `check_skills.py`
+  on the same tree reported 0 findings. Only fenced-code paths gate, because
+  skills legitimately name other repos' paths in prose.
+- **The shadow guard used to be INERT in a multi-repo shape.** The hook and
+  `check_provenance.py` both looked for repo-owned skills at
+  `$PROJECT_DIR/.claude/skills/<name>/SKILL.md` alone. When the project dir is
+  the parent of several repos that directory does not exist, so the guard could
+  never fire for any of them and `delivered-by-the-project` could never be the
+  reason a locked skill was absent. Worse, the doctor's lookup returned a
+  confident measured empty set rather than "unknown", so it reported the next
+  run as replacing a directory that run deletes. Both now consult the project
+  dir plus every accepted lock's own repo.

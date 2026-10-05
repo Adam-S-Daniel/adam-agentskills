@@ -17,11 +17,12 @@ exist only on another branch.
   the actual step logs, because the patterns above are all ways a success badge
   hides an unperformed task. This is also why the process-substitution case is
   shared with `review-bash-ci-reliability`.
-- **The `gh` install block pins an exact release.** Cloud images often lack
-  `gh`, and the fleet rule is exact pins with a 7-day cooldown, so the block is
-  refreshed by hand to the newest release older than 7 days rather than
-  resolving `releases/latest` at run time. Last refreshed 2026-10-04 to v2.101.0
-  (published 2026-09-15); it was v2.67.0 before.
+- **The `gh` install step defers to the official instructions.** Cloud images
+  often lack `gh`; the skill checks `command -v gh` first and otherwise installs
+  per https://github.com/cli/cli#installation, taking the newest release at
+  least 7 days old (the fleet's cooling-off rule) rather than a hard-coded
+  pin. It was a hand-refreshed pin (v2.101.0, published 2026-09-15, refreshed
+  2026-10-04; v2.67.0 before) until 2026-10-05.
 
 ## Eval status
 

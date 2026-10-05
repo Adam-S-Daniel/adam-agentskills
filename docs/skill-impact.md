@@ -40,6 +40,27 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit (correction)
+
+- Motivation: review of [the missing-helper correction](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26) exposed two census false positives: a repository test filename passed to a runner and a script named in a pipeline diagram.
+- Change: the [conformance census](../scripts/check_skills.py) now requires shell AST invocation positions for bare scripts, preserving the original multiline OCR invocation checks and existing qualified-payload rules. Non-invoked bare scripts remain in the dismissal audit. The existing `adam-non-coding-local` 1.0.0 -> 1.0.1 bump covers this correction and the related rename wording below.
+- Eval: OCR remains exempt under [skills-evals' deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md#deliberate-non-coverage). Focused census pytest exited 0 with 111 passed. Six isolated AST mutations each produced pytest exit 1, with failure counts 19, 17, 2, 36, 3, and 1 across 37 selected cases, covering invocation evidence, the token-position gate, PowerShell continuations, the missing-parser dependency, repository-path exclusion, and qualified-argument preservation. The four-registry census exited 0 with 36 skills, 0 findings, and 0 waived (20 local, 14 platform, 1 site, 1 private), using current remote main archives of sibling registries. Source SHA256 hashes stayed unchanged before and after verification; sentinel calls remained zero. No paid evaluation ran.
+- Outcome: pending independent review and merge. This corrects the earlier same-day census precision claim without changing that entry.
+
+## 2026-10-04 — adam-non-coding-local/rename-pdfs — edit
+
+- Motivation: the [OCR correction](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26) changed output handling, but the rename instructions still attributed legacy `-needsocr.pdf` backups to the current OCR skill.
+- Change: [rename-pdfs](../plugins/adam-non-coding-local/skills/rename-pdfs/SKILL.md) keeps the legacy paired-backup exclusion and describes it as an existing convention. It links the current OCR instructions, which preserve originals and write to a separate output folder; its [purpose note](../plugins/adam-non-coding-local/skills/rename-pdfs/PURPOSE.md) explains why the legacy pairing remains protected. The same 1.0.1 bundle bump covers both skills.
+- Eval: local `scripts/local_eval.py` run of [`evals/rename-pdfs`](https://github.com/Adam-S-Daniel/skills-evals/tree/main/evals/rename-pdfs) in skills-evals at c1bf71c with `--registry adam-agentskills=<this tree at af35c83>`, 3 trials per arm, judged (a local exhibit, not badge input; Claude Code 2.1.289, agent model claude-sonnet-5, judge claude-opus-4-8), exit 0, 0 errored trials; a 1-trial unjudged pre-run also exited 0. `with_skill`: objective 4/8 in every trial, judge 3.77 (2.5-4.6, n=3). `without_skill`: objective 4/8 in every trial, judge 4.37 (4.1-4.6, n=3). Both arms passed the same four checks (image-only-scan-left-alone, inbox-content-preserved, nothing-outside-inbox, receipt-left-alone) and failed the same four in all trials (duplicate-bills-disambiguated, inbox-renamed-per-convention, invoice-dated-from-body, statement-date-ranged), so the objective score did not separate the arms; the judge means are nominally lower with the skill (date priority 3.67 vs 4.67, convention fidelity 2.67 vs 3.00, restraint 6.67 vs 7.33) with overlapping ranges at n=3. This run shows no measured benefit from the skill on this fixture and does not isolate this edit, which touches only the legacy-backup wording; the fixture's header names a headless-invocation confound (the skill's per-file confirmation step has no user to answer it), so a skill-faithful arm may propose renames without applying them.
+- Outcome: skill eval gate recorded above (no measured difference between arms); pending independent review and merge.
+
+## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit
+
+- Motivation: [the carried-over missing-script defect](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26), originally old-registry issue 189, promised a batch runner and a WPF reviewer that were never shipped. Neither script was recoverable from either registry's current files or git history.
+- Change: describe direct OCRmyPDF calls into separate outputs, preserve originals, record per-file outcomes, and review appearance and OCR text with installed tools. Add on-touch `PURPOSE.md`; bump `adam-non-coding-local` 1.0.0 -> 1.0.1. Extend the Markdown-AST-based census to detect bare script filenames in code blocks, including the PowerShell relative invocation form, without gating prose, external paths, or document artifacts.
+- Eval: exempt under [skills-evals' deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md#deliberate-non-coverage) for machine-bound surfaces; no paid evaluation run. Census regressions cover missing and existing local helpers plus the precision boundaries.
+- Outcome: pending independent review and merge. No account-store or installation changes made.
+
 ## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
 
 - Motivation: nine Claude Code releases touched auto-memory files, index limits and project directories ([#14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14)); a re-check found three that bear on this skill's path and `autoMemoryDirectory` text.

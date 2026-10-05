@@ -46,3 +46,12 @@ including invalid bytes, and skip inventory cases only after the actual
 script and an independent Bash runtime probe confirm this unsupported case.
 Invalid UTF-8 filenames and unreadable directories are separately probed for
 filesystem support so capable Linux runs retain those safety regressions.
+
+The 2026-10-04 re-check of [issue #14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14)
+against Claude Code 2.1.210 through 2.1.273 found the decoder's rules still
+right. The text now records the one newer change that can silently drop an
+in-repo memory directory (`permissions.blockReadsOutsideWorkingDirectories`,
+2.1.273) and two sources of directory names the decoder cannot read as paths
+(long paths before 2.1.224, `CLAUDE_CODE_PROJECT_DIR_NAME`). Neither
+was measured live; the inventory still reports a host-chosen name that starts
+with `-` as `ORPHANED`, so the human check on every orphan carries that case.

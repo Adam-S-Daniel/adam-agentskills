@@ -60,6 +60,16 @@ read/write a project's memory instead of the default per-machine
 - Because auto-memory is otherwise entirely machine-local, putting it in-repo
   and committing it to git is the only channel that carries it to other
   machines and to hosted/cloud sessions.
+- With `permissions.blockReadsOutsideWorkingDirectories` enabled, Claude Code
+  2.1.273 and later no longer loads a memory directory chosen by repository
+  settings. The release note says: "a memory directory chosen by a repository's
+  settings is no longer loaded into the prompt, recalled, indexed, or used by
+  memory extraction"
+  ([v2.1.273](https://github.com/anthropics/claude-code/releases/tag/v2.1.273)).
+  A committed in-repo `autoMemoryDirectory` is such a directory. The note does
+  not say whether a directory inside the working directory is exempt, and this
+  has not been measured, so if memory stops appearing in a session that enables
+  that setting, check it before blaming the store.
 
 This skill never edits `settings.json` for you — it prints the exact JSON
 snippet to add, and you (or another edit) apply it.
@@ -163,8 +173,18 @@ also uncertainty, even if another branch supports a missing leaf. Invalid
 UTF-8 entries or an unavailable UTF-8 locale also prevent
 an orphan claim. Only standard ASCII-alphanumeric/hyphen store names of at most
 200 characters are supported; longer names use hashing/truncation that this
-decoder does not reverse. Custom aliases that resemble standard names cannot
-be identified from the store filename alone.
+decoder does not reverse, and before Claude Code 2.1.224 long paths sharing a
+sanitized prefix could resolve to one another's session directory, so a
+long-named directory is not evidence of a single workspace. Custom aliases that
+resemble standard names cannot be identified from the store filename alone;
+`CLAUDE_CODE_PROJECT_DIR_NAME` (2.1.234 and later) is one source of them,
+letting a host choose a short name for the per-project transcript directory
+([v2.1.234](https://github.com/anthropics/claude-code/releases/tag/v2.1.234)).
+The release note does not say whether the memory folder lives under that
+directory. The inventory reports a name without a leading `-` as `UNRESOLVED`,
+but it cannot tell a host-chosen name that starts with `-` from a munged path
+and would report it `ORPHANED` if the decoded path is missing, so confirm every
+`ORPHANED` store against the workspace it names before deleting anything.
 
 **Known mount roots and detected device boundaries are always `UNRESOLVED`.**
 This includes paths under `/mnt/<segment>` (including case-insensitive

@@ -36,6 +36,46 @@ if [ -n "$PROMPT_FILE" ]; then
   PROMPT="Read the file $(realpath "$PROMPT_FILE") and follow the instructions in it."
 fi
 
+# Store apps cannot activate from Windows session 0. Query a Win32 shell;
+# only dry runs may override the result for hermetic tests.
+SESSION0=0
+owned_prompt_file=""; argv_file=""
+cleanup_launch_files() {
+  local result=$?
+  [ -z "$argv_file" ] || rm -f -- "$argv_file"
+  if [ "$result" -ne 0 ] && [ -n "$owned_prompt_file" ]; then
+    rm -f -- "$owned_prompt_file"
+  fi
+}
+trap cleanup_launch_files EXIT
+WINDOWS_PS="$(command -v pwsh.exe || command -v powershell.exe || true)"
+if [ -n "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ] && [ "${LAUNCH_CLAUDE_FORCE_SESSION0:-}" = 1 ]; then
+  SESSION0=1
+elif [ -n "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ] && [ "${LAUNCH_CLAUDE_FORCE_SESSION0:-}" = 0 ]; then
+  SESSION0=0
+elif [ -n "$WINDOWS_PS" ]; then
+  WINDOWS_SESSION="$("$WINDOWS_PS" -NoProfile -Command '[System.Diagnostics.Process]::GetCurrentProcess().SessionId')" || {
+    echo "Could not determine the Windows session id." >&2; exit 1;
+  }
+  WINDOWS_SESSION="${WINDOWS_SESSION//$'\r'/}"
+  case "$WINDOWS_SESSION" in
+    0) SESSION0=1;;
+    *[!0-9]*|'') echo "Invalid Windows session id." >&2; exit 1;;
+  esac
+elif [ -z "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ]; then
+  echo "pwsh.exe or powershell.exe is required to determine the Windows session id." >&2; exit 1
+fi
+if [ "$SESSION0" = 1 ] && [ -n "$PROMPT" ] && [ -z "$PROMPT_FILE" ]; then
+  if [ -n "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ]; then
+    PROMPT_FILE='/tmp/launch-claude-prompt-<guid>.txt'
+  else
+    PROMPT_FILE="$(umask 077; mktemp /tmp/launch-claude-prompt-XXXXXXXX.txt)"
+    owned_prompt_file="$PROMPT_FILE"
+    printf '%s' "$PROMPT" > "$PROMPT_FILE"
+  fi
+  PROMPT="Read the file $PROMPT_FILE and follow the instructions in it."
+fi
+
 # Resolve the absolute claude binary. command -v usually works in-context here, but a
 # non-login shell may lack ~/.local/bin on PATH, so fall back to known install paths.
 CLAUDE="$(command -v claude || true)"
@@ -100,6 +140,24 @@ wt_args=(
   -u CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 \
   "PATH=$(wt_escape "${LOGIN_PATH:-$PATH}")" "$(wt_escape "$CLAUDE")" "${claude_args[@]}"
 )
+
+if [ "$SESSION0" = 1 ]; then
+  [ -n "$WINDOWS_PS" ] || { echo "A Windows PowerShell shell is required for session-0 dispatch." >&2; exit 1; }
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  # NUL-delimited UTF-8 preserves every argv boundary without shell evaluation.
+  # The handoff contains file paths/instructions, never the original prompt.
+  argv_file="$(umask 077; mktemp /tmp/launch-claude-argv-XXXXXXXX.bin)"
+  printf '%s\0' "${wt_args[@]:1}" > "$argv_file"
+  helper_path="$(wslpath -w "$script_dir/launch-session0-task.ps1")"
+  argv_path="$(wslpath -w "$argv_file")"
+  task_flags=()
+  [ -n "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ] && task_flags+=(-PrintArgs)
+  "$WINDOWS_PS" -NoProfile -ExecutionPolicy Bypass -File "$helper_path" -ArgumentFile "$argv_path" "${task_flags[@]}"
+  if [ -z "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ]; then
+    echo "Launched detached Claude ($MODE) in ${DISTRO}:${DIR}"
+  fi
+  exit 0
+fi
 
 if [ -n "${LAUNCH_WSL_CLAUDE_DRY_RUN:-}" ]; then
   # Test hook: print the exact argv wt.exe would receive, one per line, and

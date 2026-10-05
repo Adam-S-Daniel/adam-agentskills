@@ -41,6 +41,37 @@ class TestFindDates(unittest.TestCase):
     def test_long_with_period(self):
         self.assertEqual(find_dates("Sept. 1, 2024"), ["2024-09-01"])
 
+    def test_day_first_abbrev(self):
+        self.assertEqual(find_dates("Statement date 1 Jan 2026"), ["2026-01-01"])
+
+    def test_day_first_full_month_leading_zero(self):
+        self.assertEqual(find_dates("Issued 01 January 2026"), ["2026-01-01"])
+
+    def test_day_first_billing_period_range(self):
+        self.assertEqual(
+            find_dates("Billing Period: 1 Jan 2026 to 31 Jan 2026"),
+            ["2026-01-01", "2026-01-31"],
+        )
+
+    def test_day_first_ordinal_comma_and_period(self):
+        self.assertEqual(find_dates("due 3rd Sept. 2024"), ["2024-09-03"])
+        self.assertEqual(find_dates("due 15 March, 2024"), ["2024-03-15"])
+
+    def test_day_first_rejects_invalid_day(self):
+        self.assertEqual(find_dates("bogus 31 Feb 2026"), [])
+
+    def test_month_first_not_double_counted_as_day_first(self):
+        # "Mar 15 2024" is month-first; the day-first pattern must not also
+        # read "15 2024" or a neighboring token into a second date.
+        self.assertEqual(find_dates("Mar 15 2024"), ["2024-03-15"])
+        self.assertEqual(find_dates("Mar 15, 2024 Apr 2 2024"), ["2024-03-15", "2024-04-02"])
+
+    def test_numeric_day_first_stays_unparsed(self):
+        # 15/03/2024 is unambiguous but 03/04/2024 is not; numeric day/month
+        # forms stay US-only, so the day-first form is month-name only.
+        self.assertEqual(find_dates("03/04/2024"), ["2024-03-04"])
+        self.assertEqual(find_dates("15/03/2024"), [])
+
     def test_dedupe_and_order_preserved(self):
         # Two different dates, oldest first; should appear in encounter order, deduped.
         result = find_dates("date 2024-03-15 then later 03/15/2024 and 2024-04-01")

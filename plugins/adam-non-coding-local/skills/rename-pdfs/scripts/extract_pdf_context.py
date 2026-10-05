@@ -35,7 +35,8 @@ except ImportError:
 
 
 # Each pattern returns (year, month, day) from match.groups(); 'long' uses the
-# month-name first group, handled specially below.
+# month-name first group and 'dayfirst' the day-month-name-year order, both
+# handled specially below.
 DATE_PATTERNS = [
     # ISO-ish: 2024-03-15 or 2024/03/15
     (re.compile(r"\b(20\d{2})[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b"), "iso"),
@@ -56,6 +57,19 @@ DATE_PATTERNS = [
             re.IGNORECASE,
         ),
         "long",
+    ),
+    # Day-first: 1 Jan 2026 / 01 January 2026 / 3rd Sept. 2024 / 15 March, 2024.
+    # Month names only: a numeric day/month form (03/04/2024) is ambiguous, so
+    # numeric dates stay US-only above.
+    (
+        re.compile(
+            r"\b(0?[1-9]|[12]\d|3[01])(?:st|nd|rd|th)?\s+"
+            r"(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+            r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|"
+            r"Dec(?:ember)?)\.?,?\s+(20\d{2})\b",
+            re.IGNORECASE,
+        ),
+        "dayfirst",
     ),
 ]
 
@@ -83,6 +97,11 @@ def _normalize(match, kind):
             if not m:
                 return None
             d, y = int(g[1]), int(g[2])
+        elif kind == "dayfirst":
+            m = MONTHS.get(g[1][:3].lower())
+            if not m:
+                return None
+            d, y = int(g[0]), int(g[2])
         else:
             return None
         datetime(year=y, month=m, day=d)

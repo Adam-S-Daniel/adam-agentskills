@@ -232,4 +232,3 @@ plugin's `installPath` with the recorded `gitCommitSha` and with `claude plugin
 list --json`. (a) answers whether the version gate still blocks a content-only
 change; the SHA after each step answers whether the recording fix holds. Issue
 #10 stays open for that run.
-

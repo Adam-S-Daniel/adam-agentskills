@@ -74,7 +74,7 @@ Use a **range** `YYYYMMDD-YYYYMMDD` when the document _is fundamentally about a 
 - a multi-month account statement where the period matters more than the issue date
 - a travel receipt covering multiple nights
 
-When in doubt, single date wins — the document-generation date is usually the right answer.
+When in doubt, single date wins — the document-generation date is usually the right answer. The exception is a statement whose only date is its billing period (for example "Billing Period: 1 Jan 2026 to 31 Jan 2026", with no statement or issue date): there is no single date to prefer, so use the range form, even for one month.
 
 ## What to skip
 
@@ -142,7 +142,7 @@ For folders with mostly long PDFs, `--pages 2` is faster and usually enough.
 
 ## Date selection priority
 
-1. **Document body** — `Statement Date`, `Invoice Date`, `Date:`, ISO dates, US dates, or "Month DD, YYYY". When multiple dates appear, prefer the most prominent (header/footer) or the latest one.
+1. **Document body** — `Statement Date`, `Invoice Date`, `Date:`, ISO dates, US dates (`MM/DD/YYYY`), "Month DD, YYYY", or "DD Month YYYY". Numeric day-first dates such as `03/04/2024` are ambiguous and are read as US dates, so confirm those with the user. When multiple dates appear, prefer the most prominent (header/footer) or the latest one.
 2. **Filename** — `YYYY-MM-DD`, `YYYYMMDD`, `MM-DD-YYYY` patterns.
 3. **File mtime** — `stat -c %y "$file" | cut -d' ' -f1`. Last resort; tell the user.
 

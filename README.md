@@ -82,7 +82,7 @@ plugin contains a symlink.
 | `adam-anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |
 | `adam-coding-anywhere` | enabled | CI, GitHub and skill-delivery skills | Claude Code terminals and cloud sessions |
 | `adam-coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser) | Claude Code on the owner's machines |
-| `adam-non-coding-local` | opt-in | PDF and Fastmail skills | the Claude Desktop app's local Cowork |
+| `adam-non-coding-local` | opt-in; on in Windows, off in WSL/Linux on the owner's machines ([below](#which-bundles-on-which-os)) | PDF and Fastmail skills | the Claude Desktop app's local Cowork |
 
 Sensitive skills live in the private sibling registry,
 `Adam-S-Daniel/adam-agentskills-private`, as `adam-private-*` plugins.
@@ -223,9 +223,36 @@ is **not** for anyone else's machine:
   copies and for the retired registry's plugins, and sets
   `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
   that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
-  [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)).
+  [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md));
+  and applies the per-OS bundle policy below.
 
 Without the flag neither step runs, and the script says how to opt in.
+
+#### Which bundles on which OS
+
+The two `-anywhere` bundles and `adam-coding-local` are the same on every
+durable machine. `adam-non-coding-local` is not, so the default for any new
+machine of the owner's is:
+
+| Bundle | Windows | WSL / Linux | macOS |
+| --- | --- | --- | --- |
+| `adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local` | on, from the marketplace | on, from the marketplace | on, from the marketplace |
+| `adam-non-coding-local` | **on**, left as it arrives | **off** | untouched (no decision) |
+
+Why: its seven skills (add-from-address, add-received-from-addresses, fastmail,
+ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs) are Windows, browser
+and document workflows. `/skill-doctor` on WSL measured them at about 1.3k
+tokens of always-on descriptions per turn and zero uses in 7 days (2026-10-05).
+
+On WSL and Linux, `setup.sh --owner-machine` writes `false` for
+`adam-non-coding-local@synced` (the claude.ai account sync, which brings the
+bundle in even with `syncClaudeAiSkills: false`) and for
+`adam-non-coding-local@adam-agentskills` (a marketplace install), because
+disabling one source leaves the other loading. It installs nothing, and it
+writes `false` on every run, so a manual `claude plugin enable` on Linux lasts
+only until the next run. On Windows it writes nothing and never turns off a
+copy it finds. Rationale and alternatives:
+[ADR 0015](docs/decisions/0015-turn-the-non-coding-local-bundle-off-on-linux-and-wsl.md).
 
 > Codex reads `~/.agents/skills`; that link is what makes these skills available in
 > Codex. See the [Codex skills docs](https://developers.openai.com/codex/skills).

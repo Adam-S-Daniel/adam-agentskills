@@ -52,7 +52,9 @@
 # longer exists — and converging ~/.claude/settings.json — which registers
 # the owner's PRIVATE marketplace, enables the owner's plugins and sets
 # `syncClaudeAiSkills: false`, turning off that user's claude.ai account
-# skills in their terminals (ADR 0010, ADR 0013). Both run only with
+# skills in their terminals (ADR 0010, ADR 0013), and applies the per-OS
+# policy for `adam-non-coding-local` (off in WSL/Linux, left on in Windows;
+# ADR 0015). Both run only with
 # `--owner-machine` or AGENTSKILLS_OWNER_MACHINE=1.
 #
 # Safe to re-run (idempotent). On Windows (Git Bash) it uses `mklink /J`
@@ -486,9 +488,9 @@ TARGET_MARKETPLACES = {
 # `adam-coding-local`, which carries this machine's own local-only skills
 # (sync-cc-settings-between-wsl-and-windows, launch-top-level-claude-session,
 # migrate-claude-memory, windows-elevation-from-wsl) and so must run here.
-# `adam-non-coding-local` is for the Desktop app's local Cowork, not for
-# terminals, so it is left for the operator to enable. From the private
-# registry, `adam-private-anything-anywhere` is enabled the same way.
+# `adam-non-coding-local` (Windows, browser and document workflows) is
+# per-OS: see NON_CODING_LOCAL_BY_HOST below. From the private registry,
+# `adam-private-anything-anywhere` is enabled the same way.
 #
 # The two `-anything-anywhere` plugins are also enabled on the claude.ai
 # account (web, iOS, Chrome, Desktop), and a terminal signed in with the account
@@ -534,6 +536,55 @@ TARGET_ENABLED_PLUGINS = {
     "adam-private-anything-anywhere@synced": False,
 }
 TARGET_ENABLED_PLUGINS.update({name: False for name in RETIRED_PLUGINS})
+
+# `adam-non-coding-local` (add-from-address, add-received-from-addresses,
+# fastmail, ocr-pdfs, pdf-ocr-audit, rename-pdfs, compare-pdfpairs) is the
+# Windows, browser and document bundle. In WSL it cost ~1.3k tokens of
+# always-on skill descriptions per turn and was used zero times in 7 days
+# (/skill-doctor, 2026-10-05), so the policy is per OS (ADR 0015):
+#
+#   Windows  keep it ON. Nothing is written: it stays however it arrives
+#            (`@synced` from the account, or `@adam-agentskills`), and this
+#            block never turns off a copy a Windows home is using.
+#   Linux    (WSL included) OFF. `false` under EVERY key it can arrive by,
+#            because the same bundle shows up as `@synced` (claude.ai account
+#            sync, even with `syncClaudeAiSkills: false`, which covers skills,
+#            not plugins) or `@adam-agentskills` (marketplace install), and
+#            disabling one leaves the other. `false` for a key that was never
+#            installed is inert, and nothing here installs the plugin.
+#   macOS    untouched: no measurement was taken there, so no decision is
+#            made for it.
+#
+# Like the `@synced` lines above, `false` is written on every run, so a manual
+# `claude plugin enable adam-non-coding-local@synced` on a Linux machine lasts
+# only until setup.sh next runs. Which OS this is comes from sys.platform;
+# AGENTSKILLS_HOST_OS (windows|macos|linux) overrides it for the tests.
+NON_CODING_LOCAL_KEYS = (
+    "adam-non-coding-local@synced",
+    "adam-non-coding-local@adam-agentskills",
+)
+NON_CODING_LOCAL_BY_HOST = {
+    "windows": {},
+    "macos": {},
+    "linux": {key: False for key in NON_CODING_LOCAL_KEYS},
+}
+
+
+def host_os():
+    forced = os.environ.get("AGENTSKILLS_HOST_OS")
+    if forced:
+        if forced not in NON_CODING_LOCAL_BY_HOST:
+            sys.exit("settings: ERROR AGENTSKILLS_HOST_OS=%r is not one of %s"
+                     % (forced, ", ".join(sorted(NON_CODING_LOCAL_BY_HOST))))
+        return forced
+    if sys.platform in ("win32", "cygwin", "msys"):
+        return "windows"
+    if sys.platform == "darwin":
+        return "macos"
+    return "linux"
+
+
+TARGET_ENABLED_PLUGINS.update(NON_CODING_LOCAL_BY_HOST[host_os()])
 
 # ADR 0010: pinned channels own the terminal.
 #

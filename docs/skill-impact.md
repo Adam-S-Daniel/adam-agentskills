@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: nine Claude Code releases touched auto-memory files, index limits and project directories ([#14](https://github.com/Adam-S-Daniel/adam-agentskills/issues/14)); a re-check found three that bear on this skill's path and `autoMemoryDirectory` text.
+- Change: `autoMemoryDirectory` section notes that 2.1.273 stops loading a repository-chosen memory directory under `permissions.blockReadsOutsideWorkingDirectories` (in-repo exemption unmeasured); the lossy-decoding section notes long paths before 2.1.224 could share a session directory and that `CLAUDE_CODE_PROJECT_DIR_NAME` (2.1.234) yields names the decoder cannot read, which the inventory reports `ORPHANED` if they start with `-`. Decoder and scripts unchanged. `adam-coding-local` bumped 2.0.1 -> 2.0.2.
+- Eval: exempt (DESIGN.md non-coverage table, `migrate-claude-memory` is machine-bound). Focused pytest on the skill: see the PR body.
+- Outcome: pending merge.
+
 ## 2026-10-04 — adam-coding-anywhere/review-bash-ci-reliability — edit
 
 - Motivation: the checklist had the process-substitution case (`set -e` misses a failure inside `<(...)`) but not its opposite, an expected non-zero inside `$(...)` aborting the script; `_agent-guidance`'s `test/run-tests.sh` died mid-file with no `Results:` line for this reason ([#20](https://github.com/Adam-S-Daniel/adam-agentskills/issues/20)).

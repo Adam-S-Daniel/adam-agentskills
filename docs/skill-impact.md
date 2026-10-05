@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit (correction)
+
+- Motivation: review of [the missing-helper correction](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26) exposed two census false positives: a repository test filename passed to a runner and a script named in a pipeline diagram.
+- Change: the [conformance census](../scripts/check_skills.py) now requires shell AST invocation positions for bare scripts, preserving the original multiline OCR invocation checks and existing qualified-payload rules. Non-invoked bare scripts remain in the dismissal audit. The existing `adam-non-coding-local` 1.0.0 -> 1.0.1 bump covers this correction and the related rename wording below.
+- Eval: OCR remains exempt under [skills-evals' deliberate non-coverage table](https://github.com/Adam-S-Daniel/skills-evals/blob/main/DESIGN.md#deliberate-non-coverage). Focused census pytest exited 0 with 111 passed. Six isolated AST mutations each produced pytest exit 1, with failure counts 19, 17, 2, 36, 3, and 1 across 37 selected cases, covering invocation evidence, the token-position gate, PowerShell continuations, the missing-parser dependency, repository-path exclusion, and qualified-argument preservation. The four-registry census exited 0 with 36 skills, 0 findings, and 0 waived (20 local, 14 platform, 1 site, 1 private), using current remote main archives of sibling registries. Source SHA256 hashes stayed unchanged before and after verification; sentinel calls remained zero. No paid evaluation ran.
+- Outcome: pending independent review and merge. This corrects the earlier same-day census precision claim without changing that entry.
+
+## 2026-10-04 — adam-non-coding-local/rename-pdfs — edit
+
+- Motivation: the [OCR correction](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26) changed output handling, but the rename instructions still attributed legacy `-needsocr.pdf` backups to the current OCR skill.
+- Change: [rename-pdfs](../plugins/adam-non-coding-local/skills/rename-pdfs/SKILL.md) keeps the legacy paired-backup exclusion and describes it as an existing convention. It links the current OCR instructions, which preserve originals and write to a separate output folder; its [purpose note](../plugins/adam-non-coding-local/skills/rename-pdfs/PURPOSE.md) explains why the legacy pairing remains protected. The same 1.0.1 bundle bump covers both skills.
+- Eval: [rename-pdfs has an eval fixture](https://github.com/Adam-S-Daniel/skills-evals/tree/main/evals/rename-pdfs) and is not exempt. Paid evaluation was prohibited for this package, so it was not run; the skill touch gate still needs that eval before merge.
+- Outcome: pending the skill eval gate, independent review, and merge.
+
 ## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit
 
 - Motivation: [the carried-over missing-script defect](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26), originally old-registry issue 189, promised a batch runner and a WPF reviewer that were never shipped. Neither script was recoverable from either registry's current files or git history.

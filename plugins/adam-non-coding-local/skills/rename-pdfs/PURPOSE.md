@@ -6,6 +6,14 @@ descriptive, date-prefixed convention, as the natural follow-up to
 from the document's own content and confirming with the user before
 applying it — never a silent batch rename.
 
+## Why legacy OCR backup pairs are still skipped
+
+The [OCR skill](../ocr-pdfs/SKILL.md) now preserves originals and writes
+searchable PDFs to a separate output folder. Existing folders may still
+contain paired `*-needsocr.pdf` backups from the legacy convention. Renaming
+one member alone would break that pairing, so the exclusion remains unless
+the user explicitly requests coordinated names for both files.
+
 ## Why example data must be fictional
 
 This skill's `SKILL.md` teaches the naming convention through worked

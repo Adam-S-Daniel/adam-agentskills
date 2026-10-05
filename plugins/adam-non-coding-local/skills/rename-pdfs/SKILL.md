@@ -78,7 +78,7 @@ When in doubt, single date wins — the document-generation date is usually the 
 
 ## What to skip
 
-- **`*-needsocr.pdf`** — these are pre-OCR backups produced by the `ocr-pdfs` skill. They must stay paired with their searchable counterpart; rename them only if the user explicitly asks (and then to the same new base name plus the `-needsocr` suffix).
+- **`*-needsocr.pdf`** — an existing convention for legacy pre-OCR backups. They must stay paired with their searchable counterpart; rename them only if the user explicitly asks (and then to the same new base name plus the `-needsocr` suffix). The current [OCR skill](../ocr-pdfs/SKILL.md) preserves originals and writes searchable PDFs to a separate output folder.
 - **Image-only or inaccessible PDFs** — verdicts "Yes" or "Inaccessible" from `pdf-ocr-audit`. Content extraction isn't reliable. Tell the user and offer to run `ocr-pdfs` first.
 - The rename log file itself (`pdf-rename-log-*.csv`).
 
@@ -164,5 +164,5 @@ For folders with mostly long PDFs, `--pages 2` is faster and usually enough.
 | Skill | How it fits |
 |-------|-------------|
 | `pdf-ocr-audit` | Run first to confirm a folder's PDFs are searchable. |
-| `ocr-pdfs` | Run before this skill on any folder that contains scans. Leaves `-needsocr.pdf` backups, which this skill skips. |
+| [ocr-pdfs](../ocr-pdfs/SKILL.md) | Run before this skill on any folder that contains scans. Preserves originals and writes searchable PDFs to a separate output folder. This skill still skips legacy `-needsocr.pdf` backups. |
 | `rename-pdfs` (this) | Final pass — turn scanner-junk names into descriptive ones. |

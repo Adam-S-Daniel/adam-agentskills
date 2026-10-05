@@ -22,7 +22,7 @@ Finding classes
   field-type            a field's value is not the shape `field_types:` declares
   length-limit          a string field exceeds its `max_lengths:` entry
   non-spec-field        a frontmatter key outside `known_fields:`
-  dangling-payload-ref  a code block names a missing `<payload_dir>/…` or bare script
+  dangling-payload-ref  a code block names a missing `<payload_dir>/…` or invokes a bare script
                         (prose-only mentions deliberately do not gate — see PROSE_ONLY_RULE)
   undeclared-duplicate  a skill basename exists in more than one registry, unwaived
   registry-unresolved   a required registry's path does not exist
@@ -57,6 +57,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 try:
     import yaml
     from markdown_it import MarkdownIt
+    import bashlex
 except ImportError as exc:
     # Exercised by test_a_missing_dependency_exits_2_and_names_the_remedy.
     #
@@ -506,7 +507,7 @@ _TRAILING_PUNCT = "),.:;\"'"
 # (CSV inputs, PDF outputs, and similar artifacts) do not imply a shipped helper.
 _SCRIPT_SUFFIXES = {".py", ".ps1", ".sh", ".bash", ".js", ".mjs", ".cjs", ".bat", ".cmd"}
 
-# The one non-structural dismissal. This check deliberately trades RECALL for PRECISION:
+# These non-structural dismissals deliberately trade RECALL for PRECISION:
 # only a token inside a fenced code block can gate the build, because prose mentions a
 # payload path for many reasons that are not "this skill ships this file" — it names
 # another skill's script, a path in a different repo, or an illustrative example. Those
@@ -514,6 +515,72 @@ _SCRIPT_SUFFIXES = {".py", ".ps1", ".sh", ".bash", ".js", ".mjs", ".cjs", ".bat"
 # given up by that trade are not lost: each one lands in the `--list-findings` dismissal
 # log under this reason, which is where the recall gap stays inspectable.
 PROSE_ONLY_RULE = "prose-only (not in a fenced block)"
+BARE_SCRIPT_NOT_INVOKED_RULE = "bare-script-not-invoked"
+
+# Only recognized switches that leave the next operand as the script are skipped.
+# Other interpreter modes/options are deliberately unsupported, rather than guessing
+# whether their operands name a file to execute.
+_INTERPRETER_FLAGS = {
+    "python": {"-u", "-B", "-E", "-I", "-O", "-OO", "-s", "-S", "-v"},
+    "python2": {"-u", "-B", "-E", "-O", "-OO", "-s", "-S", "-v"},
+    "python3": {"-u", "-B", "-E", "-I", "-O", "-OO", "-s", "-S", "-v"},
+    "bash": {"-e", "-u", "-x"},
+    "sh": {"-e", "-u", "-x"},
+    "node": set(),
+}
+
+
+def _invoked_script_words(source: str) -> List[str]:
+    """Read command words and interpreter script operands from a shell AST.
+
+    Source positions preserve PowerShell's `.\\` prefix: bashlex's cooked word
+    treats that backslash as shell escaping. Parse failures and unsupported syntax
+    provide no invocation evidence; there is no text-scanning fallback.
+    """
+    invoked: List[str] = []
+
+    class InvocationVisitor(bashlex.ast.nodevisitor):
+        def visitcommand(self, node, parts):
+            words = [source[part.pos[0]:part.pos[1]]
+                     for part in parts if part.kind == "word"]
+            if not words:
+                return
+            invoked.append(words[0])
+            command = normalise_candidate(words[0]).replace("\\", "/").rsplit("/", 1)[-1]
+            if command.lower() in {"pwsh", "powershell", "pwsh.exe", "powershell.exe"}:
+                # Only host switches can precede -File. After a command operand,
+                # the same spelling may belong to that command's own arguments.
+                host_flags = {"-noprofile", "-noninteractive", "-nologo",
+                              "-noexit", "-sta", "-mta"}
+                for index, word in enumerate(words[1:], 1):
+                    if word.lower() in host_flags:
+                        continue
+                    if word.lower() == "-file" and index + 1 < len(words):
+                        invoked.append(words[index + 1])
+                    return
+                return
+            flags = _INTERPRETER_FLAGS.get(command)
+            if flags is None:
+                return
+            for word in words[1:]:
+                if word in flags:
+                    continue
+                if not word.startswith("-"):
+                    invoked.append(word)
+                return
+
+    try:
+        # PowerShell backtick-newline is a lexical continuation, like Bash's
+        # backslash-newline. The equal-length replacement keeps AST offsets valid
+        # against the original source, without guessing commands from text lines.
+        shell_source = source.replace("`\r\n", "\\\r\n").replace("`\n", "\\\n")
+        trees = bashlex.parse(shell_source)
+        visitor = InvocationVisitor()
+        for tree in trees:
+            visitor.visit(tree)
+    except (bashlex.errors.ParsingError, NotImplementedError, ValueError):
+        return []
+    return invoked
 
 
 def _walk_inline(token, prose: List[str]) -> None:
@@ -559,7 +626,8 @@ def normalise_candidate(raw: str) -> str:
 
 
 def dismissal_rule(
-    value: str, payload_dirs: Sequence[str], *, in_fenced_block: bool = True
+    value: str, payload_dirs: Sequence[str], *, in_fenced_block: bool = True,
+    in_invocation: bool = True
 ) -> Optional[str]:
     """The first rule that disqualifies `value` as a gating payload reference, or None.
 
@@ -598,18 +666,28 @@ def dismissal_rule(
         return "dot-prefixed"
     if not in_fenced_block:
         return PROSE_ONLY_RULE
+    if bare_script and not in_invocation:
+        return BARE_SCRIPT_NOT_INVOKED_RULE
     return None
 
 
 def extract_candidates(body: str, payload_dirs: Sequence[str]) -> List[Candidate]:
     """Every path-shaped token in the body, deduped, each tagged with origin and rule.
 
-    Code blocks are tokenised on whitespace, so a command line like
+    Code blocks are tokenized on whitespace, so a command line like
     `python scripts/next_break.py --schedule regular` yields the path token rather than
     the whole command. A value seen in ANY code block counts as fenced even when it also
-    appears in prose — appearing in a runnable command is the evidence that makes it gate.
+    appears in prose. Bare script names additionally require an AST invocation position;
+    arguments and diagrams still appear in the audit, but cannot gate by themselves.
     """
     fenced_raws, prose_raws = split_code_regions(body)
+    invoked_raws = []
+    for token in _MARKDOWN.parse(body):
+        if token.type in ("fence", "code_block"):
+            invoked_raws.extend(_invoked_script_words(token.content))
+    invoked_values = {normalise_candidate(raw) for raw in invoked_raws}
+    # Keep whole quoted invocation words, including filenames containing spaces.
+    fenced_raws.extend(invoked_raws)
 
     fenced_values = {normalise_candidate(raw) for raw in fenced_raws if raw.strip()}
 
@@ -627,7 +705,8 @@ def extract_candidates(body: str, payload_dirs: Sequence[str]) -> List[Candidate
             raw=raw,
             value=value,
             origin="fenced" if in_fenced else "prose",
-            dismissed_by=dismissal_rule(value, payload_dirs, in_fenced_block=in_fenced),
+            dismissed_by=dismissal_rule(value, payload_dirs, in_fenced_block=in_fenced,
+                                       in_invocation=value in invoked_values),
         ))
     return candidates
 

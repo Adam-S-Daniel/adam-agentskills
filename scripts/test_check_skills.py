@@ -401,6 +401,14 @@ def test_dangling_payload_ref_dedupes_within_one_skill(tmp_path, local_registry)
     ("node review.js", "review.js"),
     ('python3 "review.py"', "review.py"),
     ("pwsh -File './review.ps1'", "review.ps1"),
+    ("./review.sh --input scans", "review.sh"),
+    ("review.sh --input scans", "review.sh"),
+    ("python3 -u 'review.py' input.py", "review.py"),
+    ('node "review script.js" input.js', "review script.js"),
+    ("pwsh -NoProfile -File review.ps1 input.ps1", "review.ps1"),
+    ("printf ready && python3 ocr_pdfs.py --input scans", "ocr_pdfs.py"),
+    (r"printf ready && .\Compare-OcrPdfs.ps1 -InputFolder scans", "Compare-OcrPdfs.ps1"),
+    ("printf ready | review.sh", "review.sh"),
 ])
 def test_bare_script_in_code_block_requires_a_local_payload(
     tmp_path, local_registry, command, filename
@@ -419,6 +427,98 @@ def test_bare_script_in_prose_is_a_dismissed_candidate(tmp_path, local_registry)
     report = run_tool(tmp_path, local_registry)
     assert report.errors == []
     assert _dismissed(report)["review.py"] == check_skills.PROSE_ONLY_RULE
+
+
+@pytest.mark.parametrize("language, command, filename", [
+    ("powershell", '.\\Compare-OcrPdfs.ps1 `\n'
+     '  -FolderPath "C:\\documents\\inbox" `\n'
+     '  -FrameDelay 500 `\n  -StartAt 0', "Compare-OcrPdfs.ps1"),
+    ("powershell", '.\\Compare-OcrPdfs.ps1 `\r\n'
+     '  -FolderPath "C:\\documents\\inbox" `\r\n'
+     '  -FrameDelay 500 `\r\n  -StartAt 0', "Compare-OcrPdfs.ps1"),
+    ("bash", 'python3 ocr_pdfs.py \\\n'
+     '  --csv /path/to/audit.csv \\\n'
+     '  --log /path/to/progress.log \\\n  --workers 2\n'
+     'python3 ocr_pdfs.py --dry-run\npython3 ocr_pdfs.py --resume', "ocr_pdfs.py"),
+])
+def test_original_multiline_ocr_invocations_still_require_payloads(
+    tmp_path, local_registry, language, command, filename
+):
+    skill_dir = write_skill(tmp_path, "skills/multiline-ocr",
+                            body=f"\n```{language}\n{command}\n```\n")
+    report = run_tool(tmp_path, local_registry)
+    found = messages(report, check_skills.K_DANGLING_PAYLOAD_REF)
+    assert len(found) == 1 and f"'{filename}'" in found[0]
+    (skill_dir / filename).write_text("# local helper\n", encoding="utf-8")
+    assert run_tool(tmp_path, local_registry).errors == []
+
+
+@pytest.mark.parametrize("language, command, filename", [
+    ("bash", "cd cms-platform/e2e && npx playwright test "
+     "--project=chromium-light decap-config-render-parity.test.js",
+     "decap-config-render-parity.test.js"),
+    ("", "  → patch-preview-config.sh → repoint admin/config.yml for this PR",
+     "patch-preview-config.sh"),
+    ("bash", 'printf "%s" "review.py"', "review.py"),
+    ("bash", "python3 main.py input.py", "input.py"),
+    ("bash", "bash main.sh input.sh", "input.sh"),
+    ("bash", "node main.js input.js", "input.js"),
+    ("powershell", "pwsh -File main.ps1 input.ps1", "input.ps1"),
+    ("powershell", "pwsh -Command Write-Output -File output.ps1", "output.ps1"),
+    ("powershell", "pwsh -File main.ps1 -File output.ps1", "output.ps1"),
+    ("bash", "python3 -c 'print(1)' input.py", "input.py"),
+    ("bash", "node --eval 'console.log(1)' input.js", "input.js"),
+    ("bash", "bash -c 'printf ready' input.sh", "input.sh"),
+    ("", "python3 review.py && (", "review.py"),
+    ("bash", "value=$((1 + 2))\npython3 review.py", "review.py"),
+])
+def test_bare_script_outside_supported_invocation_positions_is_dismissed(
+    tmp_path, local_registry, language, command, filename
+):
+    skill_dir = write_skill(tmp_path, "skills/arguments",
+                            body=f"\n```{language}\n{command}\n```\n")
+    for helper in ("main.py", "main.sh", "main.js", "main.ps1"):
+        (skill_dir / helper).write_text("# local helper\n", encoding="utf-8")
+    report = run_tool(tmp_path, local_registry)
+    assert report.errors == []
+    assert _dismissed(report)[filename] == check_skills.BARE_SCRIPT_NOT_INVOKED_RULE
+
+
+def test_repo_relative_script_argument_keeps_its_structural_dismissal(
+    tmp_path, local_registry
+):
+    write_skill(tmp_path, "skills/repo-path", body=(
+        "\n```bash\ncd project && node e2e/review.js\n```\n"))
+    report = run_tool(tmp_path, local_registry)
+    assert report.errors == []
+    assert _dismissed(report)["e2e/review.js"] == "not-payload-dir"
+
+
+@pytest.mark.parametrize("commands", [
+    "printf '%s' review.py\npython3 review.py",
+    "python3 review.py\nprintf '%s' review.py",
+])
+def test_bare_script_invocation_wins_over_arguments_and_prose_when_deduped(
+    tmp_path, local_registry, commands
+):
+    body = f"\nAnother skill uses `review.py`.\n\n```bash\n{commands}\n```\n"
+    write_skill(tmp_path, "skills/repeated-invocation", body=body)
+    report = run_tool(tmp_path, local_registry)
+    found = messages(report, check_skills.K_DANGLING_PAYLOAD_REF)
+    assert len(found) == 1 and "'review.py'" in found[0]
+    candidates = check_skills.extract_candidates(body, ["scripts"])
+    matching = [candidate for candidate in candidates if candidate.value == "review.py"]
+    assert len(matching) == 1
+    assert matching[0].origin == "fenced" and matching[0].dismissed_by is None
+
+
+def test_qualified_payload_arguments_still_gate_without_being_invoked(
+    tmp_path, local_registry
+):
+    write_skill(tmp_path, "skills/qualified-argument",
+                body="\n```bash\ncat scripts/review.py\n```\n")
+    report = run_tool(tmp_path, local_registry)
+    assert len(messages(report, check_skills.K_DANGLING_PAYLOAD_REF)) == 1
 
 
 @pytest.mark.parametrize("filename, rule", [
@@ -952,7 +1052,8 @@ def test_shipped_field_types_declare_only_recognised_shapes():
 # =================================================================================
 
 
-def test_a_missing_dependency_exits_2_and_names_the_remedy(tmp_path):
+@pytest.mark.parametrize("dependency", ["markdown_it", "bashlex"])
+def test_a_missing_dependency_exits_2_and_names_the_remedy(tmp_path, dependency):
     """A hosted session has none of `requirements-dev.txt` installed, so the import of
     `markdown_it` is the first thing that fails there. It used to fail as a bare
     ModuleNotFoundError traceback, which reads as "this script is broken" rather than
@@ -966,8 +1067,8 @@ def test_a_missing_dependency_exits_2_and_names_the_remedy(tmp_path):
     """
     blocked = tmp_path / "blockmod"
     blocked.mkdir()
-    (blocked / "markdown_it.py").write_text(
-        'raise ImportError("No module named \'markdown_it\'", name="markdown_it")\n')
+    (blocked / f"{dependency}.py").write_text(
+        f'raise ImportError("No module named {dependency}", name="{dependency}")\n')
 
     env = dict(os.environ, PYTHONPATH=str(blocked))
     proc = subprocess.run(
@@ -976,7 +1077,7 @@ def test_a_missing_dependency_exits_2_and_names_the_remedy(tmp_path):
 
     # 2 is "nothing was checked", never 1 ("checked, and here are the findings").
     assert proc.returncode == 2, (proc.returncode, proc.stdout, proc.stderr)
-    assert "markdown_it" in proc.stderr
+    assert dependency in proc.stderr
     assert "requirements-dev.txt" in proc.stderr
     # The remedy has to survive the distro PyYAML that ships without installer
     # metadata, or the named command fails and the reader is no better off.

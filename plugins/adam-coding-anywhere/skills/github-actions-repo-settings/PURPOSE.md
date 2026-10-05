@@ -24,3 +24,13 @@ corrected 2026-10-04.
 ## Eval status
 
 No eval fixture exists for this skill in skills-evals.
+
+## History moved from SKILL.md (2026-10-05)
+
+- In this fleet, `_agent-guidance`'s nightly `drift-report.yml` triggered the
+  "hold the ruleset while a workflow pushes to its own default branch" case.
+- The cms-platform settings-as-code work (`repo-settings.yml` manifest +
+  `scripts/audit-repo-settings.js`, rulesets) merged 2026-07-13 as cms-platform
+  PR #168, `feat/109-repo-settings-as-code`.
+- The first version of that work (PR #168) did not manage the Actions-permissions
+  settings, and SKILL.md once described that as a gap to close.

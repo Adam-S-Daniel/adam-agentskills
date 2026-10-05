@@ -30,8 +30,8 @@ description matches on; and nothing enforces it. ADR 0002's reach objection
 ("a skill only applies in a session that loaded it") cuts the other way here:
 the ~18 cloud-only fleet repos cannot run `powershell.exe`, so `base.md` would
 ship the text to every session that can never use it, while local Windows sessions are
-durable and install `adam-coding-local` from the marketplace. `base.md` keeps a
-one-clause pointer; this skill carries the procedure.
+durable and install `adam-coding-local` from the marketplace. `base.md` kept a
+one-clause pointer at the time (since removed); this skill carries the procedure.
 
 `adam-coding-local` because it is a machine-bound coding skill (a WSL session
 on a Windows host); `adam-coding-anywhere` is the cloud-safe one.

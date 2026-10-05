@@ -9,12 +9,10 @@ Guide for diagnosing and fixing GitHub Actions workflow failures.
 
 ## Prerequisites: Installing gh CLI
 
-The `gh` CLI is often not pre-installed in remote environments. Install it directly:
-
-```bash
-curl -sL https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_amd64.tar.gz | tar xz -C /tmp
-export PATH="/tmp/gh_2.101.0_linux_amd64/bin:$PATH"
-```
+The `gh` CLI is often not pre-installed in remote environments. Check
+`command -v gh` first; if it is missing, install it per the official
+instructions at https://github.com/cli/cli#installation, taking the newest
+release that is at least 7 days old (the fleet's dependency cooling-off rule).
 
 If `gh` is unavailable or unauthenticated, use the GitHub API via `WebFetch`:
 
@@ -34,7 +32,7 @@ WebFetch: https://api.github.com/repos/{owner}/{repo}/check-runs/{job_id}/annota
 
 ### 2. Read Actual Logs — Don't Trust Status Badges
 
-**CRITICAL**: A workflow showing "success" does NOT mean it actually succeeded. Common false-success patterns:
+A workflow showing "success" does not mean it actually succeeded. Common false-success patterns:
 
 - **Process substitution silently swallows errors**: `mapfile -t ARR < <(command_that_fails)` will NOT trigger `set -e`. The array will simply be empty and the script continues.
 - **Scripts that handle empty results gracefully**: If a script says "no items found, exiting" with `exit 0`, the workflow shows success even though it did nothing useful.

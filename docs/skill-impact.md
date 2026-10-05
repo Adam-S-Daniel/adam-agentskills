@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-05 — adam-coding-anywhere/github-actions-repo-settings, adam-coding-anywhere/skills-doctor, adam-coding-anywhere/debug-github-workflows, adam-coding-local/windows-elevation-from-wsl — edit
+
+- Motivation: prompt-audit sweep 2026-10-05, [issue #50](https://github.com/Adam-S-Daniel/adam-agentskills/issues/50): stale pointers to fleet guidance, history narrative in SKILL.md bodies, an inconsistent signal count in skills-doctor, a hard-coded `gh` pin, and an emphatic "CRITICAL" lead-in.
+- Change: github-actions-repo-settings names the fleet guidance's "Pinning GitHub Actions" section instead of AGENTS.md and moves its dated history to PURPOSE.md; skills-doctor states the multi-repo shadow-guard rule and moves three incident/measurement stories to PURPOSE.md, and its signal count now reads seven; debug-github-workflows checks `command -v gh` and defers to the official install instructions (newest release at least 7 days old) instead of a pinned tarball, and drops "CRITICAL"; windows-elevation-from-wsl drops the claim that the fleet guidance carries a pointer at it.
+- Eval: not run. Skills-evals fixtures exist (`evals/debug-github-workflows`, `evals/github-actions-repo-settings`, `evals/skills-doctor`, `evals/windows-elevation-from-wsl`) and were not run by the laptop issue worker; the owner runs them before merge (touch gate outstanding).
+- Outcome: pending review and merge.
+
 ## 2026-10-04 — adam-non-coding-local/rename-pdfs — edit (correction)
 
 - Motivation: a prompt-audit triage of the local rename-pdfs evals (3 of 6 `with_skill` trials, qualify t2 and t3 and pr45-n3 t1, fell back to the scan filename for the statement date and scored date priority 1; the other three scored 8, 5 and 5) traced part of the date miss to the helper: `scripts/extract_pdf_context.py` had no day-first month-name pattern, so "1 Jan 2026" produced an empty `dates_in_text` and the priority list fell through to the filename.

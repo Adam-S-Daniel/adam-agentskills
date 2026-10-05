@@ -188,8 +188,7 @@ Rules of thumb used:
 - **fork, or owned by another settings system** -> excluded (`manage: false`);
 - **a workflow pushes to its own default branch** -> hold the ruleset until the
   workflow is converted to open a PR (e.g. `peter-evans/create-pull-request`).
-  (In this fleet, `_agent-guidance`'s nightly `drift-report.yml` triggered this
-  hold.) For a fleet-standard bot that must keep writing to every managed
+  (Incident: see PURPOSE.md.) For a fleet-standard bot that must keep writing to every managed
   default branch, the sanctioned alternative is a declared `bypass_actors`
   entry in the fleet config (see the schema) -- the agents-md-sync App is the
   standing example (repo-settings ADR 0001).
@@ -201,8 +200,8 @@ Rules of thumb used:
 `cms-platform` and the sites that consume it (`adamdaniel.ai`,
 `jodidaniel.com`) manage their **own** settings-as-code from the platform: a
 `repo-settings.yml` manifest + `scripts/audit-repo-settings.js`, propagated to
-consumers when sites are scaffolded/re-synced, using **rulesets** (merged
-2026-07-13 as cms-platform PR #168, `feat/109-repo-settings-as-code`).
+consumers when sites are scaffolded/re-synced, using **rulesets** (history:
+see PURPOSE.md).
 
 **These repos are excluded from the fan-out** (`manage: false`). Reason: the
 fan-out and the platform would otherwise be two independent sources of truth for
@@ -216,8 +215,7 @@ enforces** (`sha_pinning_required`, fork-PR `approval_policy`): its
 `repo-settings.yml` carries an `actions_permissions` block, and
 `audit-repo-settings.js` reads and writes `actions/permissions` and
 `.../fork-pr-contributor-approval`, skipping the fork endpoint on private repos
-(HTTP 422). The first version of that work (PR #168) did not, and this file
-once described that as a gap to close. Do **not** let the fan-out manage these
+(HTTP 422) (history: see PURPOSE.md). Do **not** let the fan-out manage these
 repos to cover for it.
 
 **Divergence to be aware of:** the platform's `main` ruleset uses
@@ -343,8 +341,9 @@ If API endpoints change: **Settings > Actions > General** for settings 1-2;
 
 - After enabling `sha_pinning_required`, existing workflows with unpinned
   actions will fail. The pin format this repo setting demands is not a skill
-  you have to load -- it is always-on managed guidance: see **AGENTS.md ->
-  "Pinning GitHub Actions"** for the full 40-character SHA, the 7-day
+  you have to load -- it is always-on managed guidance: see the fleet guidance's
+  **"Pinning GitHub Actions"** section (installed into user memory by the
+  fleet-memory hook) for the full 40-character SHA, the 7-day
   cooling-off before adopting a release, dereferencing annotated tags, and the
   `./local` / `docker://` refs that have nothing to pin. The SHA stands alone:
   do NOT annotate it with a trailing `# vX.Y.Z` version comment. That

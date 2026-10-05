@@ -96,8 +96,9 @@ expectation the rest of this skill can only describe, never verdict.
 
 ## 3. Collect the actual
 
-Five independent signals. Gather all five — each one is blind to something the
-others see.
+Seven independent signals: the five commands below, the session's own skill
+listing, and on a terminal the `--account-channel` check. Gather them all —
+each one is blind to something the others see.
 
 ```bash
 ls -1 ~/.claude/skills/                    # personal store: hook-installed or hand-placed
@@ -107,11 +108,11 @@ cat ~/.claude/skills/synced/*/manifest.json  # per skill: skillId, source, updat
 claude plugin list --json                  # installed bundles + the commit SHA each resolved to
 ```
 
-On a terminal, add a sixth: `--account-channel` below, because from 2.1.273+
+On a terminal, add the `--account-channel` check below, because from 2.1.273+
 the account store loads there too and `ls` alone cannot tell you whether it is
 switched on.
 
-The sixth signal is **the session's own skill listing** — the names offered to
+The listing signal is **the session's own skill listing** — the names offered to
 the Skill tool in this context. It is the only signal that says what the model
 can actually *trigger*, and it is the authority when it disagrees with disk.
 Read it out of context; do not reconstruct it from the filesystem.
@@ -180,10 +181,9 @@ the project dir's own `skills.lock`; when the project dir has none it resolves
 the `skills.lock` of every child GIT REPOSITORY one level below and reports per
 lock — a plain subdirectory carrying a lock is not one, because the hook does
 not read it either (ADR 0007). That second case is
-the multi-repo session, and it is the one the old bare default got wrong: it
-resolved to nothing at the parent and reported the absence of a lock as though
-it were the absence of a problem — 0 findings, exit 0, over nine undelivered
-skills. Naming a lock explicitly is still honoured exactly, and never widened
+the multi-repo session, where a bare default that resolved to nothing would
+report the absence of a lock as the absence of a problem (incident: see
+PURPOSE.md). Naming a lock explicitly is still honoured exactly, and never widened
 into a scan. Several locks judging one store names **no winner** among them;
 every finding says which lock declared it, and identical findings from several
 locks are folded into one that names them all.
@@ -403,13 +403,9 @@ python3 <registry>/scripts/check_skills.py
 **A hand-rolled grep for those paths does not approximate this check — it
 inverts it.** The rule that matters is `PROSE_ONLY_RULE` in that script: only a
 path inside a *fenced code block* gates, because a skill legitimately names
-paths belonging to OTHER repos in prose and in backticks. Measured 2026-08-25: a
-grep for `(scripts|references|assets|templates)/…` over the installed store
-reported **21 missing payloads**, every one of them a reference to a script in
-the cms-platform repo (`bash <cms-platform>/scripts/set-repo-variables.sh`).
-`check_skills.py` on the same tree reported **0 findings**. The hand version is
-not a weaker check, it is a wrong one, and 21 confident false positives will
-bury the real finding if there ever is one.
+paths belonging to OTHER repos in prose and in backticks. The hand version is
+not a weaker check, it is a wrong one, and confident false positives will
+bury the real finding if there ever is one (measurement: see PURPOSE.md).
 
 If the script cannot run, say the check is **unavailable** rather than
 substituting the grep. It exits **2** — distinct from 1, which is findings —
@@ -489,24 +485,17 @@ exact inversion. No remediation is performed — recommend, do not do.
   session, one repo's committed skills are advertised while you are working in
   another. Enumerate all workspace roots before concluding a skill "came from
   nowhere".
-- **The shadow guard used to be INERT in a multi-repo shape, and both halves
-  moved together when it was fixed.** The hook and `check_provenance.py` both
-  looked for repo-owned skills at `$PROJECT_DIR/.claude/skills/<name>/SKILL.md`
-  alone. When the project dir is the parent of several repos that directory
-  does not exist at all, so the guard could never fire for ANY of them, and
-  `delivered-by-the-project` could never be the reason a locked skill was
-  absent — worse, the doctor's lookup returned a confident measured *empty set*
-  rather than "unknown", so it reported the next run as replacing a directory
-  that run deletes. Both now consult the project dir **plus every accepted
-  lock's own repo**, first answer wins, and the report NAMES the directory that
-  won because "repo-owned" no longer identifies a single repo. ADR 0005's
-  footnote is why the two had to move in one change: the doctor's lookup exists
-  to *suppress* a finding, so widening one side alone makes the net effect
-  unreadable. One residual is recorded rather than fixed — under a union, one
-  repo's project-owned skill now suppresses delivery of a locked skill the
-  other repos asked for. Still worth doing the shadowing comparison by hand
-  against each workspace root, per the `comm` recipe above, when the answer
-  matters.
+- **The shadow guard consults every repo in a multi-repo shape.** The hook and
+  `check_provenance.py` both look for repo-owned skills in the project dir
+  **plus every accepted lock's own repo**, first answer wins, and the report
+  NAMES the directory that won because "repo-owned" no longer identifies a
+  single repo. The two had to move in one change (ADR 0005's footnote): the
+  doctor's lookup exists to *suppress* a finding, so widening one side alone
+  makes the net effect unreadable. One residual is recorded rather than fixed
+  — under a union, one repo's project-owned skill now suppresses delivery of a
+  locked skill the other repos asked for. Still worth doing the shadowing
+  comparison by hand against each workspace root, per the `comm` recipe above,
+  when the answer matters. (History: see PURPOSE.md.)
 - **Absence from the listing is not absence from disk.** Deduplication and the
   listing budget both drop entries. Check disk *and* listing; a mismatch
   between them is itself a finding.

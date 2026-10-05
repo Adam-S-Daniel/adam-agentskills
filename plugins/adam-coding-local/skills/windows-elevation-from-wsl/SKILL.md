@@ -137,7 +137,6 @@ works from here.*
 
 ## Where the rule lives
 
-The fleet guidance's "Workstation layout" carries a one-clause pointer at this
-skill for any Windows host with WSL; this file is the procedure. The repo where it was learned
+This file is the procedure. The repo where it was learned
 (`wsl-automation`) keeps only what is specific to its scheduled tasks in its
 own `AGENTS.md`.

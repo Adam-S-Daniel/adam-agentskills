@@ -40,6 +40,27 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-04 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: the built-in `/skill-doctor` (2.1.261) measures per-skill context cost and usage better than this skill's estimate, and the one-letter name difference made the description's "always-on context cost" a trigger hazard ([#13](https://github.com/Adam-S-Daniel/adam-agentskills/issues/13)); a `/doctor prompt-audit` run also found old-registry issue references and a measured `adam` bundle figure for a bundle that no longer exists.
+- Change: the description no longer claims context cost, the Context cost section points at `claude -p /skill-doctor` (machine-local, not under `--bare` or Remote Control) and keeps only the delivery consequence, the report no longer closes with a context-cost figure, and three old-registry issue references (#85, agentskills#122, #157) are removed from the body. `adam-coding-anywhere` bumped 1.2.3 -> 1.2.4 (one bump covers the three entries). The 2026-10-04 entry below recorded the scope as not narrowed; this narrows it.
+- Eval: none run. A skills-evals fixture exists (`evals/skills-doctor/`), so the touch gate's eval is outstanding. The edit narrows scope and deletes text; it adds no instruction a fixture would need to measure.
+- Outcome: pending review and merge.
+
+## 2026-10-04 — adam-coding-anywhere/github-actions-repo-settings — edit (correction)
+
+- Motivation: the skill said the cms-platform settings-as-code work was "landing via PR #168" and listed the Actions-permissions settings as a "known gap to close"; a `/doctor prompt-audit` flagged it, and the PR had merged 2026-07-13 with `actions_permissions` already in the platform's `repo-settings.yml`.
+- Change: the section states the platform manages `sha_pinning_required` and the fork-PR `approval_policy`, with the 422 skip on private repos. Add on-touch `PURPOSE.md`.
+- Eval: none run; no skills-evals fixture exists for this skill.
+- Outcome: pending review and merge.
+
+## 2026-10-04 — adam-coding-anywhere/debug-github-workflows — edit
+
+- Motivation: the install block pinned `gh` v2.67.0, many releases old; a `/doctor prompt-audit` proposed resolving `releases/latest` at run time, which this registry declines (fleet rule: exact pins, 7-day cooldown).
+- Change: the pin moves by hand to v2.101.0, the newest release older than 7 days (published 2026-09-15; tarball layout checked). Add on-touch `PURPOSE.md`. The "**CRITICAL**" lead-in stays: it carries this skill's central point and its reason follows in the same paragraph.
+- Eval: none run; no skills-evals fixture exists for this skill.
+- Outcome: pending review and merge.
+
 ## 2026-10-04 — adam-non-coding-local/ocr-pdfs — edit (correction)
 
 - Motivation: review of [the missing-helper correction](https://github.com/Adam-S-Daniel/adam-agentskills/issues/26) exposed two census false positives: a repository test filename passed to a runner and a script named in a pipeline diagram.

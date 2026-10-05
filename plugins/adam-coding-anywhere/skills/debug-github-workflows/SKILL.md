@@ -12,8 +12,8 @@ Guide for diagnosing and fixing GitHub Actions workflow failures.
 The `gh` CLI is often not pre-installed in remote environments. Install it directly:
 
 ```bash
-curl -sL https://github.com/cli/cli/releases/download/v2.67.0/gh_2.67.0_linux_amd64.tar.gz | tar xz -C /tmp
-export PATH="/tmp/gh_2.67.0_linux_amd64/bin:$PATH"
+curl -sL https://github.com/cli/cli/releases/download/v2.101.0/gh_2.101.0_linux_amd64.tar.gz | tar xz -C /tmp
+export PATH="/tmp/gh_2.101.0_linux_amd64/bin:$PATH"
 ```
 
 If `gh` is unavailable or unauthenticated, use the GitHub API via `WebFetch`:

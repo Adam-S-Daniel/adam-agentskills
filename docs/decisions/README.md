@@ -104,3 +104,4 @@ Optional sections for high-impact decisions:
 | [0012](0012-serve-the-account-skills-as-one-repo-synced-plugin.md) | Serve the account's skills as one repo-synced plugin | Superseded by 0013 |
 | [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) | Start a fresh public registry and group plugins by audience and runtime | Accepted |
 | [0014](0014-retire-the-account-zip-upload-channel.md) | Retire the account ZIP-upload channel | Accepted |
+| [0015](0015-turn-the-non-coding-local-bundle-off-on-linux-and-wsl.md) | Turn the non-coding local bundle off on Linux and WSL, leave it on in Windows | Accepted |

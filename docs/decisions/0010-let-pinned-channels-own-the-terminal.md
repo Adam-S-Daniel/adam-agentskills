@@ -1,6 +1,6 @@
 # 0010. Let pinned channels own the terminal and leave the account channel the surfaces with nothing else
 
-- **Status:** Accepted (2026-09-23)
+- **Status:** Accepted (2026-09-23); partially superseded by [0014](0014-retire-the-account-zip-upload-channel.md) — the ZIP-upload account channel it leaves "the surfaces with nothing else" is retired, but `syncClaudeAiSkills: false` stays
 - **Date:** 2026-09-18
 - **Deciders:** Adam Daniel
 
@@ -19,7 +19,8 @@ its mirror.
 
 **Now**, every terminal session signed in with the account downloads all 21
 account skills at start, re-checks claude.ai every ~10 minutes, and loads them
-as `anthropic-skills:<name>`. A same-named local, plugin or bundled skill keeps
+as `anthropic-skills:<name>` (see the 2026-10-04 update below for how the CLI
+names and shows them since). A same-named local, plugin or bundled skill keeps
 the short name and the synced copy stays loaded under the long one
 ([When a synced skill name matches another command](https://code.claude.com/docs/en/skills#when-a-synced-skill-name-matches-another-command)).
 
@@ -80,6 +81,44 @@ it is which descriptions survive.
    that old-registry #157 has landed — measured in that PR: `Recorded 10/10 declared skills`
    from a cloud session. The record half of ADR 0006's loop stops needing the
    laptop.
+
+### Update 2026-10-04: how the CLI names and shows synced skills
+
+Claude Code changed this after the ADR was accepted; the decision below stands.
+Quoted from the release notes, with the version:
+
+- [2.1.269](https://github.com/anthropics/claude-code/releases/tag/v2.1.269):
+  synced skills in cloud sessions are named `anthropic-skills:<name>`, matching
+  Claude Desktop, and the bare name still works when nothing else uses it.
+- [2.1.281](https://github.com/anthropics/claude-code/releases/tag/v2.1.281):
+  the `/` menu, `/skills`, `/context` and `/plugin` show a synced skill by its
+  short name when no other command uses it. The `anthropic-skills:<name>` form
+  above is therefore the full name, not always what is displayed.
+- [2.1.282](https://github.com/anthropics/claude-code/releases/tag/v2.1.282):
+  `anthropic-skills` and `claude-ai` became reserved namespaces. Skill folders,
+  command files and workflow commands in either no longer load, a plugin so
+  named still loads but ties with synced skills, and
+  `Skill(anthropic-skills:*)` / `Skill(claude-ai:*)` allow rules cover only
+  skills synced from claude.ai. This registry names nothing in either
+  namespace (no skill, plugin, marketplace or setup step).
+- [2.1.271](https://github.com/anthropics/claude-code/releases/tag/v2.1.271)
+  and [2.1.273](https://github.com/anthropics/claude-code/releases/tag/v2.1.273):
+  copies not refreshed within `cleanupPeriodDays`, and copies left after the
+  organization turns Skills off, move to the recoverable trash
+  (`~/.claude/skills/.trash/`).
+- [2.1.280](https://github.com/anthropics/claude-code/releases/tag/v2.1.280):
+  fixed skills in `~/.claude/skills/` being moved to `.trash/` when a
+  `manifest.json` in that folder listed their names. The bootstrap hook installs
+  into that folder but never writes a `manifest.json`; only a flat manifest
+  from an older CLI naming a hook-installed skill could trigger the bug, and
+  only on a CLI older than 2.1.280.
+- [2.1.228](https://github.com/anthropics/claude-code/releases/tag/v2.1.228):
+  synced skills no longer shadow local commands or MCP prompts, their
+  descriptions are sanitized and labeled, and on a machine their bodies do not
+  run `!` commands or expand `@` files.
+
+None of this was re-measured against a live CLI here; it restates the release
+notes.
 
 ## Decision
 

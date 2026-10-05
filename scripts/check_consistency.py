@@ -29,7 +29,7 @@ hardcoded):
     resolver's 16-hop depth limit, with no cycles, no self-mappings, and
     no key that shadows a current plugin name;
   - skill directory basenames are unique across the whole repo, since they
-    key setup.sh's per-agent symlinks and claude.ai skill uploads;
+    key setup.sh's per-agent symlinks and consumer skills.lock entries;
   - optionally, that no skill basename collides with one in another repo
     with the same plugins/*/skills/* layout (--private-registry PATH).
 
@@ -82,7 +82,7 @@ GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9.
 # falsely.
 #
 # Why exactly these two, checked against the CLI's own plugin-source schema
-# (Claude Code 2.1.231; CI pins 2.1.223) rather than assumed:
+# (Claude Code 2.1.231, when CI pinned 2.1.223) rather than assumed:
 #   * the `github` variant of a marketplace PLUGIN source declares `repo`, plus
 #     optional `ref` and `sha` — and nothing else;
 #   * `path` is NOT part of it. It belongs to the separate MARKETPLACE source

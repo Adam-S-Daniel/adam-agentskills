@@ -63,9 +63,9 @@ Write-Host "Watching run $runId ..." -ForegroundColor Cyan
 $runExit = $LASTEXITCODE
 
 # For privacy, the workflow does NOT print the report (addresses) to its public
-# log — it emails the report to the configured FASTMAIL_REPORT_TO address.
+# log - it emails the report to the configured FASTMAIL_REPORT_TO address.
 if ($runExit -eq 0) {
-    Write-Host "`nDone. The report (pre-existing + added/would-add addresses) was emailed to your FASTMAIL_REPORT_TO address — check your inbox." -ForegroundColor Green
+    Write-Host "`nDone. The report (pre-existing + added/would-add addresses) was emailed to your FASTMAIL_REPORT_TO address - check your inbox." -ForegroundColor Green
 } else {
     Write-Host "`nThe run did not succeed. See the run for the (non-sensitive) status." -ForegroundColor Yellow
 }

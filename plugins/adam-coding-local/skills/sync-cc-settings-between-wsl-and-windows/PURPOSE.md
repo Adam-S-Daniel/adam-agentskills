@@ -37,3 +37,8 @@ or by prompt, and leaves the per-OS keys alone.
 None. skills-evals' `DESIGN.md` "Deliberate non-coverage" table lists this
 skill as `defer` (machine-bound). The pytest module is the regression gate
 for the merge engine.
+
+- **Windows PowerShell 5.1 encoding compatibility (2026-10-05).** Registry-wide
+  normalization replaced typographic dashes in the script with ASCII equivalents
+  after another BOM-less launcher failed to parse under the ANSI codepage.
+  This changes comments and status punctuation, preserving merge behavior.

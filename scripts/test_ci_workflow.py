@@ -297,3 +297,221 @@ def test_the_gate_treats_skill_markdown_as_salient(tmp_path):
 def test_the_gate_fails_open_off_pull_request_events(tmp_path):
     out = _run_salience_body(tmp_path, ["docs/guide.md"], "workflow_dispatch")
     assert "run=true" in out and "run=false" not in out
+
+
+# --- The Claude Code install step (adam-agentskills#28, then "always latest") ---
+#
+# Harness CLIs always install latest (fleet rule, _agent-guidance "Dependency
+# updates"): the step resolves npm's `latest`, installs exactly that, checks
+# the `claude` on PATH IS that version (a stale one earlier on PATH would
+# shadow it), and records the version. These pin the shape, then execute the
+# real step body against fake `npm` / `claude` binaries.
+
+INSTALL_STEP = "Install Claude Code"
+
+
+def _install_step() -> dict:
+    job = load_ci()["jobs"]["plugin-validate"]
+    return next(s for s in job["steps"] if s.get("name") == INSTALL_STEP)
+
+
+def test_the_install_step_pins_no_claude_code_version():
+    import re
+    assert not re.search(r"claude-code@\d", _install_step()["run"])
+
+
+def test_the_install_step_always_installs_the_resolved_latest():
+    run = _install_step()["run"]
+    assert "command -v claude" not in run, "a preinstalled CLI must not be reused"
+    assert 'latest="$(npm view @anthropic-ai/claude-code version)"' in run
+    assert 'npm install -g "@anthropic-ai/claude-code@${latest}"' in run
+    assert '[[ "${version%% *}" == "$latest" ]]' in run
+
+
+def test_the_install_step_bounds_version_and_records_it():
+    run = _install_step()["run"]
+    assert run.splitlines()[0] == "set -euo pipefail"
+    assert 'version="$(timeout -k 10 60 claude --version)"' in run
+    assert '"::error::claude --version failed"' in run
+    assert '"::error::claude --version printed no version"' in run
+    assert '"$GITHUB_STEP_SUMMARY"' in run
+    assert "${{" not in run
+
+
+def test_the_plugin_validate_job_has_a_timeout():
+    minutes = load_ci()["jobs"]["plugin-validate"].get("timeout-minutes")
+    assert isinstance(minutes, int) and 0 < minutes <= 30
+
+
+LATEST = "2.1.300"
+
+
+def _run_install_step(tmp_path, npm_view=f'echo "{LATEST}"', install_ok=True,
+                      claude_body=None, shadow_body=None, timeout_args=None):
+    """Run the real step body with fake binaries on PATH.
+
+    The fake `npm view` runs `npm_view`; the fake `npm install -g
+    @anthropic-ai/claude-code@X` writes a `claude` into its own bin dir whose
+    body is `claude_body` (default: print "X (Claude Code)"). `shadow_body`,
+    when set, is a `claude` EARLIER on PATH than npm's bin dir.
+    """
+    import shutil
+    import subprocess
+    import sys
+
+    if sys.platform == "win32":
+        pytest.skip("fake executables on PATH need a POSIX shell")
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("no bash on PATH to execute the step body")
+    shadow = tmp_path / "shadow"
+    npm_bin = tmp_path / "npm-bin"
+    tools = tmp_path / "tools"
+    for d in (shadow, npm_bin, tools):
+        d.mkdir()
+
+    def write(path, body):
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    if shadow_body is not None:
+        write(shadow / "claude", shadow_body)
+    # The installed CLI's body; "@@VER@@" becomes the version npm was asked
+    # to install. A template file keeps shell quoting out of the fake npm.
+    template = tools / "claude.template"
+    template.write_text("#!/bin/sh\n" + (
+        claude_body if claude_body is not None
+        else 'echo "@@VER@@ (Claude Code)"') + "\n", encoding="utf-8")
+    write(tools / "npm", "\n".join([
+        'if [ "$1" = view ]; then',
+        '  [ "$*" = "view @anthropic-ai/claude-code version" ] || exit 8',
+        f'  {npm_view}',
+        '  exit $?',
+        'fi',
+        '[ "$1 $2" = "install -g" ] || exit 9',
+        'case "$3" in @anthropic-ai/claude-code@*) ;; *) exit 9 ;; esac',
+        'ver="${3#@anthropic-ai/claude-code@}"',
+        "exit 1" if not install_ok else ":",
+        f'sed "s/@@VER@@/$ver/g" "{template}" > "{npm_bin}/claude"',
+        f'chmod 755 "{npm_bin}/claude"',
+    ]))
+    summary = tmp_path / "summary.md"
+    summary.write_text("", encoding="utf-8")
+    env = {"PATH": f"{shadow}:{npm_bin}:{tools}:/usr/bin:/bin",
+           "GITHUB_STEP_SUMMARY": str(summary)}
+    body = _install_step()["run"]
+    if timeout_args is not None:
+        # The shipped bound is 60 s; a test cannot wait that long, so swap
+        # in a short one. The shape test pins the shipped value.
+        assert "timeout -k 10 60 " in body
+        body = body.replace("timeout -k 10 60 ", f"timeout {timeout_args} ")
+    result = subprocess.run(
+        # GitHub's default for a step with no `shell:` is `bash -e {0}`;
+        # anything stricter must come from the body's own `set` line.
+        [bash, "--noprofile", "--norc", "-e", "-c", body],
+        env=env, capture_output=True, text=True, timeout=120)
+    return result, summary.read_text(encoding="utf-8")
+
+
+def test_the_latest_version_is_installed_and_recorded(tmp_path):
+    result, summary = _run_install_step(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"Claude Code `{LATEST} (Claude Code)` (npm latest)" in summary
+
+
+def test_a_stale_cli_earlier_on_path_fails_the_step(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, shadow_body='echo "2.1.100 (Claude Code)"')
+    assert result.returncode != 0
+    assert (f"::error::claude on PATH reports '2.1.100 (Claude Code)', "
+            f"not npm latest {LATEST}") in result.stdout
+    assert summary == ""
+
+
+def test_an_unresolvable_latest_fails_the_step(tmp_path):
+    cases = {"exit 1": "could not resolve the latest Claude Code version",
+             "true": "npm reported no usable latest Claude Code version",
+             "echo '<html>'": "npm reported no usable latest Claude Code version",
+             "echo 2.2.0-beta.1": "npm reported no usable latest Claude Code version",
+             "printf '2.1.3\\n2.1.4\\n'": "npm reported no usable latest Claude Code version",
+             "echo 2x1y3": "npm reported no usable latest Claude Code version",
+             "echo ..": "npm reported no usable latest Claude Code version"}
+    for view, message in cases.items():
+        result, summary = _run_install_step(_fresh(tmp_path), npm_view=view)
+        assert result.returncode != 0, view
+        assert f"::error::{message}" in result.stdout, (view, result.stdout)
+        assert summary == "", view
+
+
+def test_a_shadowing_cli_whose_version_extends_latest_fails(tmp_path):
+    # A prefix match would take 2.1.30 for 2.1.3.
+    result, summary = _run_install_step(
+        tmp_path, npm_view='echo "2.1.3"',
+        shadow_body='echo "2.1.30 (Claude Code)"')
+    assert result.returncode != 0
+    assert "::error::claude on PATH reports '2.1.30 (Claude Code)', not npm latest 2.1.3" in result.stdout
+    assert summary == ""
+
+
+def test_multi_line_version_output_keeps_the_first_line(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, claude_body='printf "@@VER@@ (Claude Code)\\nnoise\\n"')
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"`{LATEST} (Claude Code)` (npm latest)" in summary
+
+
+def test_a_failed_install_fails_the_step(tmp_path):
+    result, summary = _run_install_step(tmp_path, install_ok=False)
+    assert result.returncode != 0
+    assert summary == ""
+
+
+def test_a_failing_version_fails_the_step_loudly(tmp_path):
+    # It prints the right version and THEN fails, so only the
+    # "--version failed" guard can stop it.
+    result, summary = _run_install_step(
+        tmp_path, claude_body='echo "@@VER@@ (Claude Code)"; exit 3')
+    assert result.returncode != 0
+    assert "::error::claude --version failed" in result.stdout
+    assert summary == ""
+
+
+def test_a_hanging_version_is_ended_even_if_it_ignores_sigterm(tmp_path):
+    import time
+    start = time.monotonic()
+    result, summary = _run_install_step(
+        tmp_path, claude_body='trap "" TERM; sleep 30', timeout_args="-k 1 1")
+    assert time.monotonic() - start < 15
+    assert result.returncode != 0
+    assert "::error::claude --version failed" in result.stdout
+    assert summary == ""
+
+
+def test_an_empty_version_fails_the_step_loudly(tmp_path):
+    result, _ = _run_install_step(tmp_path, claude_body="true")
+    assert result.returncode != 0
+    assert "::error::claude --version printed no version" in result.stdout
+
+
+def test_markdown_in_the_version_cannot_reach_the_summary(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, claude_body='echo "@@VER@@\\` [x](https://example.com) \\`"')
+    assert result.returncode == 0, result.stdout + result.stderr
+    line = summary.splitlines()[-1]
+    assert line.count("`") == 2 and "[" not in line and "]" not in line
+
+
+def test_a_huge_version_line_is_capped(tmp_path):
+    result, summary = _run_install_step(
+        tmp_path, claude_body="printf \"@@VER@@ (Claude Code) %0200000d\" 0")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert len(summary.splitlines()[-1]) < 200
+
+
+def _fresh(tmp_path):
+    import itertools
+    for i in itertools.count():
+        d = tmp_path / f"case{i}"
+        if not d.exists():
+            d.mkdir()
+            return d

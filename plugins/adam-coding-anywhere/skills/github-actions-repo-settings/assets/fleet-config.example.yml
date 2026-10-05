@@ -35,14 +35,16 @@ defaults:
 
 # Bot-write policy (issue #5; docs/decisions/0001): generated data (badges, run
 # summaries, dashboards) goes to a dedicated UNPROTECTED results branch -- the
-# model is skills-evals' `eval-results` -- never to the protected default
+# model is skills-evals' `persistent/eval-results` -- never to the protected default
 # branch. The rare bot that truly must write to a default branch gets a
 # `bypass_actors` grant declared HERE (auditable, drift-checked): per-repo
 # overrides for repo-specific bots, `defaults:` only for a fleet-standard bot
 # that writes to every managed repo (currently agents-md-sync). Never a
 # hand-granted UI bypass. PR + auto-merge is not a sanctioned bot-write path in
 # this fleet (the cms-platform-managed repos, excluded here, use it by their
-# own design).
+# own design). A branch meant to persist across PRs is named
+# `persistent/<purpose>`; a per-repo `extra_rulesets` entry (`persistent/**`,
+# rule `deletion`, no bypass actors) keeps it from being deleted (ADR 0007).
 
 repos:
   # --- public, ruleset-safe (adversarially verified: no workflow pushes to main) ---

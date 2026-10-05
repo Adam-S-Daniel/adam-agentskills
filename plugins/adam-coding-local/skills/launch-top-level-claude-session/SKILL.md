@@ -15,7 +15,7 @@ description: >-
   openers, and the workspace-trust gate.
 compatibility: >-
   Requires a Windows PC with Windows Terminal (and WSL for the WSL launchers). Works
-  whether Claude runs on the Windows host (via PowerShell) or inside the WSL distro
+  whether Claude runs on the Windows host (Windows PowerShell 5.1 or PowerShell 7) or inside the WSL distro
   (via bash + Windows interop). Not applicable on Claude.ai web, the mobile app,
   headless/remote sandboxes, macOS, or plain Linux without Windows underneath.
 ---
@@ -110,7 +110,8 @@ Parameters: `-Dir` (Windows path; default the current directory), `-Prompt` or
 `-PromptFile` (not both), `-RemoteControl` (bare `--remote-control`) or
 `-RemoteControlName <name>`, `-Shell` (default `pwsh`, else `powershell`), `-PrintArgs`.
 The tab's script travels as `-EncodedCommand`, so no prompt text passes through
-`wt.exe`'s tokenizer.
+`wt.exe`'s tokenizer. In Windows session 0, prompt text is first saved to a temporary
+file, so the scheduled action contains only an instruction to read its path.
 
 **A WSL session, from a Windows host** (PowerShell):
 
@@ -139,7 +140,7 @@ bash "<skill-dir>/scripts/launch-wsl-claude.sh" --dir /home/<user>/repos/GHA-ben
 
 Args: `--dir` (required), `--prompt` or `--prompt-file <path>` (optional, not both),
 `--distro` (default `Ubuntu`), `--remote-control [name]` (name optional; or
-`--remote-control-name <name>`). `LAUNCH_WSL_CLAUDE_DRY_RUN=1` prints the argv instead.
+`--remote-control-name <name>`). `LAUNCH_WSL_CLAUDE_DRY_RUN=1` prints the argv instead (or the task preview in session 0).
 
 All three scripts resolve the `claude` binary path, set the session environment (above),
 generate the session UUID, pass an initial prompt as a single argument (so the quoting is
@@ -195,6 +196,43 @@ the agents-view landing (handled by the openers above) and past the trust gate
 These are non-obvious and each one silently breaks the launch if ignored — that's why
 the script encodes them:
 
+- **Windows session 0 cannot activate the Windows Terminal Store alias.**
+  `wt.exe` from WSL fails with "Invalid argument"; `Start-Process wt.exe` fails
+  with "Access is denied." The usual cause is the wsl-automation **Claude Code
+  Session Keeper** scheduled task using **S4U** (runs whether the user is logged
+  on or not), such as after a forced logout. All launchers detect the current
+  Windows process session. In session 0 they register a unique one-off
+  `launch-claude-session-<guid>` task for the current user with **Interactive**
+  logon and **Limited** run level, start it, briefly poll for startup, then
+  unregister it in `finally`, including failure cleanup. They use an existing
+  `\ClaudeSessionLauncher\` task folder when available, otherwise the root;
+  they create no permanent folder and require no elevation. A logged-on console
+  or RDP session for that same user must exist; otherwise the launcher fails
+  clearly and asks the user to log on to Windows. The task runs the prepared
+  `wt.exe` argv, including semicolon escaping and the session environment.
+  The normal interactive-session launch stays direct; `-NoWindowsTerminal`
+  remains the existing bare-WSL fallback.
+- **Session-0 prompt text belongs in a file, never task XML.** A supplied
+  `-Prompt` / `--prompt` is written to a unique temporary UTF-8 file; the
+  launched session receives the same instruction used by `-PromptFile` /
+  `--prompt-file`. The generated prompt file is kept after a successful launch
+  until the session can read it; delete it once the handoff is consumed. Failed
+  launches remove files they created, never caller-supplied prompt files.
+  Dry runs write no prompt content and show a placeholder path plus task name,
+  action, and the `<current-user>` Interactive/Limited principal. For tests,
+  `LAUNCH_CLAUDE_FORCE_SESSION0=1` forces session 0 and `=0` forces session 1
+  **only during dry runs**. A real launch ignores that override. The bash
+  launcher needs `pwsh.exe` or `powershell.exe` to check the Windows session.
+  Its session-0 helper uses `-ExecutionPolicy Bypass` for that PowerShell process
+  only: Windows PowerShell 5.1 may otherwise reject an unsigned script reached
+  through a WSL UNC path under RemoteSigned. See [execution policy scope and UNC
+  paths](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1).
+  No machine or user execution policy is changed.
+- **Both PowerShell launchers support Windows PowerShell 5.1 and PowerShell 7.**
+  Registry `.ps1` files use ASCII text: Windows PowerShell 5.1 otherwise reads
+  BOM-less UTF-8 as the Windows ANSI codepage, and typographic punctuation can
+  turn a valid script into a parse error. The registry byte test rejects
+  non-ASCII PowerShell scripts unless a UTF-8 BOM identifies their encoding.
 - **On the Windows host, launch from PowerShell, never the Bash/Git-Bash tool.** Git
   Bash rewrites POSIX-looking arguments: `/home/<user>/.local/bin/claude` becomes
   `C:/Program Files/Git/home/<user>/.local/bin/claude`. The session then starts in the

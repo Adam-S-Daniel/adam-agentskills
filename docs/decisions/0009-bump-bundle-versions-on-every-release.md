@@ -172,3 +172,63 @@ exiting 0 over zero assertions).
   prescribes the clone-vs-remote freshness check this ADR shows is permanently
   green. It should compare `installed_plugins.json`'s `gitCommitSha` against the
   marketplace clone's `HEAD` instead.
+
+## Re-check on 2026-10-04 (issue #10)
+
+Read against Claude Code releases published after the 2026-08-31 measurement,
+for [issue #10](https://github.com/Adam-S-Daniel/adam-agentskills/issues/10).
+The decision stands; two statements above are time-bound and one follow-up has
+landed.
+
+What the releases say, quoted from the vendor changelog:
+
+- [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277):
+  "Fixed plugins from the official marketplace being recorded without their
+  commit in `installed_plugins.json`, and `installed_plugins.json` keeping the
+  old commit after updating a pinned-commit plugin".
+- [v2.1.277](https://github.com/anthropics/claude-code/releases/tag/v2.1.277):
+  "Improved `claude plugin install` on an already-installed plugin: it now says
+  when the marketplace offers a newer version and names the `claude plugin
+  update` command".
+- [v2.1.280](https://github.com/anthropics/claude-code/releases/tag/v2.1.280):
+  "Fixed `installed_plugins.json` keeping the install-time commit after updating
+  a plugin from a GitHub repository or git URL that tracks a branch or tag".
+- [v2.1.283](https://github.com/anthropics/claude-code/releases/tag/v2.1.283):
+  "Fixed plugins that declare no version being silently restored at their
+  source's newest commit, not the installed one, when their cached files were
+  missing".
+
+What follows:
+
+- **The version gate is not contradicted.** All four notes concern what is
+  recorded in `installed_plugins.json` or restored from a missing cache; none
+  says `update` now compares the recorded commit. The 2.1.277 install hint
+  speaks of a "newer version", which is the same version-string comparison this
+  ADR works around. The rejected alternative ("have `update` compare the
+  recorded `gitCommitSha`") is still not something the CLI does on the evidence
+  of these notes, so the version bump stays necessary.
+- **The measurement predates the recording fixes.** The ADR does not record
+  which CLI produced the `88526d12` reading. Before 2.1.277 and 2.1.280 a
+  recorded commit could be missing or could keep the install-time value after
+  an update, so a recorded SHA from an older CLI is a lead, not proof. The
+  381-commit conclusion does not rest on it alone: the installed bundle was
+  also missing `disarm-inherited-reach`, which is on `main`.
+- **The follow-up in `_agent-guidance` has landed.** Its `agents-md/base.md`
+  ("Durable machine") now compares each `gitCommitSha` with the marketplace
+  clone's `HEAD`, requires CLI 2.1.280 or later for recorded commits, and tries
+  `claude plugin update` before an uninstall and reinstall
+  ([_agent-guidance#247](https://github.com/Adam-S-Daniel/_agent-guidance/pull/247)).
+- **`skills-doctor` needs no change.** It already reads `claude plugin list
+  --json` and has no staleness logic keyed on the recorded commit, so there is
+  nothing to switch to the `--json` outputs added in
+  [v2.1.268](https://github.com/anthropics/claude-code/releases/tag/v2.1.268).
+
+Not re-measured. The scenario needs a live CLI at 2.1.280 or later and was not
+run: build a throwaway marketplace in a repository the operator owns, install
+a bundle at version `1.0.0`, then (a) commit a content change without bumping
+the version, refresh the marketplace, run `claude plugin update`, and (b) bump
+the version and update again. After each step compare the files under the
+plugin's `installPath` with the recorded `gitCommitSha` and with `claude plugin
+list --json`. (a) answers whether the version gate still blocks a content-only
+change; the SHA after each step answers whether the recording fix holds. Issue
+#10 stays open for that run.

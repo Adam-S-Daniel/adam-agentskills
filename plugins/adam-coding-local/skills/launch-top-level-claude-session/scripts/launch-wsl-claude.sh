@@ -128,7 +128,16 @@ fi
 # this: an interactive bash grabs the ConPTY's process group and the claude TUI then
 # exits immediately. `env` is a transparent exec, so claude stays a direct child holding
 # the ConPTY (exactly like the bare-claude launch that works) — just with the right PATH.
+# An interactive login shell can print a banner to STDOUT before running our command —
+# e.g. Ubuntu's "sudo_root" lecture (/etc/bash.bashrc) on any HOME that lacks
+# ~/.sudo_as_admin_successful or ~/.hushlogin, such as a fresh WSL user or a hermetic
+# test HOME. `2>/dev/null` only drops stderr, so that banner text would otherwise land
+# inside $LOGIN_PATH and get injected as (part of) the launched session's PATH. The
+# final `printf %s "$PATH"` has no trailing newline and PATH itself never contains one,
+# so the real value is always everything after the LAST newline in the captured output;
+# any banner lines sort earlier and are discarded.
 LOGIN_PATH="$(bash -lic 'printf %s "$PATH"' 2>/dev/null)"
+LOGIN_PATH="${LOGIN_PATH##*$'\n'}"
 
 # The same `env` clears CLAUDE_CODE_CHILD_SESSION and sets
 # CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1 in the launched process itself: this

@@ -230,6 +230,33 @@ def test_sh_launched_command_really_runs_without_the_child_marker(sh_argv):
     assert lines[-1] == "ARG:stand by"
 
 
+def test_sh_login_shell_banner_before_path_does_not_corrupt_claude(sh_argv):
+    """The script captures the login PATH via `bash -lic 'printf %s "$PATH"'`,
+    with only stderr discarded. An interactive login shell can print a banner
+    to STDOUT before running that command — e.g. Ubuntu's real "sudo_root"
+    lecture on any HOME lacking ~/.sudo_as_admin_successful or ~/.hushlogin,
+    reproduced here hermetically via ~/.bash_profile (sourced by a login
+    shell) instead of depending on that distro-specific behavior. Without
+    stripping it, the banner text becomes (part of) the launched session's
+    PATH, and the resolved claude path is pushed into a LATER argv element —
+    exactly what broke test_sh_launched_env_clears_child_marker_and_forces_persistence
+    and test_sh_launched_command_really_runs_without_the_child_marker on a
+    fresh WSL user.
+    """
+    if sys.platform.startswith("win"):
+        pytest.skip("this HOME's login-shell startup files are POSIX bash, not cmd/pwsh")
+    (sh_argv.tmp / "home" / ".bash_profile").write_text(
+        'echo "MOTD-LECTURE-LINE-ONE"\necho "MOTD-LECTURE-LINE-TWO"\n'
+    )
+    argv = sh_argv("--dir", "/home/x/repo", "--prompt", "hi")
+    i = argv.index("--")
+    assert argv[i + 1 : i + 5] == _PERSIST
+    assert argv[i + 5].startswith("PATH=")
+    assert "MOTD-LECTURE" not in argv[i + 5]
+    claude = argv[i + 6]
+    assert claude.startswith("/") and claude.endswith("/claude")
+
+
 def test_sh_bare_remote_control_goes_after_the_prompt(sh_argv):
     argv = sh_argv("--dir", "/home/x/repo", "--remote-control", "--prompt", "stand by")
     # Before the prompt it would take the prompt as its optional name.

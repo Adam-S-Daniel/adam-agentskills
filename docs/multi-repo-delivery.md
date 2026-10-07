@@ -203,9 +203,10 @@ forked session reports source `fork` instead of `resume`, so
 `startup|resume` leaves it without the bundles and fleet guidance.
 
 As checked against the [current hooks documentation on 2026-10-06](https://code.claude.com/docs/en/hooks#sessionstart),
-startup and resume hooks run while the UI loads; the first prompt waits for
-those hooks to finish, including a supported `SessionStart` `reloadSkills`
-rescan.
+startup and launch-time resume (`--continue` or `--resume`) hooks run while
+the UI loads; the first response waits for those hooks to finish, including
+a supported `SessionStart` `reloadSkills` rescan. Interactive `/resume` waits
+for the hooks before switching conversations.
 
 [`DirectoryAdded`](https://code.claude.com/docs/en/hooks#directoryadded) receives the added absolute path in `directory`, with
 `slash_command` or `register_repo_root` as its source; it runs in the

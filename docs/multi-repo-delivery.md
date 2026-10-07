@@ -202,6 +202,18 @@ Both groups use `startup|resume|fork`: since Claude Code
 forked session reports source `fork` instead of `resume`, so
 `startup|resume` leaves it without the bundles and fleet guidance.
 
+As checked against the [current hooks documentation on 2026-10-06](https://code.claude.com/docs/en/hooks#sessionstart),
+startup and resume hooks run while the UI loads; the first prompt waits for
+those hooks to finish, including a supported `SessionStart` `reloadSkills`
+rescan.
+
+[`DirectoryAdded`](https://code.claude.com/docs/en/hooks#directoryadded) receives the added absolute path in `directory`, with
+`slash_command` or `register_repo_root` as its source; it runs in the
+background and cannot control a decision (the SDK exposes `systemMessage` only
+in debug logs). Since `reloadSkills` is documented only for `SessionStart`,
+reusing the bootstrap hook here is not justified; the owner decision remains
+pending in [issue #8](https://github.com/Adam-S-Daniel/adam-agentskills/issues/8).
+
 `$CLAUDE_PROJECT_DIR` **inside** the hook command is correct and must stay: that
 one is expanded at hook time, by Claude Code, which does set it. Only the outer
 `project=` cannot rely on it.

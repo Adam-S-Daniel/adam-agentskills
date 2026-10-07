@@ -165,7 +165,8 @@ Available skills:
 
 ## Install — Codex, Cursor, and local use
 
-These tools discover skills from per-agent directories rather than a marketplace.
+`setup.sh` installs skills into per-agent directories; Codex also supports
+[marketplace catalogs](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli).
 Run `setup.sh` once **in each environment** (Windows Git Bash *and* WSL — they have
 separate `$HOME`s):
 
@@ -282,7 +283,7 @@ manifest, and there is no `skills` key at all.
 
 Measured minimum client versions:
 
-- **Codex ≥ 0.147.0** — established by source-diffing release tags
+- **Codex ≥ 0.147.0 (historical measurement)** — established by source-diffing release tags
   `rust-v0.146.0` vs `rust-v0.147.0`. It accepts **only** the exact canonical
   `$schema` string; anything else is rejected as "unsupported Agent Plugins
   schema".
@@ -300,7 +301,14 @@ Measured minimum client versions:
 so the file this repo already has is the one it reads — verified live
 (`codex plugin add <plugin>@<marketplace>` installed every skill of the
 plugin; measured against the retired `agentskills` registry, whose
-marketplace file had the same layout).
+marketplace file had the same layout). That is historical compatibility
+evidence, not a current test of remote installation from this registry.
+
+As checked against the [current Codex plugin documentation on 2026-10-06](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli),
+register the catalog with `codex plugin marketplace add Adam-S-Daniel/adam-agentskills`.
+This documents catalog registration only; it does not establish remote
+installation from this registry or replace the `setup.sh` per-agent-directory
+route above.
 
 <!-- Do NOT add .agents/plugins/marketplace.json. Codex 0.147.0's
      MARKETPLACE_MANIFEST_RELATIVE_PATHS is [".agents/plugins/marketplace.json",

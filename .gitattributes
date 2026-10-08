@@ -45,3 +45,5 @@
 # fails the digest checks, which is the confusing pair this note exists for; it
 # only starts reporting the files as modified once something else touches them.
 * -text
+# managed by _agent-guidance: hook scripts must stay LF for bash (see ADR 0019)
+.claude/hooks/*.sh text eol=lf

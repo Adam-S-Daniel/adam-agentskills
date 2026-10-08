@@ -254,6 +254,21 @@ and never stashes, resets or forces. The hooks run in Claude Code and in Codex
 `clone-sync.sh --all` every 30 minutes and at logon, and the same inside any
 WSL distro that is already running. Logs are under `~/.cache/clone-sync/`.
 
+#### API-credit lane (Claude Code only)
+
+When a weekly subscription window is more than half elapsed and ahead of pace,
+or at 98% or more, `adam-coding-local` tells Claude Code sessions to delegate
+with `claude-credit -p "<task>"` instead of the Agent tool, and the child is
+billed to the owner's monthly API credit grant through workload identity
+federation
+([ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md)). The
+gate reads the usage collector's `usage.json`, spreads each grant over the
+weeks it has left, and allows two runs at a time across Windows and WSL. The
+hooks print nothing while the lane is closed. The owner's settings live in
+`<Windows home>/.config/claude-credit/config.json`, outside this repo;
+`hooks/credit-lane/config.example.json` shows its shape. Exit 75 (closed or
+busy) and 76 (credit unavailable) mean: use the Agent tool.
+
 #### Which bundles on which OS
 
 The two `-anywhere` bundles and `adam-coding-local` are the same on every
@@ -431,6 +446,8 @@ plugins/
     .claude-plugin/plugin.json        # Claude Code plugin manifest
     skills/<skill>/SKILL.md           # one real dir per skill (+ scripts/, tests/, hooks/)
     hooks/hooks.json                  # adam-coding-local: harness-agnostic hooks (ADR 0017)
+    hooks/claude-code.json            # adam-coding-local: Claude-only hooks (ADR 0018)
+    bin/claude-credit                 # adam-coding-local: the API-credit lane wrapper
 schemas/                              # vendored Agent Plugins schema (pinned by sha256)
 scripts/                              # checks (consistency, privacy denylist, …) and their tests
 docs/decisions/                       # ADRs (see 0013 for the current plugin layout)

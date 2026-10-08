@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+# claude-credit - run `claude -p` billed to the API credit, not the
+# subscription (ADR 0018).
+#
+#   claude-credit [claude -p args...] -p "<prompt>"
+#   claude-credit [claude -p args...] -p < prompt.txt
+#
+# Only inside Claude Code (CLAUDECODE=1, which Claude Code sets for its Bash
+# tool's commands). Only when the gate says the lane is open, a slot is free,
+# and `claude auth status` in the child's environment reports an API method.
+#
+# Exit codes:
+#   64  refused: not inside Claude Code, or a caller-supplied --output-format
+#   75  not now: lane closed, lane busy, signing failed or auth not confirmed;
+#       use the Agent tool instead
+#   76  the API credit is unavailable (billing error); the lane is closed until
+#       the next grant arrives
+#   otherwise the child's own exit code
+#
+# The child alone gets the federation variables; the four that would outrank
+# them (ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, CLAUDE_CODE_OAUTH_TOKEN,
+# ANTHROPIC_PROFILE) are removed from its environment.
+#
+# Test seams: CLAUDE_CREDIT_HOME, CLAUDE_CREDIT_CLAUDE_BIN (a fake claude),
+# CLAUDE_CREDIT_SIGNER (a fake signer, called as
+# `<signer> -ConfigPath <config.json> -OutFile <assertion.jwt>`).
+set -u
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+ROOT="$(cd "$(dirname "$SELF")/.." && pwd)"
+LANE="$ROOT/hooks/credit-lane"
+HEARTBEAT_SECONDS=60
+RESIGN_EVERY=30   # heartbeats, so 30 minutes
+
+die() { printf 'claude-credit: %s\n' "$2" >&2; exit "$1"; }
+
+# 1. Claude Code only. Claude Code exports CLAUDECODE=1 into every Bash-tool
+# command's environment (read from the 2.1.295 binary).
+[[ "${CLAUDECODE:-}" == 1 ]] \
+  || die 64 "refusing: run this from a Claude Code session's Bash tool (CLAUDECODE=1 is not set)"
+
+print_flag=(-p)
+for arg in "$@"; do
+  case "$arg" in
+    --output-format|--output-format=*)
+      die 64 "refusing --output-format: claude-credit forces --output-format json to read the cost; it prints the result text" ;;
+    -p|--print) print_flag=() ;;
+  esac
+done
+
+# shellcheck source=../hooks/lib/harness.sh
+. "$ROOT/hooks/lib/harness.sh"
+PY="$(hook_python)" || die 75 "lane closed (no working Python 3); use the Agent tool instead"
+
+# 2. The gate.
+line="$("$PY" "$LANE/gate.py" status --line 2>/dev/null)" || line=""
+IFS=$'\t' read -r state _next left reason <<<"$line"
+if [[ "${state:-}" != open ]]; then
+  die 75 "lane closed (${reason:-gate gave no verdict}); use the Agent tool instead"
+fi
+
+HOME_DIR="$("$PY" -c 'import sys; sys.path.insert(0, sys.argv[1]); import gate; print(gate.credit_home())' "$LANE" 2>/dev/null)" \
+  || die 75 "lane closed (cannot resolve credit_home); use the Agent tool instead"
+CONFIG="$HOME_DIR/config.json"
+
+# 3. A slot.
+slot="" run_dir="" loop_pid=""
+cleanup() {
+  if [[ "$loop_pid" =~ ^[0-9]+$ ]] && (( loop_pid > 1 )); then
+    kill -TERM "$loop_pid" 2>/dev/null
+    wait "$loop_pid" 2>/dev/null
+  fi
+  if [[ -n "$slot" ]]; then
+    "$PY" "$LANE/slots.py" release "$slot" --pid "$$" >/dev/null 2>&1
+  fi
+  if [[ -n "$run_dir" && -d "$run_dir" ]]; then
+    rm -rf -- "$run_dir"
+  fi
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+slot="$("$PY" "$LANE/slots.py" acquire --pid "$$" 2>/dev/null)" || {
+  busy="$slot"; slot=""
+  die 75 "lane ${busy:-busy}; use the Agent tool instead"
+}
+[[ "$slot" =~ ^[0-9]+$ ]] || { slot=""; die 75 "lane busy (no slot number); use the Agent tool instead"; }
+
+# 4. The first assertion.
+run_dir="$HOME_DIR/run/$(date -u +%Y%m%dT%H%M%SZ)-$$-$RANDOM$RANDOM"
+mkdir -p "$run_dir" && chmod 700 "$run_dir" 2>/dev/null
+token="$run_dir/assertion.jwt"
+
+# to_native <path> - the path as the program we hand it to reads paths.
+to_native_windows() {
+  if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"
+  elif command -v wslpath >/dev/null 2>&1; then wslpath -w "$1"
+  else printf '%s\n' "$1"; fi
+}
+
+# The PowerShell that holds the TPM key is always Windows' pwsh.exe, found by
+# full path; never a bare `pwsh`, which in WSL is a Linux PowerShell without
+# the key.
+find_pwsh_exe() {
+  local candidate pf
+  if command -v cygpath >/dev/null 2>&1 && [[ -n "${PROGRAMFILES:-}" ]]; then
+    pf="$(cygpath -u "$PROGRAMFILES")"
+    candidate="$pf/PowerShell/7/pwsh.exe"
+    [[ -f "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  fi
+  for candidate in "/mnt/c/Program Files/PowerShell/7/pwsh.exe" "/c/Program Files/PowerShell/7/pwsh.exe"; do
+    [[ -f "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+  done
+  return 1
+}
+
+sign() {
+  if [[ -n "${CLAUDE_CREDIT_SIGNER:-}" ]]; then
+    "$CLAUDE_CREDIT_SIGNER" -ConfigPath "$CONFIG" -OutFile "$token" </dev/null >/dev/null 2>&1
+    return
+  fi
+  local pwsh
+  pwsh="$(find_pwsh_exe)" || return 1
+  "$pwsh" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$(to_native_windows "$LANE/Sign-CreditJwt.ps1")" \
+    -ConfigPath "$(to_native_windows "$CONFIG")" -OutFile "$(to_native_windows "$token")" \
+    </dev/null >/dev/null 2>&1
+}
+
+sign && [[ -s "$token" ]] || die 75 "could not sign the federation assertion; use the Agent tool instead"
+
+# 5. The child's environment, and only the child's.
+CLAUDE_BIN="${CLAUDE_CREDIT_CLAUDE_BIN:-claude}"
+child_env=(env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN
+           -u ANTHROPIC_PROFILE)
+wif="$("$PY" "$LANE/lane.py" wif-env 2>/dev/null)" \
+  || die 75 "lane closed (config.json has no usable wif ids); use the Agent tool instead"
+while IFS= read -r assignment; do
+  [[ "$assignment" =~ ^ANTHROPIC_[A-Z_]+=[A-Za-z0-9_-]+$ ]] || die 75 "lane closed (bad wif id); use the Agent tool instead"
+  child_env+=("$assignment")
+done <<<"$wif"
+token_for_child="$token"
+# A Windows-native claude (Git Bash) reads a Windows path.
+if command -v cygpath >/dev/null 2>&1; then token_for_child="$(cygpath -w "$token")"; fi
+child_env+=("ANTHROPIC_IDENTITY_TOKEN_FILE=$token_for_child")
+
+# 6. Prove the child bills the API before spending anything.
+"${child_env[@]}" "$CLAUDE_BIN" auth status --json </dev/null >"$run_dir/auth.json" 2>/dev/null
+verdict="$("$PY" "$LANE/lane.py" auth-verdict "$run_dir/auth.json" 2>/dev/null)"
+IFS=$'\t' read -r verdict_kind method <<<"$verdict"
+if [[ "${verdict_kind:-}" != ok ]]; then
+  die 75 "could not confirm API-credit auth (${method:-no answer}); not spending"
+fi
+
+# 7. Heartbeat the slot every minute and re-sign every 30 minutes while the
+# child runs. The loop exits with the wrapper: cleanup() stops it, and it
+# stops itself once the wrapper's pid is gone.
+wrapper_pid=$$
+(
+  sleeper=""
+  trap '[[ "$sleeper" =~ ^[0-9]+$ ]] && (( sleeper > 1 )) && kill -TERM "$sleeper" 2>/dev/null; exit 0' TERM
+  ticks=0
+  while :; do
+    sleep "$HEARTBEAT_SECONDS" & sleeper=$!
+    wait "$sleeper"
+    (( wrapper_pid > 1 )) && kill -0 "$wrapper_pid" 2>/dev/null || exit 0
+    "$PY" "$LANE/slots.py" heartbeat "$slot" --pid "$wrapper_pid" >/dev/null 2>&1
+    ticks=$((ticks + 1))
+    if (( ticks % RESIGN_EVERY == 0 )); then sign; fi
+  done
+) </dev/null >/dev/null 2>&1 &
+loop_pid=$!
+
+# 8. The run itself.
+"${child_env[@]}" "$CLAUDE_BIN" "${print_flag[@]}" "$@" --output-format json >"$run_dir/out.json" 2>"$run_dir/err.txt"
+code=$?
+
+parsed="$("$PY" "$LANE/lane.py" child-result "$run_dir/out.json" "$run_dir/err.txt" "$code" "$run_dir/result.txt" 2>/dev/null)"
+IFS=$'\t' read -r kind cost why <<<"$parsed"
+kind="${kind:-error}" cost="${cost:-0}"
+
+session="${CLAUDE_CODE_SESSION_ID:-unknown}"
+model="unknown"
+prev=""
+for arg in "$@"; do
+  if [[ "$prev" == --model ]]; then model="$arg"; fi
+  case "$arg" in --model=*) model="${arg#--model=}" ;; esac
+  prev="$arg"
+done
+if [[ "$cost" != 0 && "$cost" != 0.000000 ]]; then
+  left="$("$PY" "$LANE/gate.py" record --cost "$cost" --session "$session" --model "$model" 2>/dev/null)" || left="?"
+fi
+
+case "$kind" in
+  ok)
+    [[ -s "$run_dir/result.txt" ]] && printf '%s\n' "$(cat "$run_dir/result.txt")"
+    if [[ "$left" == spend-all ]]; then budget="spend-all"; else budget="\$$left left this week"; fi
+    LC_ALL=C printf 'lane: api · $%.2f · %s\n' "$cost" "$budget" >&2
+    exit 0 ;;
+  billing)
+    until_at="$("$PY" "$LANE/gate.py" close-until --until next-grant --reason "API credit unavailable: ${why:-billing error}" 2>/dev/null)" || until_at="unknown"
+    die 76 "API credit unavailable (${why:-billing error}); lane closed until ${until_at}; use the Agent tool" ;;
+  *)
+    cat "$run_dir/err.txt" >&2
+    [[ -s "$run_dir/result.txt" ]] && cat "$run_dir/result.txt" >&2
+    if (( code == 0 )); then code=1; fi
+    exit "$code" ;;
+esac

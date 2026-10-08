@@ -541,7 +541,8 @@ def test_windows_home_reads_the_wsl_cache(tmp_path):
     env = {"HOME": str(home)}
     assert gate.windows_home(env, is_wsl=True) == "/mnt/c/Users/example"
     assert gate.credit_home(env) != ""  # resolvable
-    assert gate.windows_home(env, is_wsl=False) == str(home)
+    if os.name != "nt":  # on Windows the non-WSL answer is USERPROFILE, not HOME
+        assert gate.windows_home(env, is_wsl=False) == str(home)
     assert gate.credit_home({"CLAUDE_CREDIT_HOME": "/x"}) == "/x"
 
 

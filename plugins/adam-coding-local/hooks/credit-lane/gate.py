@@ -138,7 +138,7 @@ def windows_home(env=None, is_wsl=None):
     """The Windows user home, as a path this process can open."""
     env = os.environ if env is None else env
     is_wsl = _is_wsl() if is_wsl is None else is_wsl
-    if os.name == "nt" or (env.get("MSYSTEM") and env.get("USERPROFILE")):
+    if not is_wsl and (os.name == "nt" or (env.get("MSYSTEM") and env.get("USERPROFILE"))):
         return env.get("USERPROFILE") or os.path.expanduser("~")
     home = env.get("HOME") or os.path.expanduser("~")
     if not is_wsl:

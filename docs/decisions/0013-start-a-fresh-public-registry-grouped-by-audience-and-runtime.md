@@ -1,6 +1,6 @@
 # 0013. Start a fresh public registry and group plugins by audience and runtime
 
-- **Status:** Accepted
+- **Status:** Accepted (closed-folder clause amended by [0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md))
 - **Date:** 2026-09-24
 - **Deciders:** Adam Daniel
 

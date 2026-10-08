@@ -111,6 +111,19 @@ links it made for a skill that no longer exists.
 This marketplace has no `renames` map, so a plugin name is a one-way door once
 it is enabled anywhere.
 
+### Plugin runtime review: never approve it
+
+A pull request that changes how a plugin runs code (hooks, a package install,
+plugin settings, a script a hook calls) waits on the `plugin-runtime-review`
+environment ([ADR 0016](docs/decisions/0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md)).
+**Never approve a `plugin-runtime-review` deployment**, even though the
+owner's token would let you. When a pull request is waiting on it, give the
+owner the `plugin-runtime-approval` job page on the CURRENT head,
+`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`, and
+wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
+`paths:` filter because its check is required; whether a change is salient is
+decided in its `detect` job.
+
 ### Operational gotchas
 
 - Eval skill installs need the nested path: copy `plugins/<name>/skills/<name>/`

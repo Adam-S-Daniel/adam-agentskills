@@ -5,7 +5,7 @@ Hermetic and deterministic: the gate's network side is replaced by an
 in-memory FakeFetcher holding a base and a head tree, so nothing here calls
 GitHub. No sleeps, no wall-clock time.
 
-Each reason (a)-(g) gets a case that gates and a nearby case that does not:
+Each reason (a)-(h) gets a case that gates and a nearby case that does not:
 a gate that has never been shown saying "no" would approve nothing, and one
 never shown saying "yes" would stop nothing.
 
@@ -369,6 +369,92 @@ def test_rests_after_the_plugin_root_are_read_as_paths():
     assert "a/" in rests("${CLAUDE_PLUGIN_ROOT}/a/*.sh")
     assert "a/b.sh" in rests("${CLAUDE_PLUGIN_ROOT}\\a\\b.sh")
     assert "x.sh" in rests('"${CLAUDE_PLUGIN_ROOT}/x.sh')  # unbalanced quote
+
+
+def test_a_script_a_windows_command_names_gates_when_it_changes():
+    # Codex runs `commandWindows` through cmd.exe on Windows, where the root
+    # is %PLUGIN_ROOT%; a script only that line names still runs code.
+    config = {"hooks": {"PostToolUse": [{"matcher": "Bash", "hooks": [{
+        "type": "command", "command": "./elsewhere.sh",
+        "commandWindows": '"C:\\Program Files\\Git\\bin\\bash.exe" '
+                          '"%PLUGIN_ROOT%/skills/one/scripts/tool.sh"'}]}]}}
+    base = tree(**{"plugins/alpha/hooks/hooks.json": config})
+    head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
+    result = run(base, head)
+    assert ("hook-referenced", "plugins/alpha/skills/one/scripts/tool.sh") in result[1], result
+
+
+def test_a_windows_command_naming_another_script_does_not_gate():
+    config = {"hooks": {"SessionStart": [{"hooks": [{
+        "type": "command", "command": "./x.sh",
+        "commandWindows": '"C:\\Program Files\\Git\\bin\\bash.exe" '
+                          '"%PLUGIN_ROOT%/skills/one/scripts/other.sh"'}]}]}}
+    base = tree(**{"plugins/alpha/hooks/hooks.json": config})
+    head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
+    assert_not_gated(run(base, head))
+
+
+def test_every_spelling_of_the_plugin_root_is_read():
+    rests = gate._rests_after_plugin_root
+    assert "a/b.sh" in rests('"%PLUGIN_ROOT%/a/b.sh"')
+    assert "a/b.sh" in rests("%CLAUDE_PLUGIN_ROOT%\\a\\b.sh")
+    assert "a/b.sh" in rests("${PLUGIN_ROOT}/a/b.sh")
+    assert "a/b.sh" in rests("$PLUGIN_ROOT/a/b.sh --flag")
+    assert rests("$PLUGIN_ROOTS/a.sh") == set()
+    assert rests("%PLUGIN_ROOTS%/a.sh") == set()
+    # A cmd.exe variable after the root stops the literal path, as $ does.
+    assert "a/" in rests("%PLUGIN_ROOT%/a/%NAME%.sh")
+
+
+def test_the_shipped_clone_sync_hooks_are_gated():
+    """adam-coding-local's hooks.json names each clone-sync hook in both its
+    `command` and its `commandWindows`, and every clone-sync file sits under
+    hooks/, so a change to any of them waits for the owner."""
+    root = "plugins/adam-coding-local"
+    config = json.loads((REPO_ROOT / root / "hooks" / "hooks.json").read_text(encoding="utf-8"))
+    for key in ("command", "commandWindows"):
+        only = json.loads(json.dumps(config))
+        for groups in only["hooks"].values():
+            for group in groups:
+                for handler in group["hooks"]:
+                    handler.pop("commandWindows" if key == "command" else "command")
+        assert gate._hook_paths(only, root) == {
+            f"{root}/hooks/clone-sync/on-merge.sh",
+            f"{root}/hooks/clone-sync/on-session-start.sh"}, key
+    files = sorted(p.relative_to(REPO_ROOT).as_posix()
+                   for p in (REPO_ROOT / root / "hooks").rglob("*") if p.is_file())
+    assert any(f.endswith("/clone-sync/clone-sync.sh") for f in files), files
+    base = tree()
+    head = dict(base, **{f: b"{}" if f.endswith(".json") else b"changed\n" for f in files})
+    reasons = run(base, head)[1]
+    for f in files:
+        assert ("hook-file", f) in reasons, f
+
+
+# =================================================================================
+# (h) bin/ on the session PATH
+# =================================================================================
+
+
+def test_a_bin_file_at_a_plugin_root_gates():
+    base = tree()
+    head = dict(base, **{"plugins/alpha/bin/tool": b"#!/bin/sh\necho\n"})
+    assert ("bin-file", "plugins/alpha/bin/tool") in run(base, head)[1]
+
+
+def test_a_bin_file_renamed_out_of_bin_gates_by_its_old_name():
+    base = tree(**{"plugins/alpha/bin/tool": b"echo\n"})
+    head = dict(base)
+    head["plugins/alpha/skills/one/tool"] = head.pop("plugins/alpha/bin/tool")
+    result = run(base, head, renames={"plugins/alpha/skills/one/tool": "plugins/alpha/bin/tool"})
+    assert ("bin-file", "plugins/alpha/bin/tool") in result[1], result
+
+
+def test_a_bin_named_directory_below_the_plugin_root_does_not_gate():
+    base = tree()
+    head = dict(base, **{"plugins/alpha/skills/one/bin/tool": b"echo\n",
+                         "bin/tool": b"echo\n"})
+    assert_not_gated(run(base, head))
 
 
 # =================================================================================

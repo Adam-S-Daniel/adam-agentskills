@@ -106,3 +106,4 @@ Optional sections for high-impact decisions:
 | [0014](0014-retire-the-account-zip-upload-channel.md) | Retire the account ZIP-upload channel | Accepted |
 | [0015](0015-turn-the-non-coding-local-bundle-off-on-linux-and-wsl.md) | Turn the non-coding local bundle off on Linux and WSL, leave it on in Windows | Accepted |
 | [0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md) | Open plugin folders and gate runtime changes on owner approval | Accepted |
+| [0017](0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md) | Write harness-aware plugin hooks, because Codex loads them too | Accepted |

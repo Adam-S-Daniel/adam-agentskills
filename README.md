@@ -163,12 +163,21 @@ Available skills:
 | `cms-platform` | `/cms-platform:<skill>` — skills live in [Adam-S-Daniel/cms-platform](https://github.com/Adam-S-Daniel/cms-platform) | The cms-platform site machinery's own skills, federated from that repo rather than mirrored here: Decap /admin config rendering, AWS bootstrap and PR preview environments, Playwright e2e, CI watcher loops, stuck-PR triage, and the platform release/consumer-bump flow. |
 <!-- END GENERATED PLUGIN TABLE -->
 
-## Install — Codex, Cursor, and local use
+## Install — Codex, and what `setup.sh` does now
 
-`setup.sh` installs skills into per-agent directories; Codex also supports
-[marketplace catalogs](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli).
-Run `setup.sh` once **in each environment** (Windows Git Bash *and* WSL — they have
-separate `$HOME`s):
+Codex installs these plugins from the same marketplace: register the catalog
+with `codex plugin marketplace add Adam-S-Daniel/adam-agentskills` (see
+[marketplace catalogs](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli))
+and install the plugins you want.
+
+**`setup.sh` no longer links skills anywhere**
+([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+It used to link every skill into `~/.agents/skills/`, `~/.agent/skills/` and
+`~/.cursor/skills/`. With Codex installing the plugins, a link in
+`~/.agents/skills/` would load every skill there twice; nothing on the owner's
+machines reads `~/.agent/skills/`, and Cursor is not installed on them. Run it
+once **in each environment** (Windows Git Bash *and* WSL — they have separate
+`$HOME`s) to clean up after earlier versions:
 
 ```bash
 bash setup.sh
@@ -179,33 +188,25 @@ On Windows, run it from Git Bash, or from PowerShell by full path:
 in PowerShell is WSL's launcher (`C:\Windows\System32\bash.exe`), so it sets up
 the WSL home and leaves the Windows one untouched.
 
-That is all anyone else needs. It links every skill under `plugins/*/skills/*` into the standard skill homes:
+It **sweeps** `~/.agents/skills/`, `~/.agent/skills/`, `~/.cursor/skills/`,
+`~/.gemini/skills/` and `~/.gemini/antigravity/skills/`: it removes only links
+whose target lies in this repo's `plugins/` tree or in a retired `agentskills`
+checkout beside this one, then removes each directory only if that left it
+empty. Your own files and links there are untouched, and a home that is itself
+a link somewhere else is left alone without looking inside.
 
-- `~/.agents/skills/` — Codex (and the generic agents dir)
-- `~/.agent/skills/`
-- `~/.cursor/skills/`
+> **Gemini / Antigravity was retired as a target (2026-08-14).** That is an owner
+> **scope decision, not** a finding that those paths were dead — the Antigravity
+> IDE genuinely does read `~/.gemini/antigravity/skills`.
 
-**Claude Code is deliberately not in that list** — it's served by the marketplace
+**Claude Code never was in that list** — it's served by the marketplace
 above. Linking the same skills into `~/.claude/skills` too would double-load them
-(once as a namespaced plugin, once as a personal skill), so `setup.sh` now removes
+(once as a namespaced plugin, once as a personal skill), so `setup.sh` also removes
 any such links it created in earlier versions. Background and rationale:
 [`docs/2026-06-05-skill-discovery-and-centralized-strategy.md`](docs/2026-06-05-skill-discovery-and-centralized-strategy.md).
 
-> **Gemini / Antigravity was retired as a target (2026-08-14).** That is an owner
-> **scope decision, not** a finding that those paths were dead — Gemini/Antigravity is
-> four separately-versioned products, three of which read skills from three
-> *different* directories, and the Antigravity IDE genuinely does read
-> `~/.gemini/antigravity/skills`. So this removes a link that was doing real work.
-> Because un-listing a home leaves the old links behind — still feeding an
-> unmanaged copy of the skill set, and dangling as soon as a skill is renamed —
-> `setup.sh` also **sweeps** `~/.gemini/skills/` and
-> `~/.gemini/antigravity/skills/`: it removes only links that resolve into this
-> repo's `plugins/` tree, then removes each directory only if that left it empty.
-> Your own files and links there are untouched. Re-run `bash setup.sh` on any
-> machine set up before this change.
-
-On Windows it uses directory junctions (`mklink /J`) — no admin required. The script
-is idempotent and migrates the old whole-directory links left by earlier versions.
+On Windows it removes junctions through PowerShell — no admin required. The
+script is idempotent.
 
 ### Owner machines only: `--owner-machine`
 
@@ -217,6 +218,12 @@ is **not** for anyone else's machine:
   and `hook.sync-skills-private-reminder` in `git config --global`) if a
   previous run left it registered — idempotent, and a no-op on a machine that
   never had it ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md));
+- in WSL, gives WSL git `core.autocrlf = true` for the Windows clones under
+  `/mnt/`: it writes `~/.gitconfig-windows-clones` and adds
+  `includeIf.gitdir:/mnt/.path` pointing at it when no include is set (an
+  include pointing elsewhere is reported, not overwritten). Windows git checks
+  files out with CRLF through its system config, which WSL git never reads, so
+  without this WSL git reports every file in those clones as modified;
 - converges `~/.claude/settings.json`: registers this marketplace and the
   owner's **private** one, enables the owner's plugins
   (`adam-anything-anywhere`, `adam-coding-anywhere`, `adam-coding-local`,
@@ -225,9 +232,27 @@ is **not** for anyone else's machine:
   `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
   that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
   [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md));
-  and applies the per-OS bundle policy below.
+  and applies the per-OS bundle policy below;
+- in Windows Git Bash, registers the `adam-clone-sync` scheduled task by
+  running `plugins/adam-coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1`
+  through `pwsh.exe` (warns if PowerShell 7 is missing). See "Clone sync" below.
 
-Without the flag neither step runs, and the script says how to opt in.
+Without the flag none of these steps runs, and the script says how to opt in.
+
+#### Clone sync
+
+`adam-coding-local` ships two hooks that keep this machine's clean clones on
+the remote default branch
+([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)):
+after a successful `gh pr merge` or `*merge_pull_request` tool call, and at
+session start, they start `hooks/clone-sync/clone-sync.sh` detached for that
+repo. It fast-forwards only a clone that is on the default branch, has no
+tracked changes, has no operation in progress and is not a linked worktree,
+and never stashes, resets or forces. The hooks run in Claude Code and in Codex
+(which asks once to trust each hook definition). On Windows the
+`adam-clone-sync` scheduled task runs the INSTALLED plugin's
+`clone-sync.sh --all` every 30 minutes and at logon, and the same inside any
+WSL distro that is already running. Logs are under `~/.cache/clone-sync/`.
 
 #### Which bundles on which OS
 
@@ -254,9 +279,6 @@ writes `false` on every run, so a manual `claude plugin enable` on Linux lasts
 only until the next run. On Windows it writes nothing and never turns off a
 copy it finds. Rationale and alternatives:
 [ADR 0015](docs/decisions/0015-turn-the-non-coding-local-bundle-off-on-linux-and-wsl.md).
-
-> Codex reads `~/.agents/skills`; that link is what makes these skills available in
-> Codex. See the [Codex skills docs](https://developers.openai.com/codex/skills).
 
 ### Agent Plugins v1 — the root `plugin.json`
 
@@ -306,9 +328,8 @@ evidence, not a current test of remote installation from this registry.
 
 As checked against the [current Codex plugin documentation on 2026-10-06](https://developers.openai.com/plugins/build/plugins#add-a-marketplace-from-the-cli),
 register the catalog with `codex plugin marketplace add Adam-S-Daniel/adam-agentskills`.
-This documents catalog registration only; it does not establish remote
-installation from this registry or replace the `setup.sh` per-agent-directory
-route above.
+Since 2026-10-08 Codex installs this registry's plugins from that catalog,
+which is why `setup.sh` no longer links skills for it (ADR 0017).
 
 <!-- Do NOT add .agents/plugins/marketplace.json. Codex 0.147.0's
      MARKETPLACE_MANIFEST_RELATIVE_PATHS is [".agents/plugins/marketplace.json",
@@ -409,10 +430,11 @@ plugins/
     plugin.json                       # Agent Plugins 1.0.0 manifest
     .claude-plugin/plugin.json        # Claude Code plugin manifest
     skills/<skill>/SKILL.md           # one real dir per skill (+ scripts/, tests/, hooks/)
+    hooks/hooks.json                  # adam-coding-local: harness-agnostic hooks (ADR 0017)
 schemas/                              # vendored Agent Plugins schema (pinned by sha256)
 scripts/                              # checks (consistency, privacy denylist, …) and their tests
 docs/decisions/                       # ADRs (see 0013 for the current plugin layout)
-setup.sh                              # link skills into per-agent dirs (non-Claude-Code)
+setup.sh                              # sweep old skill links; --owner-machine configures a machine
 ```
 
 Validate the marketplace and any plugin with `claude plugin validate <path>`.
@@ -434,6 +456,6 @@ I put the following in Claude desktop app -> Settings -> Cowork -> Global instru
 > Never rename skill directories or plugins. Open a PR against `main` in
 > https://github.com/Adam-S-Daniel/adam-agentskills. Then fetch and pull in WSL and Windows
 > under `~/repos` and `%USERPROFILE%\repos`, and run `bash setup.sh --owner-machine` in both WSL and
-> Windows Git Bash so the skills are linked into the standard locations
-> (`.agents/skills/`, `.agent/skills/`, `.cursor/skills/`) — Claude Code itself
-> uses the marketplace, not `.claude/skills`.
+> Windows Git Bash so each home is converged — Claude Code and Codex install the
+> plugins from the marketplace, not from `.claude/skills` or per-agent skill
+> directories.

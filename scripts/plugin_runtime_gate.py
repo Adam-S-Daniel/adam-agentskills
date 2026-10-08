@@ -21,11 +21,20 @@ A pull request is GATED when any of these holds:
                           entry's `hooks` or `settings` differs, or an added
                           entry carries either;
   (e) hook-referenced     a changed path is, or lies under, a path a hook
-                          names after ${CLAUDE_PLUGIN_ROOT}, at base or head;
+                          names after the plugin root, at base or head, in
+                          its `command` or `commandWindows` (Codex runs that
+                          one on Windows) or an `args` element. The root is
+                          spelled ${CLAUDE_PLUGIN_ROOT}, $CLAUDE_PLUGIN_ROOT,
+                          ${PLUGIN_ROOT}, $PLUGIN_ROOT, or cmd.exe's
+                          %PLUGIN_ROOT% / %CLAUDE_PLUGIN_ROOT%;
   (f) gate-itself         the gate's own workflow, this script or its tests;
   (g) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
-                          3000-file cap, or anything unexpected.
+                          3000-file cap, or anything unexpected;
+  (h) bin-file            a changed path (old or new name) is under
+                          <plugin-root>/bin/. Claude Code puts that directory
+                          on the session's PATH, so what is in it runs
+                          without a model choosing it, like a hook (ADR 0017).
 
 Plugin roots are the union of every plugins/<name>/ the diff touches and every
 local `source` in marketplace.json, at base and at head.
@@ -77,12 +86,20 @@ GATE_FILES = frozenset({
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
-_PLUGIN_ROOT_RE = re.compile(r"\$(?:\{CLAUDE_PLUGIN_ROOT\}|CLAUDE_PLUGIN_ROOT(?![A-Za-z0-9_]))")
+# Every spelling of the plugin root a hook command can use: POSIX shells see
+# ${CLAUDE_PLUGIN_ROOT} or $CLAUDE_PLUGIN_ROOT (Claude Code substitutes the
+# first; Codex only exports both names), and Codex's Windows `commandWindows`
+# runs in cmd.exe, which spells it %PLUGIN_ROOT%.
+_PLUGIN_ROOT_RE = re.compile(
+    r"\$(?:\{(?:CLAUDE_)?PLUGIN_ROOT\}|(?:CLAUDE_)?PLUGIN_ROOT(?![A-Za-z0-9_]))"
+    r"|%(?:CLAUDE_)?PLUGIN_ROOT%")
+# The handler keys whose value is a command line.
+_COMMAND_KEYS = ("command", "commandWindows")
 # Where a path stops in raw shell text: whitespace or a shell operator.
 _PATH_END_RE = re.compile(r"[\s;|&<>()`]")
 # Where a path stops being literal: a variable or a glob. What precedes the
 # last `/` before it is kept as a directory, so the match stays conservative.
-_NON_LITERAL_RE = re.compile(r"[$*?\[{]")
+_NON_LITERAL_RE = re.compile(r"[$%*?\[{]")
 _ABSENT = object()
 
 
@@ -224,13 +241,15 @@ def _entries_by_name(marketplace) -> Dict[str, dict]:
 
 
 def _hook_commands(node) -> Iterable[str]:
-    """Every `command` string and `args` element anywhere in a hook config."""
+    """Every `command` and `commandWindows` string and `args` element
+    anywhere in a hook config."""
     if isinstance(node, list):
         for item in node:
             yield from _hook_commands(item)
     elif isinstance(node, dict):
-        if isinstance(node.get("command"), str):
-            yield node["command"]
+        for key in _COMMAND_KEYS:
+            if isinstance(node.get(key), str):
+                yield node[key]
         if isinstance(node.get("args"), list):
             yield from (arg for arg in node["args"] if isinstance(arg, str))
         for value in node.values():
@@ -239,7 +258,7 @@ def _hook_commands(node) -> Iterable[str]:
 
 
 def _rests_after_plugin_root(text: str) -> Set[str]:
-    """What follows ${CLAUDE_PLUGIN_ROOT} in one command or argument, read two
+    """What follows the plugin root in one command or argument, read two
     ways — as shell words (quotes removed) and as raw text — and unioned, since
     a path read too short only gates more."""
     rests = set()
@@ -366,6 +385,8 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             rel = path[len(root) + 1:] if root else path
             if rel.startswith("hooks/"):                      # (a)
                 reasons.add(("hook-file", path))
+            if rel.startswith("bin/"):                        # (h)
+                reasons.add(("bin-file", path))
             if rel in ROOT_FILES:                             # (b)
                 reasons.add(("package-or-settings", path))
 

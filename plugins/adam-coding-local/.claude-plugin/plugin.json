@@ -1,6 +1,6 @@
 {
   "name": "adam-coding-local",
-  "version": "2.0.5",
+  "version": "2.1.0",
   "description": "Adam's machine-bound coding skills for Claude Code on the owner's own machines (WSL and Windows homes): Claude Code settings sync, session and memory management, and elevation from WSL.",
   "author": { "name": "Adam Daniel" }
 }

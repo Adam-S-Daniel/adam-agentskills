@@ -124,6 +124,18 @@ wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
 `paths:` filter because its check is required; whether a change is salient is
 decided in its `detect` job.
 
+### Plugin hooks run in Claude Code AND Codex
+
+Codex loads a plugin's `hooks/hooks.json` too
+([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+Keep that file harness-agnostic: every handler needs a shell-form `command`
+(`"${CLAUDE_PLUGIN_ROOT}"/hooks/...`) and a `commandWindows`
+(`"C:\Program Files\Git\bin\bash.exe" "%PLUGIN_ROOT%/hooks/..."`), a
+`timeout`, and no `if`/`args`/`shell`; a hook prints nothing to stdout unless
+it means to answer both harnesses. Claude-only hooks go in a file the
+`.claude-plugin/plugin.json` `hooks` key names. Hook scripts call
+`hooks/lib/harness.sh` to tell `claude-code`, `codex` and `other` apart.
+
 ### Operational gotchas
 
 - Eval skill installs need the nested path: copy `plugins/<name>/skills/<name>/`
@@ -148,8 +160,10 @@ decided in its `detect` job.
   Adding one would be a one-way door (Claude Code keeps following it,
   append-only), so do not add one to paper over a rename — do not rename.
 - After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
-  owner machine right away (a plain `bash setup.sh` only links skills and
-  registers no hook). Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
+  owner machine right away (a plain `bash setup.sh` only removes the skill
+  links earlier versions made; it links none since
+  [ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+  Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
   a stale global sync-skills pre-push hook kept pointing at the old plugin
   path and failed every `git push` from every repo until re-registered;
   `setup.sh --owner-machine` now only removes that retired hook's global

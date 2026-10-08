@@ -469,6 +469,20 @@ def test_an_exec_form_hook_running_bare_bash_is_reported(plugins_dir, program):
     assert any("bare `bash`" in e for e in errors), errors
 
 
+@pytest.mark.parametrize("windows, reported", [
+    ("bash \"%PLUGIN_ROOT%/x.sh\"", True),
+    ("\"bash.exe\" \"%PLUGIN_ROOT%/x.sh\"", True),
+    ("\"C:\\Program Files\\Git\\bin\\bash.exe\" \"%PLUGIN_ROOT%/x.sh\"", False),
+])
+def test_a_windows_command_starting_with_bare_bash_is_reported(plugins_dir, windows, reported):
+    # ADR 0017: Codex runs commandWindows through cmd.exe, where a bare bash is WSL.
+    write_local_plugin(plugins_dir, "alpha")
+    hook = _hook("\"${CLAUDE_PLUGIN_ROOT}\"/x.sh", commandWindows=windows)
+    write_hooks_json(plugins_dir, "alpha", _hook_config(hook))
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert any("bare `bash`" in e for e in errors) is reported, errors
+
+
 def test_an_exec_form_hook_whose_args_mention_bash_passes(plugins_dir):
     write_local_plugin(plugins_dir, "alpha")
     hook = _hook("${CLAUDE_PLUGIN_ROOT}/x.sh", args=["bash", "-c", "true"])

@@ -15,51 +15,51 @@
 #
 # invoke its skills as /<plugin>:<skill> (e.g.
 # /adam-anything-anywhere:finding-unknowns),
-# and don't need this script at all.
+# and don't need this script at all. OpenAI Codex installs the same plugins
+# from the same marketplace (`codex plugin marketplace add
+# Adam-S-Daniel/adam-agentskills`).
 #
-# This script is for the *other* agent tools (Codex, Cursor, the generic
-# .agents/.agent dirs) and for using the skills locally without installing the
-# marketplace. It links every skill found under plugins/*/skills/* into the
-# standard per-agent skill directories:
+# THIS SCRIPT NO LONGER LINKS SKILLS ANYWHERE (ADR 0017). It used to link
+# every skill into ~/.agents/skills, ~/.agent/skills and ~/.cursor/skills for
+# the other agent tools. Codex now installs the plugins from the marketplace,
+# so a link there would load every skill a second time; nothing on the
+# owner's machines reads ~/.agent/skills; Cursor is not installed on them;
+# and Gemini / Antigravity was retired as a target on 2026-08-14 (an owner
+# scope decision: Antigravity's IDE really does read
+# ~/.gemini/antigravity/skills). So all five homes are RETIRED, and
+# sweep_retired_homes below removes the links an earlier version made there
+# and leaves everything else alone.
 #
-#   ~/.agents/skills             ~/.agent/skills
-#   ~/.cursor/skills
-#
-# Gemini / Antigravity was RETIRED as a supported target (owner decision,
-# 2026-08-14). That is a scope decision, not a finding that those paths were
-# dead — Antigravity's IDE really does read ~/.gemini/antigravity/skills, so
-# this drops a link that was doing real work. Machines that ran an earlier
-# version of this script still have those links; sweep_retired_homes below
-# removes the ones we created and leaves everything else alone.
-#
-# Claude Code is intentionally NOT in that list. It is served by the plugin
-# marketplace (/plugin marketplace add Adam-S-Daniel/adam-agentskills). Linking the
+# Claude Code never was in that list. It is served by the plugin marketplace
+# (/plugin marketplace add Adam-S-Daniel/adam-agentskills). Linking the
 # same skills into ~/.claude/skills as well would double-load them — once as a
 # namespaced marketplace plugin and once as a personal skill — which wastes
 # context and makes invocation ambiguous. This script removes any such links it
 # created in earlier versions (see dedup_claude_code_dir below). Background:
 # docs/2026-06-05-skill-discovery-and-centralized-strategy.md.
 #
-# Codex discovers skills in ~/.agents/skills, so that link is what makes
-# these skills installable to Codex.
-#
 # OWNER-MACHINE STEPS ARE OPT-IN. Run as `bash setup.sh`, this script only
-# links skills into the per-agent homes above. Two more steps configure a
+# removes the links earlier versions made. The other steps configure a
 # machine the way the registry's OWNER runs it, and they are wrong on anyone
 # else's: cleaning up the retired global sync-skills pre-push hook (ADR
 # 0014) — a GLOBAL git config entry a prior run may have left registered,
 # fired in every repo on the machine, now pointing at a script that no
-# longer exists — and converging ~/.claude/settings.json — which registers
-# the owner's PRIVATE marketplace, enables the owner's plugins and sets
-# `syncClaudeAiSkills: false`, turning off that user's claude.ai account
+# longer exists; in WSL, making WSL git read the Windows clones under /mnt/
+# with core.autocrlf=true; converging ~/.claude/settings.json — which
+# registers the owner's PRIVATE marketplace, enables the owner's plugins and
+# sets `syncClaudeAiSkills: false`, turning off that user's claude.ai account
 # skills in their terminals (ADR 0010, ADR 0013), and applies the per-OS
 # policy for `adam-non-coding-local` (off in WSL/Linux, left on in Windows;
-# ADR 0015). Both run only with
-# `--owner-machine` or AGENTSKILLS_OWNER_MACHINE=1.
+# ADR 0015); and, in Windows Git Bash, registering the `adam-clone-sync`
+# scheduled task (ADR 0017). They run only with `--owner-machine` or
+# AGENTSKILLS_OWNER_MACHINE=1.
 #
-# Safe to re-run (idempotent). On Windows (Git Bash) it uses `mklink /J`
-# directory junctions — no admin required. Run on Windows AND in WSL
+# Safe to re-run (idempotent). Run on Windows (Git Bash) AND in WSL
 # separately; each has its own filesystem and its own $HOME.
+#
+# AGENTSKILLS_HOST_KIND (wsl|gitbash|other) overrides which kind of machine
+# this is; the tests use it. Unset, Git Bash is recognized by $OSTYPE and WSL
+# by WSL_DISTRO_NAME or a /proc/version that mentions Microsoft.
 set -u
 
 OWNER_MACHINE="${AGENTSKILLS_OWNER_MACHINE:-0}"
@@ -68,9 +68,12 @@ for arg in "$@"; do
     --owner-machine) OWNER_MACHINE=1 ;;
     -h|--help)
       echo "usage: bash setup.sh [--owner-machine]"
-      echo "  (default)        link every skill into ~/.agents/skills, ~/.agent/skills, ~/.cursor/skills"
-      echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook and"
-      echo "                   converge ~/.claude/settings.json for the registry owner's own"
+      echo "  (default)        remove the skill links earlier versions made in ~/.agents/skills,"
+      echo "                   ~/.agent/skills, ~/.cursor/skills, ~/.gemini and ~/.claude/skills"
+      echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook, set up"
+      echo "                   WSL git for the Windows clones (WSL), converge"
+      echo "                   ~/.claude/settings.json, and register the adam-clone-sync"
+      echo "                   scheduled task (Windows Git Bash), for the registry owner's own"
       echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
       exit 0 ;;
     *) echo "ERROR: unknown argument: $arg (see --help)" >&2; exit 2 ;;
@@ -113,30 +116,45 @@ case "${OSTYPE:-}" in
   *)                    PLATFORM="unix" ;;
 esac
 
+# Which kind of machine, for the owner-machine steps that differ by it.
+if [[ -n "${AGENTSKILLS_HOST_KIND:-}" ]]; then
+  HOST_KIND="$AGENTSKILLS_HOST_KIND"
+  case "$HOST_KIND" in
+    wsl|gitbash|other) ;;
+    *) echo "ERROR: AGENTSKILLS_HOST_KIND=$HOST_KIND is not one of wsl, gitbash, other" >&2; exit 2 ;;
+  esac
+elif [[ "$PLATFORM" = "windows" ]]; then
+  HOST_KIND="gitbash"
+elif [[ -n "${WSL_DISTRO_NAME:-}" ]] || grep -qi microsoft /proc/version 2>/dev/null; then
+  HOST_KIND="wsl"
+else
+  HOST_KIND="other"
+fi
+
 echo "Platform:  $PLATFORM"
 echo "Repo:      $REPO_ROOT"
 echo "Skills:    ${#SKILL_DIRS[@]}"
+echo "Host:      $HOST_KIND"
 echo "\$HOME:     $HOME"
 echo ""
 
-# Per-agent skill homes. Each becomes a real directory holding one link per
-# skill (older versions of this script linked the whole directory instead;
-# that legacy link is migrated away below).
-HOMES=(
+# Homes this script used to populate and no longer does (ADR 0017; Gemini
+# and Antigravity since 2026-08-14). Un-listing a home is not enough on a
+# machine that has already run an earlier version: the links are still
+# there, still feeding an unmanaged copy of the skill set to that agent, and
+# they dangle the moment a skill is renamed. sweep_retired_homes reaps them.
+RETIRED_HOMES=(
   ".agents/skills"
   ".agent/skills"
   ".cursor/skills"
-)
-
-# Homes this script used to populate and no longer does. Un-listing a home is
-# not enough on a machine that has already run an earlier version: the links
-# are still there, still feeding an unmanaged copy of the skill set to that
-# agent, and they dangle the moment a skill is renamed. sweep_retired_homes
-# reaps them.
-RETIRED_HOMES=(
   ".gemini/skills"
   ".gemini/antigravity/skills"
 )
+
+# The retired `agentskills` registry's checkout, when it sits beside this one
+# (its setup.sh made the same kind of links into the same homes). Only links
+# into it or into $PLUGINS_DIR are ever removed.
+RETIRED_REGISTRY_DIR="$(dirname "$REPO_ROOT")/agentskills"
 
 # PowerShell parses its own quoting sanely (unlike cmd.exe, which cannot
 # digest the \"-escaped inner quotes MSYS builds into the command line —
@@ -166,88 +184,6 @@ win_remove_link() {
   local p; p="$(cygpath -w "$1")"
   MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command \
     "[System.IO.Directory]::Delete('$p')" </dev/null >/dev/null 2>&1
-}
-
-# win_make_junction <msys-link> <msys-target> — rc 0 iff the junction exists afterwards
-win_make_junction() {
-  local l t; l="$(cygpath -w "$1")"; t="$(cygpath -w "$2")"
-  MSYS_NO_PATHCONV=1 powershell.exe -NoProfile -NonInteractive -Command \
-    "New-Item -ItemType Junction -Path '$l' -Target '$t' | Out-Null" </dev/null >/dev/null 2>&1
-  [[ -d "$1" ]]
-}
-
-# remove_stale_repo_link <link-path> — if <link> is a link/junction whose
-# target lies under $PLUGINS_DIR but no longer exists (stale after a repo
-# restructure moved the skill to a new bundle path), remove it so link_one
-# can recreate it against the new path. Links pointing anywhere outside
-# $PLUGINS_DIR are NEVER touched, even when dangling — they're the user's.
-# Returns 0 if a stale link was removed, 1 otherwise.
-remove_stale_repo_link() {
-  local link="$1" existing
-  if [[ "$PLATFORM" = "windows" ]]; then
-    # Reparse point exists (junction or symlink)…
-    win_link_type "$link" >/dev/null || return 1
-    existing="$(readlink "$link" 2>/dev/null || true)"
-    # MSYS can't always read a junction's target; when it can't, leave the
-    # link untouched rather than guess (same conservative posture as unix).
-    [[ -n "$existing" ]] || return 1
-    case "$existing" in
-      "$PLUGINS_DIR"/*)
-        # …its target is ours, and the target directory is gone → stale.
-        if [[ ! -e "$existing" ]]; then
-          echo "  RELINK   $(basename "$link") (stale plugins/ target)"
-          win_remove_link "$link"
-          return 0
-        fi ;;
-    esac
-  elif [[ -L "$link" ]]; then
-    existing="$(readlink "$link")"
-    case "$existing" in
-      "$PLUGINS_DIR"/*)
-        if [[ ! -e "$link" ]]; then
-          echo "  RELINK   $(basename "$link") (stale plugins/ target)"
-          rm "$link"
-          return 0
-        fi ;;
-    esac
-  fi
-  return 1
-}
-
-# link_one <link-path> <target-dir> — create one skill link, idempotently.
-link_one() {
-  local link="$1" target="$2" parent
-  parent="$(dirname "$link")"
-  [[ -d "$parent" ]] || mkdir -p "$parent"
-
-  remove_stale_repo_link "$link" || true
-
-  if [[ -L "$link" ]]; then
-    echo "  ALREADY  $(basename "$link")"
-    return
-  fi
-  # MSYS does not report junctions as symlinks (-L is false for them), so a
-  # healthy junction from a prior run would otherwise fall through to
-  # CONFLICT below — check reparse-point-ness explicitly on Windows first.
-  if [[ "$PLATFORM" = "windows" ]] && [[ -e "$link" ]] && win_link_type "$link" >/dev/null; then
-    echo "  ALREADY  $(basename "$link")"
-    return
-  fi
-  if [[ -e "$link" ]]; then
-    echo "  CONFLICT $(basename "$link") (exists, not a symlink — skipping)"
-    return
-  fi
-
-  if [[ "$PLATFORM" = "windows" ]]; then
-    if win_make_junction "$link" "$target"; then
-      echo "  JUNCTION $(basename "$link")"
-    else
-      echo "  FAILED   $(basename "$link")"
-    fi
-  else
-    ln -s "$target" "$link"
-    echo "  SYMLINK  $(basename "$link")"
-  fi
 }
 
 # migrate_legacy <home-skills-path> — remove a legacy whole-directory link so
@@ -287,20 +223,52 @@ retired_link_target() {
   echo "$t"
 }
 
+# ours_target <target> — rc 0 when a link target lies under $PLUGINS_DIR or
+# under the retired registry's checkout beside this one: the only targets
+# this script (or the retired registry's setup.sh) ever linked to.
+ours_target() {
+  case "$1" in
+    "$PLUGINS_DIR"/*|"$RETIRED_REGISTRY_DIR"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# remove_link <path> — remove a symlink or junction itself, never its target.
+remove_link() {
+  if [[ "$PLATFORM" = "windows" ]]; then
+    win_remove_link "$1"
+  else
+    rm "$1"
+  fi
+}
+
 # sweep_retired_homes — remove the links this script created in RETIRED_HOMES.
 #
 # Deliberately conservative, because these are directories inside a user's
-# $HOME that we no longer manage: a link is removed ONLY if it resolves into
-# $PLUGINS_DIR. A regular file, a real directory, or a link pointing anywhere
-# else belongs to the user and is left untouched — and because the directory
-# is then removed with rmdir, which refuses a non-empty directory, one such
-# bystander keeps the whole directory alive too. Silent when there is nothing
-# to do, and never fails the script if the paths don't exist.
+# $HOME that we no longer manage: a link is removed ONLY if its target lies
+# under $PLUGINS_DIR or the retired registry's checkout (ours_target). A
+# regular file, a real directory, or a link pointing anywhere else belongs to
+# the user and is left untouched — and because the directory is then removed
+# with rmdir, which refuses a non-empty directory, one such bystander keeps
+# the whole directory alive too. A home that is ITSELF a link (the legacy
+# whole-directory form) is removed when its target is ours and otherwise
+# left alone without looking inside, so the sweep never reaches through a
+# link into a directory it does not own. Silent when there is nothing to do,
+# and never fails the script if the paths don't exist.
 sweep_retired_homes() {
   local rel dir link target name dir_removed
   local -a removed
   for rel in "${RETIRED_HOMES[@]}"; do
     dir="$HOME/$rel"
+
+    if target="$(retired_link_target "$dir")"; then
+      if ours_target "$target"; then
+        remove_link "$dir"
+        echo "=== $dir (retired home — setup.sh no longer links skills) ==="
+        echo "  UNLINK   (legacy whole-directory link)"
+      fi
+      continue
+    fi
     [[ -d "$dir" ]] || continue
 
     removed=()
@@ -308,15 +276,8 @@ sweep_retired_homes() {
       # An unmatched glob expands to the literal pattern, which is neither a
       # symlink nor a junction, so retired_link_target rejects it.
       target="$(retired_link_target "$link")" || continue
-      case "$target" in
-        "$PLUGINS_DIR"/*) ;;
-        *) continue ;;
-      esac
-      if [[ "$PLATFORM" = "windows" ]]; then
-        win_remove_link "$link"
-      else
-        rm "$link"
-      fi
+      ours_target "$target" || continue
+      remove_link "$link"
       removed+=("$(basename "$link")")
     done
 
@@ -326,7 +287,7 @@ sweep_retired_homes() {
     fi
 
     if [[ ${#removed[@]} -gt 0 ]] || [[ "$dir_removed" -eq 1 ]]; then
-      echo "=== $dir (retired home — Gemini/Antigravity no longer a target) ==="
+      echo "=== $dir (retired home — setup.sh no longer links skills) ==="
       for name in "${removed[@]}"; do
         echo "  UNLINK   $name"
       done
@@ -334,33 +295,6 @@ sweep_retired_homes() {
         echo "  RMDIR    (nothing left in it)"
       fi
     fi
-  done
-}
-
-# sweep_orphan_links <home-skills-dir> — remove the links this script made for
-# a skill that no longer exists under plugins/*/skills/ (renamed or removed —
-# e.g. launch-wsl-claude-session -> launch-top-level-claude-session). link_one
-# only ever repairs the link at a CURRENT skill's name, so without this an old
-# name's link would dangle in every agent home forever. Same conservative rule
-# as sweep_retired_homes: only a link whose target lies under $PLUGINS_DIR and
-# no longer exists is removed; a real file or directory, a link pointing
-# anywhere else, or a live link into plugins/ is left alone.
-sweep_orphan_links() {
-  local dir="$1" link target
-  [[ -d "$dir" ]] || return 0
-  for link in "$dir"/*; do
-    target="$(retired_link_target "$link")" || continue
-    case "$target" in
-      "$PLUGINS_DIR"/*) ;;
-      *) continue ;;
-    esac
-    [[ -e "$target" ]] && continue
-    if [[ "$PLATFORM" = "windows" ]]; then
-      win_remove_link "$link"
-    else
-      rm "$link"
-    fi
-    echo "  UNLINK   $(basename "$link") (skill no longer in plugins/)"
   done
 }
 
@@ -388,17 +322,6 @@ dedup_claude_code_dir() {
 dedup_claude_code_dir
 sweep_retired_homes
 
-for rel in "${HOMES[@]}"; do
-  home_skills="$HOME/$rel"
-  echo "=== $home_skills ==="
-  migrate_legacy "$home_skills"
-  mkdir -p "$home_skills"
-  sweep_orphan_links "$home_skills"
-  for sd in "${SKILL_DIRS[@]}"; do
-    link_one "$home_skills/$(basename "$sd")" "$sd"
-  done
-done
-
 if [[ "$OWNER_MACHINE" == 1 ]]; then
 echo ""
 echo "=== Cleaning up the retired sync-skills pre-push hook ==="
@@ -415,6 +338,35 @@ for section in hook.sync-skills-reminder hook.sync-skills-private-reminder; do
     echo "REMOVED  global hook section: $section"
   fi
 done
+
+if [[ "$HOST_KIND" == wsl ]]; then
+echo ""
+echo "=== WSL git for the Windows clones under /mnt/ ==="
+# Windows git checks files out with CRLF line endings, because Git for
+# Windows sets core.autocrlf=true in its SYSTEM config. WSL git never reads
+# that file, so in a clone under /mnt/ it compares CRLF working files with LF
+# blobs and reports every file as modified. An includeIf scoped to gitdirs
+# under /mnt/ gives WSL git the same autocrlf there, and nowhere else.
+# Idempotent: a value already right is left alone, and an includeIf that
+# already points somewhere else is reported, never overwritten.
+windows_clones_config="$HOME/.gitconfig-windows-clones"
+# Single quotes on purpose: git expands the ~ itself when it reads the include.
+# shellcheck disable=SC2088
+windows_clones_include='~/.gitconfig-windows-clones'
+if [[ "$(git config --file "$windows_clones_config" --get core.autocrlf 2>/dev/null)" != "true" ]]; then
+  git config --file "$windows_clones_config" core.autocrlf true
+  echo "SET      core.autocrlf = true in $windows_clones_config"
+fi
+include_values="$(git config --global --get-all 'includeIf.gitdir:/mnt/.path' 2>/dev/null || true)"
+if [[ -z "$include_values" ]]; then
+  git config --global --add 'includeIf.gitdir:/mnt/.path' "$windows_clones_include"
+  echo "ADDED    includeIf.gitdir:/mnt/.path = ~/.gitconfig-windows-clones"
+elif ! grep -qxF -e "$windows_clones_include" -e "$windows_clones_config" <<< "$include_values"; then
+  echo "WARN     includeIf.gitdir:/mnt/.path is already set to something else; left as it is." >&2
+  echo "         Point it at ~/.gitconfig-windows-clones by hand if WSL git reports" >&2
+  echo "         every file modified in the Windows clones." >&2
+fi
+fi
 fi
 
 # >>> settings-convergence
@@ -422,7 +374,8 @@ fi
 # a throwaway HOME. Keep both marker lines.
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
-  echo "Skipped the owner-machine steps (retired global hook cleanup, ~/.claude/settings.json)."
+  echo "Skipped the owner-machine steps (retired global hook cleanup, WSL git for Windows clones,"
+  echo "the ~/.claude/settings.json convergence, the adam-clone-sync scheduled task)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else
 echo ""
@@ -693,6 +646,37 @@ if [[ $converge_rc -ne 0 ]]; then
 fi
 fi
 # <<< settings-convergence
+
+if [[ "${OWNER_MACHINE:-0}" == 1 && "${HOST_KIND:-}" == gitbash ]]; then
+echo ""
+echo "=== Registering the adam-clone-sync scheduled task ==="
+# The task fast-forwards this machine's clean clones every 30 minutes and at
+# logon (ADR 0017). It runs a launcher that resolves the INSTALLED
+# adam-coding-local plugin at each run, so registering it from this checkout
+# never makes the task run this checkout's code. pwsh is found by full path:
+# PATH first, then PowerShell 7's default install location.
+register_script="$PLUGINS_DIR/adam-coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1"
+pwsh_exe="$(command -v pwsh.exe 2>/dev/null || true)"
+if [[ -z "$pwsh_exe" && -x "/c/Program Files/PowerShell/7/pwsh.exe" ]]; then
+  pwsh_exe="/c/Program Files/PowerShell/7/pwsh.exe"
+fi
+if [[ -z "$pwsh_exe" ]]; then
+  echo "WARN     PowerShell 7 (pwsh.exe) not found, so the adam-clone-sync task was NOT" >&2
+  echo "         registered. Install PowerShell 7 and re-run setup.sh --owner-machine." >&2
+else
+  register_arg="$register_script"
+  if command -v cygpath >/dev/null 2>&1; then
+    register_arg="$(cygpath -w "$register_script")"
+  fi
+  if MSYS_NO_PATHCONV=1 "$pwsh_exe" -NoProfile -NonInteractive -File "$register_arg" </dev/null; then
+    :
+  else
+    register_rc=$?
+    echo "ERROR    registering the adam-clone-sync task failed (exit $register_rc)" >&2
+    exit "$register_rc"
+  fi
+fi
+fi
 
 echo ""
 echo "Setup complete."

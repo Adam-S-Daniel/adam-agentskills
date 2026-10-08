@@ -1,0 +1,30 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash|.*merge_pull_request",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/clone-sync/on-merge.sh",
+            "commandWindows": "\"C:\\Program Files\\Git\\bin\\bash.exe\" \"%PLUGIN_ROOT%/hooks/clone-sync/on-merge.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/clone-sync/on-session-start.sh",
+            "commandWindows": "\"C:\\Program Files\\Git\\bin\\bash.exe\" \"%PLUGIN_ROOT%/hooks/clone-sync/on-session-start.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

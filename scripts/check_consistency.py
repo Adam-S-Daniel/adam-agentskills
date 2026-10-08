@@ -281,7 +281,8 @@ def _bare_bash_hooks(node) -> int:
     so the rule never decides which hook events or matchers may exist. Two
     forms count: a `type: command` hook with a shell-form `command` (no
     `args`) whose first word is bash, and an exec-form hook (one with `args`)
-    whose `command` is bash itself.
+    whose `command` is bash itself. A `commandWindows` (Codex's Windows
+    command line) whose first word is bash counts too.
     """
     if isinstance(node, list):
         return sum(_bare_bash_hooks(item) for item in node)
@@ -295,6 +296,11 @@ def _bare_bash_hooks(node) -> int:
                 found += 1
         elif node.get("type") == "command" and _BARE_BASH_RE.match(command.lstrip()):
             found += 1
+    # Codex runs `commandWindows` through cmd.exe on Windows (ADR 0017), where a
+    # bare `bash` is the same WSL launcher.
+    windows = node.get("commandWindows")
+    if isinstance(windows, str) and _BARE_BASH_RE.match(windows.lstrip()):
+        found += 1
     return found + sum(_bare_bash_hooks(value) for value in node.values()
                        if isinstance(value, (dict, list)))
 

@@ -336,7 +336,7 @@ def test_a_renames_key_naming_a_current_plugin_is_reported():
 
 
 # =================================================================================
-# Closed plugin folders and no symlinks (ADR 0013)
+# Open plugin folders (ADR 0016) and no symlinks (ADR 0013)
 # =================================================================================
 
 
@@ -357,51 +357,184 @@ def _can_symlink(tmp_path: Path) -> bool:
     return True
 
 
-def test_a_closed_local_plugin_passes(plugins_dir):
+def test_a_skills_only_local_plugin_passes(plugins_dir):
     write_local_plugin(plugins_dir, "alpha")
     write_skill(plugins_dir, "alpha", "one")
     assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
 
 
 @pytest.mark.parametrize("extra", ["hooks", "agents", ".mcp.json", "bin", "settings.json",
-                                   "package.json", "SKILL.md", "README.md"])
-def test_anything_else_in_a_plugin_folder_is_reported(plugins_dir, extra):
+                                   "package.json", "README.md"])
+def test_any_component_in_a_plugin_folder_is_allowed(plugins_dir, extra):
+    """Plugin folders are open (ADR 0016): what a plugin ships is reviewed, by
+    the plugin-runtime-review gate where it runs code, not refused here."""
     plugin = write_local_plugin(plugins_dir, "alpha")
     path = plugin / extra
     if "." in extra:
         path.write_text("{}", encoding="utf-8")
     else:
         path.mkdir()
-    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
-    assert any(f"{extra} is not allowed" in e for e in errors), errors
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
 
 
-def test_a_second_file_in_a_manifest_folder_is_reported(plugins_dir):
+def test_a_second_file_in_a_manifest_folder_is_allowed(plugins_dir):
     plugin = write_local_plugin(plugins_dir, "alpha")
     (plugin / ".claude-plugin" / "extra.json").write_text("{}", encoding="utf-8")
-    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
-    assert any(".claude-plugin/ holds only plugin.json" in e for e in errors), errors
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
 
 
 COMPONENT_KEYS = ["hooks", "mcpServers", "lspServers", "commands", "agents", "skills",
-                  "outputStyles", "monitors"]
+                  "outputStyles", "monitors", "settings"]
 
 
 @pytest.mark.parametrize("key", COMPONENT_KEYS)
 @pytest.mark.parametrize("manifest", ["claude", "root"])
-def test_a_component_in_either_manifest_is_reported(plugins_dir, key, manifest):
-    """The closed-folder rule never sees a component declared INLINE in a
-    manifest, so the manifests are closed too."""
+def test_a_component_in_either_manifest_is_allowed(plugins_dir, key, manifest):
+    """check_consistency.py no longer closes the manifests (ADR 0016). The
+    Agent Plugins schema still closes the ROOT one; that is
+    check_agent_plugins.py's verdict, not this script's."""
     plugin = write_local_plugin(plugins_dir, "alpha")
     path = (plugin / ".claude-plugin" / "plugin.json") if manifest == "claude" \
         else (plugin / "plugin.json")
     data = {"name": "alpha", "version": "1.0.0"}
     if manifest == "root":
         data["$schema"] = "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json"
-    data[key] = {} if key in ("hooks", "mcpServers", "lspServers") else ["./x"]
+    data[key] = {} if key in ("hooks", "mcpServers", "lspServers", "settings") else ["./x"]
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
+
+
+# =================================================================================
+# No hook runs through a bare `bash` (ADR 0016)
+# =================================================================================
+
+
+def _hook(command, **extra):
+    hook = {"type": "command", "command": command}
+    hook.update(extra)
+    return hook
+
+
+def _hook_config(*hooks, event="PreToolUse"):
+    return {"hooks": {event: [{"matcher": "Bash", "hooks": list(hooks)}]}}
+
+
+def write_hooks_json(plugins_dir: Path, name: str, config, rel="hooks/hooks.json") -> Path:
+    path = plugins_dir / name / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config), encoding="utf-8")
+    return path
+
+
+BARE_BASH_COMMANDS = [
+    "bash ${CLAUDE_PLUGIN_ROOT}/scripts/x.sh",
+    "  bash \"${CLAUDE_PLUGIN_ROOT}\"/scripts/x.sh",
+    "bash.exe -c 'echo hi'",
+    "\"bash\" ./x.sh",
+    "'bash.exe' ./x.sh",
+    "BASH ./x.sh",
+    "bash",
+]
+
+
+@pytest.mark.parametrize("command", BARE_BASH_COMMANDS)
+def test_a_shell_form_hook_starting_with_bare_bash_is_reported(plugins_dir, command):
+    write_local_plugin(plugins_dir, "alpha")
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook(command)))
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert len(errors) == 1 and "bare `bash`" in errors[0] and "hooks.json" in errors[0], errors
+
+
+@pytest.mark.parametrize("command", [
+    "\"${CLAUDE_PLUGIN_ROOT}\"/skills/x/scripts/y.sh",
+    "/usr/bin/bash ./x.sh",
+    "bashful ./x.sh",
+    "bash-completion",
+    "./bash.sh",
+    "python3 ${CLAUDE_PLUGIN_ROOT}/x.py bash",
+    "\"bash ./x.sh",
+])
+def test_a_hook_that_does_not_start_with_bare_bash_passes(plugins_dir, command):
+    write_local_plugin(plugins_dir, "alpha")
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook(command)))
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
+
+
+@pytest.mark.parametrize("program", ["bash", "bash.exe", "Bash.EXE"])
+def test_an_exec_form_hook_running_bare_bash_is_reported(plugins_dir, program):
+    write_local_plugin(plugins_dir, "alpha")
+    hook = _hook(program, args=["${CLAUDE_PLUGIN_ROOT}/x.sh"])
+    write_hooks_json(plugins_dir, "alpha", _hook_config(hook))
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert any("bare `bash`" in e for e in errors), errors
+
+
+def test_an_exec_form_hook_whose_args_mention_bash_passes(plugins_dir):
+    write_local_plugin(plugins_dir, "alpha")
+    hook = _hook("${CLAUDE_PLUGIN_ROOT}/x.sh", args=["bash", "-c", "true"])
+    write_hooks_json(plugins_dir, "alpha", _hook_config(hook))
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
+
+
+def test_a_non_command_hook_is_not_read_as_shell(plugins_dir):
+    write_local_plugin(plugins_dir, "alpha")
+    write_hooks_json(plugins_dir, "alpha",
+                     _hook_config({"type": "prompt", "command": "bash is not run here"}))
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
+
+
+@pytest.mark.parametrize("event", ["SessionStart", "SomeFutureEvent"])
+def test_the_rule_does_not_care_which_event_or_matcher(plugins_dir, event):
+    write_local_plugin(plugins_dir, "alpha")
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook("bash x.sh"), event=event))
+    assert any("bare `bash`" in e for e in errors_for(marketplace(local_entry("alpha")), plugins_dir))
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook("./x.sh"), event=event))
+    assert errors_for(marketplace(local_entry("alpha")), plugins_dir) == []
+
+
+@pytest.mark.parametrize("manifest", ["claude", "root"])
+def test_inline_hooks_in_either_manifest_are_checked(plugins_dir, manifest):
+    plugin = write_local_plugin(plugins_dir, "alpha")
+    path = (plugin / ".claude-plugin" / "plugin.json") if manifest == "claude" \
+        else (plugin / "plugin.json")
+    data = {"name": "alpha", "version": "1.0.0", "hooks": _hook_config(_hook("bash x.sh"))}
     path.write_text(json.dumps(data), encoding="utf-8")
     errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
-    assert any("may carry only" in e and repr(key) in e for e in errors), errors
+    assert any("bare `bash`" in e and "plugin.json" in e for e in errors), errors
+
+
+@pytest.mark.parametrize("value", ["./hooks/extra.json", ["./hooks/extra.json"]])
+def test_a_hooks_file_a_manifest_names_is_checked(plugins_dir, value):
+    write_local_plugin(plugins_dir, "alpha",
+                       manifest={"name": "alpha", "version": "1.0.0", "hooks": value})
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook("bash x.sh")),
+                     rel="hooks/extra.json")
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert any("bare `bash`" in e and "extra.json" in e for e in errors), errors
+
+
+def test_a_hooks_file_named_twice_is_reported_once(plugins_dir):
+    write_local_plugin(plugins_dir, "alpha", manifest={
+        "name": "alpha", "version": "1.0.0", "hooks": "./hooks/hooks.json"})
+    write_hooks_json(plugins_dir, "alpha", _hook_config(_hook("bash x.sh")))
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert len([e for e in errors if "bare `bash`" in e]) == 1, errors
+
+
+def test_inline_hooks_on_a_marketplace_entry_are_checked(plugins_dir):
+    write_local_plugin(plugins_dir, "alpha")
+    entry = local_entry("alpha", hooks=_hook_config(_hook("bash x.sh")))
+    errors = errors_for(marketplace(entry), plugins_dir)
+    assert any("bare `bash`" in e and "marketplace.json entry 'alpha'" in e
+               for e in errors), errors
+
+
+def test_an_unparseable_hooks_file_is_reported(plugins_dir):
+    plugin = write_local_plugin(plugins_dir, "alpha")
+    (plugin / "hooks").mkdir()
+    (plugin / "hooks" / "hooks.json").write_text("{not json", encoding="utf-8")
+    errors = errors_for(marketplace(local_entry("alpha")), plugins_dir)
+    assert any("hooks.json is not valid JSON" in e for e in errors), errors
 
 
 def test_a_symlinked_skill_directory_is_reported(plugins_dir, tmp_path):

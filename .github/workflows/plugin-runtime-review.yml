@@ -1,0 +1,103 @@
+name: Plugin runtime review
+
+# Holds a pull request that changes how a plugin runs code or alters sessions
+# (hooks, a package install, plugin settings, a script a hook calls) until the
+# owner approves the `plugin-runtime-review` environment. ADR 0016 has the
+# design; scripts/plugin_runtime_gate.py decides what counts.
+#
+# ONLY `pull_request_target`, for two reasons:
+#   * it runs the BASE branch's copy of this workflow and of the gate script,
+#     so a pull request cannot edit the gate out of itself — a change to
+#     either takes effect only after it merges, which is why the gate gates
+#     changes to itself;
+#   * no other event may publish this check. A push, dispatch or schedule run
+#     reports a context on a sha too, and could hand a pull request's head a
+#     passing `plugin-runtime-approval` it never earned.
+#
+# pull_request_target runs with the base repository's token, so the PR's
+# content is only ever read as DATA through the API: the checkout below is the
+# base, nothing from the head is checked out, installed, imported or executed,
+# and the token is read-only.
+#
+# No `concurrency:` block at either level, for the reason ci.yml's header
+# gives: `plugin-runtime-approval` becomes a required check, a required
+# context can be reported by more than one run on one head sha (`opened` and
+# `reopened` here), and when a cancelled run wins, the merge API refuses the
+# merge with `405 Required status check ... is cancelled`, which nothing
+# overrides. With no group, nothing cancels. `cancel-in-progress: false` does
+# not help: GitHub still cancels all but the latest pending run per group.
+#
+# No `paths:` filter either, because a required check that never reports
+# blocks the merge for good. Salience is decided in the `detect` job instead,
+# and an ungated pull request reports success at once.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      gated: ${{ steps.gate.outputs.gated }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Decide whether the pull request changes plugin runtime behavior
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/plugin_runtime_gate.py
+
+  plugin-runtime-approval:
+    needs: detect
+    # Runs even when `detect` failed: a failed or empty verdict is not 'false',
+    # so it selects the environment and the job waits for the owner.
+    if: always()
+    runs-on: ubuntu-latest
+    # The wait for approval does not count toward this; only the steps do.
+    timeout-minutes: 5
+    environment: ${{ needs.detect.outputs.gated != 'false' && 'plugin-runtime-review' || '' }}
+    steps:
+      # GitHub silently creates an UNPROTECTED environment when a job names one
+      # that does not exist, and the job then runs without waiting for anyone.
+      # So when gated, prove the environment still requires the owner's review.
+      - name: Verify the review environment requires the owner's approval
+        if: needs.detect.outputs.gated != 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+        run: |
+          set -euo pipefail
+          # The owner is read from the event, so no account id is written here.
+          if ! [[ "$OWNER_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::repository_owner_id is not a numeric id."
+            exit 1
+          fi
+          env_json=$(gh api "repos/${REPO}/environments/plugin-runtime-review") || env_json=""
+          owner_rules=$(jq --argjson owner "$OWNER_ID" '[.protection_rules[]? | select(.type == "required_reviewers") | .reviewers[]? | select(.type == "User" and .reviewer.id == $owner)] | length' <<<"$env_json") || owner_rules=""
+          if ! [[ "$owner_rules" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::plugin-runtime-review has no required-reviewer rule naming the owner; the approval it recorded proves nothing."
+            exit 1
+          fi
+          echo "plugin-runtime-review requires the owner's review."
+      - name: Report
+        env:
+          GATED: ${{ needs.detect.outputs.gated }}
+        run: |
+          if [ "$GATED" = "false" ]; then
+            echo "No plugin runtime change detected."
+          else
+            echo "Plugin runtime change approved (gated=${GATED:-unknown})."
+          fi

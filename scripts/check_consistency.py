@@ -13,9 +13,10 @@ hardcoded):
     entry (both directions);
   - every FEDERATED entry (a plugin root in another repo) is well-formed and
     is not shadowed by a local plugins/<name>/ directory of the same name;
-  - every LOCAL plugin folder is closed: it holds only its two manifests and
-    skills/, and both manifests carry metadata keys only (PLUGIN_TOP_LEVEL,
-    MANIFEST_KEYS);
+  - no hook in a LOCAL plugin runs through a bare `bash` — hooks/hooks.json,
+    any hooks file a manifest names, and hooks declared inline in either
+    manifest or in the marketplace entry (ADR 0016) — see
+    check_hook_commands();
   - nothing under plugins/ is a symlink, on disk or as committed (mode
     120000): every skill lives in exactly one plugin folder as a real
     directory (ADR 0013);
@@ -49,24 +50,6 @@ from typing import Dict, List, Optional, Tuple
 REPO_ROOT = Path(__file__).resolve().parent.parent
 MARKETPLACE_PATH = REPO_ROOT / ".claude-plugin" / "marketplace.json"
 PLUGINS_DIR = REPO_ROOT / "plugins"
-
-# What a local plugin folder may contain at its top level. Anything else would
-# join the plugin (hooks/, agents/, .mcp.json, bin/, settings.json, a
-# package.json that triggers an install in every cached copy ...), so every
-# local plugin folder is closed: its skills are the whole of what it ships.
-# plugin.json is the Agent Plugins root manifest (check_agent_plugins.py).
-PLUGIN_TOP_LEVEL = frozenset({".claude-plugin", "plugin.json", "skills"})
-
-# Every key a local plugin's two MANIFESTS may carry: metadata only, plus
-# `$schema` on the Agent Plugins root manifest, which the spec requires there.
-# A Claude Code plugin.json may declare hooks, MCP/LSP servers, commands,
-# agents, output styles or extra skills paths INLINE, which the closed-folder
-# rule above never sees — so the manifests are closed too.
-MANIFEST_KEYS = frozenset({
-    "name", "version", "description", "author", "homepage", "repository",
-    "license", "keywords",
-})
-ROOT_MANIFEST_KEYS = MANIFEST_KEYS | {"$schema"}
 
 # A federated entry's repo, spelled the way GitHub spells it: OWNER/REPO, each
 # half starting with an alphanumeric. Anchored on purpose so the near-misses
@@ -284,40 +267,99 @@ def check_no_retired_registry_links(errors: List[str], repo_root: Path = REPO_RO
                 )
 
 
-def check_local_plugin_closed(name: str, errors: List[str], plugins_dir: Path = PLUGINS_DIR) -> None:
-    """A local plugin folder holds only PLUGIN_TOP_LEVEL, its .claude-plugin/
-    only plugin.json, and both manifests only metadata keys."""
+# A hook's shell-form `command` whose first word is `bash`, `bash.exe`, or a
+# quoted form of either. Lexical on purpose: the question is which word comes
+# first, not how the rest of the command parses.
+_BARE_BASH_RE = re.compile(r"""^(["']?)bash(?:\.exe)?\1(?=\s|$)""", re.IGNORECASE)
+_BARE_BASH_PROGRAMS = frozenset({"bash", "bash.exe"})
+
+
+def _bare_bash_hooks(node) -> int:
+    """How many hooks in one parsed hook config run through a bare `bash`.
+
+    Walks the whole value rather than a fixed event -> matcher -> hooks path,
+    so the rule never decides which hook events or matchers may exist. Two
+    forms count: a `type: command` hook with a shell-form `command` (no
+    `args`) whose first word is bash, and an exec-form hook (one with `args`)
+    whose `command` is bash itself.
+    """
+    if isinstance(node, list):
+        return sum(_bare_bash_hooks(item) for item in node)
+    if not isinstance(node, dict):
+        return 0
+    found = 0
+    command = node.get("command")
+    if isinstance(command, str):
+        if "args" in node:
+            if command.strip().lower() in _BARE_BASH_PROGRAMS:
+                found += 1
+        elif node.get("type") == "command" and _BARE_BASH_RE.match(command.lstrip()):
+            found += 1
+    return found + sum(_bare_bash_hooks(value) for value in node.values()
+                       if isinstance(value, (dict, list)))
+
+
+def _hook_configs(plugin_dir: Path, inline_sources, errors: List[str]):
+    """Yield (label, parsed hook config) for every hook config of one plugin:
+    hooks/hooks.json, every .json file a `hooks` value names, and every inline
+    hook object. inline_sources is a list of (label, `hooks` value) pairs taken
+    from the two manifests and the marketplace entry. A `hooks` value may be a
+    path string, an inline object, or a list mixing the two."""
+    files = [plugin_dir / "hooks" / "hooks.json"]
+    for label, value in inline_sources:
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, str):
+                files.append(plugin_dir / item)
+            elif isinstance(item, dict):
+                yield label, item
+    seen = set()
+    root = plugin_dir.resolve()
+    for path in files:
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file() or root not in resolved.parents:
+            continue  # missing, or outside the plugin: `claude plugin validate`'s to report
+        seen.add(resolved)
+        try:
+            data = json.loads(resolved.read_text(encoding="utf-8"))
+        except (ValueError, UnicodeDecodeError) as exc:
+            errors.append(f"{_rel(resolved)} is not valid JSON: {exc}")
+            continue
+        yield _rel(resolved), data
+
+
+def check_hook_commands(entry: dict, errors: List[str], plugins_dir: Path = PLUGINS_DIR) -> None:
+    """No hook in a local plugin runs through a bare `bash` (ADR 0016).
+
+    On Windows a bare `bash` resolves to C:\\Windows\\System32\\bash.exe, which
+    is WSL, not Git Bash: the hook runs in another operating system, against
+    another filesystem, or not at all. Calling the script by its path lets
+    Claude Code pick the shell, so the rule is about the first word only — it
+    does not restrict which events, matchers or scripts a plugin uses.
+    """
+    name = entry.get("name")
     plugin_dir = plugins_dir / name
     if not plugin_dir.is_dir():
         return
-    for child in sorted(plugin_dir.iterdir()):
-        if child.name not in PLUGIN_TOP_LEVEL:
-            errors.append(
-                f"{_rel(child)} is not allowed in {name}/: a plugin folder holds "
-                f"only {', '.join(sorted(PLUGIN_TOP_LEVEL))}, since anything else "
-                "there would load as part of the plugin"
-            )
-    manifest_dir = plugin_dir / ".claude-plugin"
-    if manifest_dir.is_dir():
-        for child in sorted(manifest_dir.iterdir()):
-            if child.name != "plugin.json":
-                errors.append(f"{_rel(child)} is not allowed; .claude-plugin/ holds only plugin.json")
-    for manifest, allowed in ((manifest_dir / "plugin.json", MANIFEST_KEYS),
-                              (plugin_dir / "plugin.json", ROOT_MANIFEST_KEYS)):
+    inline_sources = []
+    if "hooks" in entry:
+        inline_sources.append((f"marketplace.json entry '{name}'", entry["hooks"]))
+    for manifest in (plugin_dir / ".claude-plugin" / "plugin.json", plugin_dir / "plugin.json"):
         if not manifest.is_file():
             continue
         try:
             data = json.loads(manifest.read_text(encoding="utf-8"))
         except (ValueError, UnicodeDecodeError):
             continue  # reported by _check_local_entry / check_agent_plugins.py
-        if not isinstance(data, dict):
-            continue
-        extra = sorted(set(data) - allowed)
-        if extra:
+        if isinstance(data, dict) and "hooks" in data:
+            inline_sources.append((_rel(manifest), data["hooks"]))
+    for label, config in _hook_configs(plugin_dir, inline_sources, errors):
+        count = _bare_bash_hooks(config)
+        if count:
             errors.append(
-                f"{_rel(manifest)} carries {', '.join(repr(key) for key in extra)}; a "
-                f"plugin manifest here may carry only {', '.join(sorted(allowed))} — "
-                "components declared there would load on every surface the plugin reaches"
+                f"{label} has {count} hook(s) that run through a bare `bash`; on "
+                "Windows that resolves to C:\\Windows\\System32\\bash.exe (WSL), not "
+                "Git Bash — call the script path directly, e.g. "
+                '"${CLAUDE_PLUGIN_ROOT}"/skills/x/scripts/y.sh (ADR 0016)'
             )
 
 
@@ -346,8 +388,9 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
-def _check_local_entry(name: str, source: str, errors: List[str], plugins_dir: Path) -> None:
+def _check_local_entry(entry: dict, source: str, errors: List[str], plugins_dir: Path) -> None:
     """A local entry's plugin root is on disk: read it and cross-check it."""
+    name = entry["name"]
     # The reverse scan below — and setup.sh, and the whole plugins/<name>
     # convention — assume the directory basename IS the plugin name. An entry
     # that pointed anywhere else would break that identity silently: `claude
@@ -363,7 +406,7 @@ def _check_local_entry(name: str, source: str, errors: List[str], plugins_dir: P
             "plugin directory basename stay the same thing"
         )
 
-    check_local_plugin_closed(name, errors, plugins_dir)
+    check_hook_commands(entry, errors, plugins_dir)
     plugin_json_path = plugins_dir / name / ".claude-plugin" / "plugin.json"
     if not plugin_json_path.is_file():
         errors.append(
@@ -426,7 +469,7 @@ def check_marketplace_entries(
 
         kind, detail = classify_source(entry)
         if kind == "local":
-            _check_local_entry(name, detail, errors, plugins_dir)
+            _check_local_entry(entry, detail, errors, plugins_dir)
         elif kind == "federated":
             _check_federated_entry(name, detail, errors, plugins_dir)
         else:

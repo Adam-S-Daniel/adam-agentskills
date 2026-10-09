@@ -41,6 +41,13 @@ no backfill is planned; the file adds the fields git does not capture.
 ---
 
 
+## 2026-10-09 — adam-coding-anywhere/github-actions-repo-settings — edit (correction)
+
+- Motivation: the entry below recorded the touch gate as outstanding and the outcome as pending; both have since resolved.
+- Change: none to the skill. Corrects the entry for [PR #64](https://github.com/Adam-S-Daniel/adam-agentskills/pull/64) with its eval result and outcome.
+- Eval: `evals/github-actions-repo-settings/drift-diagnosis`, 3 trials, local exhibit (`scripts/local_eval.py`, CLI 2.1.295; not badge input), run after merge. Local runs first needed two harness fixes ([skills-evals#365](https://github.com/Adam-S-Daniel/skills-evals/pull/365)). New skill: `with_skill` objective 4.33/9, judge 8.43; `without_skill` 4.33/9, judge 8.43. Old skill (pre-#64) `with_skill`: 4.33/9, judge 9.00. 0 errors in 9 arm runs. Removing the engine copy left the objective score unchanged; the judge dip is within noise at n=3. `onboarding` is a draft fixture with no agent arm.
+- Outcome: merged 2026-10-09; the touch gate ran after merge, not before.
+
 ## 2026-10-09 — adam-coding-anywhere/github-actions-repo-settings — edit
 - Motivation: [issue #62](https://github.com/Adam-S-Daniel/adam-agentskills/issues/62) — the skill's engine copy was 663 lines against repo-settings' 1,771 and had drifted with nothing to notice.
 - Change: the engine copy and its assets (schema, example fleet config, fan-out workflow) removed; SKILL.md points at `Adam-S-Daniel/repo-settings`, adds the Actions event policy triggers and facts; ADR 0019; bundle `adam-coding-anywhere` 1.2.5 -> 1.2.6 (PR pending).

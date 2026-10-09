@@ -41,6 +41,12 @@ no backfill is planned; the file adds the fields git does not capture.
 ---
 
 
+## 2026-10-09 — adam-coding-anywhere/github-actions-repo-settings — edit
+- Motivation: [issue #62](https://github.com/Adam-S-Daniel/adam-agentskills/issues/62) — the skill's engine copy was 663 lines against repo-settings' 1,771 and had drifted with nothing to notice.
+- Change: the engine copy and its assets (schema, example fleet config, fan-out workflow) removed; SKILL.md points at `Adam-S-Daniel/repo-settings`, adds the Actions event policy triggers and facts; ADR 0019; bundle `adam-coding-anywhere` 1.2.5 -> 1.2.6 (PR pending).
+- Eval: pending — drift-diagnosis run reported in the PR; onboarding is a draft fixture with no agent arm.
+- Outcome: pending review and merge.
+
 ## 2026-10-05 — adam-coding-local/launch-top-level-claude-session — edit
 
 - Motivation: Windows session 0 cannot activate the Windows Terminal Store alias, so launchers inherited from an S4U session keeper failed before opening a tab.

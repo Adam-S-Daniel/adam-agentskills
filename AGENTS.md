@@ -136,6 +136,8 @@ it means to answer both harnesses. Claude-only hooks go in a file the
 `.claude-plugin/plugin.json` `hooks` key names. Hook scripts call
 `hooks/lib/harness.sh` to tell `claude-code`, `codex` and `other` apart.
 
+The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
+
 ### Operational gotchas
 
 - Eval skill installs need the nested path: copy `plugins/<name>/skills/<name>/`

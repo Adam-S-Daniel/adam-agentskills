@@ -30,6 +30,12 @@ name: Plugin runtime review
 # No `paths:` filter either, because a required check that never reports
 # blocks the merge for good. Salience is decided in the `detect` job instead,
 # and an ungated pull request reports success at once.
+#
+# No `timeout-minutes` on either job, by the fleet rule in repo-settings'
+# fleet.yml: a required check carries no timeout-minutes, so GitHub can never
+# report it cancelled by a time limit. A check cancelled that way blocks the
+# merge just like the cancelled run above. GitHub's own 6-hour job limit still
+# applies, and the approval wait does not count toward either.
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
@@ -42,7 +48,6 @@ permissions:
 jobs:
   detect:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     outputs:
       gated: ${{ steps.gate.outputs.gated }}
     steps:
@@ -65,8 +70,6 @@ jobs:
     # so it selects the environment and the job waits for the owner.
     if: always()
     runs-on: ubuntu-latest
-    # The wait for approval does not count toward this; only the steps do.
-    timeout-minutes: 5
     environment: ${{ needs.detect.outputs.gated != 'false' && 'plugin-runtime-review' || '' }}
     steps:
       # GitHub silently creates an UNPROTECTED environment when a job names one

@@ -1,0 +1,17 @@
+{
+  "wif": {
+    "organization_id": "00000000-0000-4000-8000-000000000000",
+    "service_account_id": "svac_EXAMPLE0000000000",
+    "federation_rule_id": "fdrl_EXAMPLE0000000000",
+    "workspace_id": "wrkspc_EXAMPLE0000000000",
+    "issuer": "https://issuer.example.com",
+    "subject": "api-credit-lane",
+    "audience": "https://api.anthropic.com",
+    "key_name": "example-key"
+  },
+  "slots": 2,
+  "grants": [
+    {"usd": 200, "granted": "2026-10-08T00:00:00Z", "expires": "2026-11-07T00:00:00Z"}
+  ],
+  "next_grant": {"day_of_month": 5, "usd": 200, "lifetime_days": 30}
+}

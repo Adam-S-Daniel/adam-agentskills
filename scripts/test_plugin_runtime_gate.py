@@ -431,6 +431,38 @@ def test_the_shipped_clone_sync_hooks_are_gated():
         assert ("hook-file", f) in reasons, f
 
 
+def test_the_shipped_credit_lane_and_its_wrapper_are_gated():
+    """The API-credit lane (ADR 0018): claude-code.json, named by the Claude
+    manifest, names both lane hooks; every lane file sits under hooks/; and
+    bin/claude-credit sits on the session PATH. A change to any waits."""
+    root = "plugins/adam-coding-local"
+    manifest = json.loads((REPO_ROOT / root / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    assert manifest["hooks"] == "./hooks/claude-code.json"
+    config = json.loads((REPO_ROOT / root / "hooks" / "claude-code.json").read_text(encoding="utf-8"))
+    assert gate._hook_paths(config, root) == {
+        f"{root}/hooks/credit-lane/on-session-start.sh",
+        f"{root}/hooks/credit-lane/on-prompt.sh"}
+    lane = sorted(p.relative_to(REPO_ROOT).as_posix()
+                  for p in (REPO_ROOT / root / "hooks" / "credit-lane").rglob("*") if p.is_file())
+    assert f"{root}/hooks/credit-lane/gate.py" in lane, lane
+    base = tree()
+    head = dict(base, **{f: b"changed\n" for f in lane},
+                **{f"{root}/bin/claude-credit": b"#!/usr/bin/env bash\n"})
+    reasons = run(base, head)[1]
+    for f in lane:
+        assert ("hook-file", f) in reasons, f
+    assert ("bin-file", f"{root}/bin/claude-credit") in reasons
+
+
+def test_a_change_to_claude_code_json_named_by_the_manifest_gates_its_scripts():
+    root = "plugins/alpha"
+    config = hook_config('"${CLAUDE_PLUGIN_ROOT}"/skills/one/scripts/tool.sh')
+    base = tree(**{f"{root}/.claude-plugin/plugin.json": manifest(hooks="./extra/claude-code.json"),
+                   f"{root}/extra/claude-code.json": config})
+    head = dict(base, **{f"{root}/skills/one/scripts/tool.sh": b"echo two\n"})
+    assert ("hook-referenced", f"{root}/skills/one/scripts/tool.sh") in run(base, head)[1]
+
+
 # =================================================================================
 # (h) bin/ on the session PATH
 # =================================================================================
@@ -675,9 +707,16 @@ def test_the_approval_job_publishes_its_context_under_its_job_id():
     assert "matrix" not in (job.get("strategy") or {})
 
 
-def test_both_jobs_have_a_timeout():
-    for job_id, job in load_workflow()["jobs"].items():
-        assert isinstance(job.get("timeout-minutes"), int), job_id
+def test_no_job_has_a_timeout():
+    # Fleet rule (repo-settings fleet.yml): a required check carries no
+    # timeout-minutes, so GitHub can never report it cancelled by a time limit.
+    doc = load_workflow()
+    assert "timeout-minutes" not in doc
+    assert doc["jobs"]
+    for job_id, job in doc["jobs"].items():
+        assert "timeout-minutes" not in job, job_id
+        for step in job["steps"]:
+            assert "timeout-minutes" not in step, (job_id, step)
 
 
 def test_no_run_block_interpolates_an_expression():

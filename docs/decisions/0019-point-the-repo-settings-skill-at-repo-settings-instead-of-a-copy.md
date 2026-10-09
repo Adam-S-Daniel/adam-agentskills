@@ -38,7 +38,7 @@ recreates or vendors the engine.
   facts and the manual recipes.
 - The skill no longer works offline as a settings-as-code tool.
 - The eval's `with_skill` arm no longer has an engine in its workspace. The
-  touch-gate eval was run against this change; see the PR for the result.
+  touch-gate eval result is recorded in `docs/skill-impact.md`.
 - Every consumer's bundle gets smaller.
 - There is one source of truth to keep correct, and it has tests.
 

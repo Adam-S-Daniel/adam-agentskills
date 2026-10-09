@@ -124,6 +124,15 @@ wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
 `paths:` filter because its check is required; whether a change is salient is
 decided in its `detect` job.
 
+It runs only on `pull_request_target`, which GitHub blocks by default on public
+repos from 2026-11-02. An Actions event policy declared in repo-settings'
+`fleet.yml` allows that event for this one workflow file
+([repo-settings ADR 0009](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0009-allow-pull-request-target-with-a-workflow-scoped-policy-owned-by-name.md)).
+The policy's `allowed_events` is an allowlist, so **a trigger added to this
+workflow, or a rename of the file, must be mirrored in that policy first**.
+Otherwise its runs are blocked and every pull request here becomes
+unmergeable.
+
 ### Plugin hooks run in Claude Code AND Codex
 
 Codex loads a plugin's `hooks/hooks.json` too

@@ -4,27 +4,29 @@ description: >
   Configure and enforce GitHub repository security settings as code: require
   actions to be pinned to full-length commit SHAs, require approval for all
   outside collaborators' fork pull-request workflow runs, and protect the
-  default branch via a repository ruleset. Includes a generate/diff/apply engine
-  (introspect current state -> emit YAML; detect drift; apply desired state) and
-  a central fan-out workflow to enforce a baseline across many repos. Trigger
+  default branch via a repository ruleset. The settings-as-code engine, its
+  schema, and the fleet fan-out live in the repo-settings repo, which this skill
+  points to; it also carries manual `gh api` recipes. Trigger
   when: setting up a new repo, running a security audit, onboarding a repo to org
   standards, enforcing settings across a fleet, or when asked to configure or
   harden Actions security settings. Trigger on mentions of "actions settings",
   "repo security settings", "repo settings as code", "settings drift", "fork
   approval", "outside collaborators", "actions policy", "branch protection",
-  "ruleset", or "harden repo".
+  "ruleset", "harden repo", "actions event policy", or "pull_request_target
+  policy".
 compatibility: >-
-  Requires the GitHub CLI (gh) and Python 3 with PyYAML for the settings-as-code
-  engine. Runs in any environment.
+  Requires the GitHub CLI (gh). Settings-as-code also needs a checkout of the
+  repo-settings repo (Python 3 with PyYAML); the manual recipes need only gh.
+  Runs in any environment.
 ---
 
 # GitHub Actions Repo Settings
 
 Configure and enforce GitHub repository security settings. Two ways to use this:
 
-1. **Settings-as-code (recommended)** -- describe desired state in a YAML file
-   and let `scripts/repo_settings.py` introspect, diff, and apply it, for a
-   single repo or a whole fleet. See section 1.
+1. **Settings-as-code (recommended)** -- the `repo-settings` repo holds the
+   engine, schema, and fleet config that introspect, diff, and apply desired
+   state for a single repo or a whole fleet. See sections 1-2.
 2. **Manual API recipes** -- one-off `gh api` calls for each setting, plus a UI
    fallback. See sections 3-6.
 
@@ -39,6 +41,11 @@ Configure and enforce GitHub repository security settings. Two ways to use this:
 Setting 3 uses a **repository ruleset** rather than classic branch protection,
 so the fleet speaks the same primitive as repos managed by other ruleset-based
 systems (e.g. cms-platform).
+
+These three rows are what the manual recipes below cover. repo-settings manages
+more: merge settings, Dependabot security settings, workflow permissions,
+labels, extra rulesets, and Actions event policies. Its `repo-settings/schema.md`
+is the authoritative list.
 
 ## Key API facts (verified against the live API)
 
@@ -61,117 +68,70 @@ systems (e.g. cms-platform).
 - Writing any of these needs **repo-admin** (fine-grained PAT with
   "Administration: read and write" + "Actions: read and write", or a GitHub App
   with the same permissions). The default Actions `GITHUB_TOKEN` **cannot**
-  change repo settings.
+  change repo settings. Repository Actions event policies
+  (`repos/{repo}/actions/policies`) need Administration: write even for GET.
 
 ---
 
-## 1. Settings-as-code engine
+## 1. Settings-as-code: use repo-settings
 
-`scripts/repo_settings.py` drives everything through `gh` (so it uses your local
-`gh auth`, or `GH_TOKEN` in CI). Install the one dependency once:
+The engine (`scripts/repo_settings.py` there), its schema (`repo-settings/schema.md`),
+the fleet config (`repo-settings/fleet.yml`) and the fan-out workflow
+(`.github/workflows/repo-settings.yml`) live in
+[`Adam-S-Daniel/repo-settings`](https://github.com/Adam-S-Daniel/repo-settings).
+This skill does not ship a copy.
 
-```bash
-pip install pyyaml
-```
+The repo is **private**, so a session needs access to it. Locally, find its
+checkout on the machine in front of you (by the workstation layout, WSL
+`~/repos/repo-settings` or Windows `D:\repos\Adam-S-Daniel\repo-settings`;
+check, never assume); in a cloud session, attach it with the session's add-repo
+tool.
 
-### Generate -- introspect current state into a config
+**Read before acting there:** its `README.md`, the repo-specific additions in its
+`AGENTS.md`, `repo-settings/schema.md`, and `docs/decisions/`.
 
-```bash
-python scripts/repo_settings.py generate --repo Adam-S-Daniel/adam-agentskills > repo-settings.yml
-```
-
-Emits a YAML document (single-repo shape) describing the repo's current SHA
-pinning, fork-PR approval, and default-branch ruleset. Edit it to describe the
-**desired** state, then diff/apply.
-
-### Diff -- drift report (no changes)
-
-```bash
-python scripts/repo_settings.py diff --config repo-settings.yml
-# exit 0 = no drift, 1 = drift, 2 = error
-```
-
-Prints, per setting, `ok` / `DRIFT` (with `from:` -> `to:`) / `skip` (with the
-reason, e.g. private-repo downgrade) / `ERROR`.
-
-### Apply -- converge to desired state
+Run these from the repo-settings checkout (`--config` paths are relative to it).
+They drive everything through `gh`, so they use your local `gh auth`, or
+`GH_TOKEN` in CI; run `pip install pyyaml` once:
 
 ```bash
-python scripts/repo_settings.py apply --config repo-settings.yml            # apply
-python scripts/repo_settings.py apply --config repo-settings.yml --dry-run  # preview
+RS=<repo-settings checkout>/scripts/repo_settings.py
+python3 "$RS" generate --repo <owner/name>   # current state -> YAML
+python3 "$RS" diff  --config repo-settings/fleet.yml [--owner X]
+python3 "$RS" apply --config repo-settings/fleet.yml [--owner X] [--dry-run]
+python3 "$RS" coverage --config repo-settings/fleet.yml --owner X
 ```
 
-Applies only the settings that drift; prints `CHANGED` for each. The managed
-ruleset is idempotent **by name**: apply creates it if absent, updates it in
-place if present, and never touches other rulesets. Re-running a converged
-config is a clean no-op.
+`diff` exits 0 for no drift, 1 for drift, 2 for an error.
 
-### Config schema
+Rules that bite:
 
-See [assets/repo-settings.schema.md](assets/repo-settings.schema.md) for the
-full schema. Two shapes:
+- **Changes land as a PR to `fleet.yml`**; the push-to-main run applies them.
+- **`git pull` before any local `apply`.** Apply converges to the checkout it
+  runs from, so a stale checkout silently reverts later changes.
+- **`workflow_dispatch` runs the dispatched ref's engine and config**, so
+  dispatch from `main`.
+- **The engine is idempotent by name** and never touches rulesets, labels, or
+  Actions policies it does not own.
 
-- **Single-repo** -- top-level `actions:` / `ruleset:` blocks (+ optional
-  `repo:`), for one repo.
-- **Fleet** -- a `repos:` list with a shared `defaults:` baseline, per-repo
-  `overrides:` (deep-merged), and `manage: false` to exclude a repo.
-
-The engine **auto-downgrades**: on a private repo it skips fork-PR approval and
-the ruleset (with a logged reason), so one `defaults:` baseline targets public
-and private repos alike. The `ruleset.bypass_actors` list declares service
-identities (e.g. a GitHub App) allowed through the PR-only rule -- the
-auditable alternative to hand-granted UI bypasses.
+If repo-settings is not reachable, do **not** recreate or vendor the engine. Use
+the manual recipes in sections 4-8, and say that the fleet config was not
+consulted.
 
 ---
 
 ## 2. Enforcing a baseline across a fleet (central fan-out)
 
-For managing many repos from one place, use the fleet config shape plus the
-fan-out workflow. Worked example: [assets/fleet-config.example.yml](assets/fleet-config.example.yml)
-(the live Adam-S-Daniel + jodidaniel fleet).
-
-### Local one-shot
-
-```bash
-python scripts/repo_settings.py diff  --config fleet.yml   # audit the whole fleet
-python scripts/repo_settings.py apply --config fleet.yml   # enforce it
-```
-
-### Ongoing enforcement in CI
-
-Copy into a **dedicated `repo-settings` repo** (keeps the repo-admin credential
-isolated from unrelated code/CI):
-
-```
-scripts/repo_settings.py                        # from this skill
-repo-settings/fleet.yml                          # your fleet config
-.github/workflows/repo-settings.yml              # from assets/workflows/repo-settings-fanout.yml
-```
+The fan-out workflow is repo-settings'
+`.github/workflows/repo-settings.yml`. Its one-time GitHub App setup is that
+repo's README, "CI fan-out — one-time setup". Onboarding a repo means a PR
+adding it to `fleet.yml` (with `manage: false` when it should be left alone).
 
 **Authenticate with a GitHub App, not a PAT.** A fine-grained PAT is scoped to a
 single owner, so it cannot administer repos across both `Adam-S-Daniel` and the
-`jodidaniel` org. Create one GitHub App (repository permissions: Administration
-R/W, Actions R/W, Metadata R), install it on **both** accounts, and store its
-`REPO_SETTINGS_APP_CLIENT_ID` (variable — the App's Client ID) +
-`REPO_SETTINGS_APP_PRIVATE_KEY` (secret) in the repo-settings repo. The
-action's `app-id` input is deprecated in favour of `client-id`, so use the
-Client ID. The two are the same input with no format validation — the value
-becomes the JWT `iss` claim, which accepts either an App ID or a Client ID — so
-an EXISTING deployment can migrate without a flag day by temporarily writing
-`${{ vars.REPO_SETTINGS_APP_CLIENT_ID || vars.REPO_SETTINGS_APP_ID }}` and
-dropping the fallback once the new variable is in place. The workflow
-([assets/workflows/repo-settings-fanout.yml](assets/workflows/repo-settings-fanout.yml))
-mints a fresh, short-lived installation token **per owner** (matrix over owner)
-and runs the engine with `--owner` so each account is handled with its own
-least-privilege token — nothing to rotate. It:
-
-- **pull_request** touching the config/script -> drift report only, fails the
-  check if there is drift (so review shows what would change);
-- **push to main** / **weekly schedule** / **manual dispatch** -> apply.
-
-(Creating the App and its private key is a one-time human step — it can't be
-automated. An interim lower-risk option is to run **audit-only** in CI with a
-per-owner read-only token and keep `apply` on an operator's machine.)
+`jodidaniel` org. One GitHub App installed on both accounts mints a short-lived
+installation token per owner, so each account is handled with its own
+least-privilege token and there is nothing to rotate.
 
 ### How the fleet was classified
 
@@ -190,7 +150,7 @@ Rules of thumb used:
   workflow is converted to open a PR (e.g. `peter-evans/create-pull-request`).
   (Incident: see PURPOSE.md.) For a fleet-standard bot that must keep writing to every managed
   default branch, the sanctioned alternative is a declared `bypass_actors`
-  entry in the fleet config (see the schema) -- the agents-md-sync App is the
+  entry in the fleet config (see repo-settings' schema) -- the agents-md-sync App is the
   standing example (repo-settings ADR 0001).
 
 ---
@@ -310,8 +270,10 @@ empty `bypass_actors: []` for no bypass.
 
 ## 7. Bulk verification
 
+Preferred: the repo-settings `diff`, run from that checkout (see section 1):
+
 ```bash
-python scripts/repo_settings.py diff --config fleet.yml   # preferred
+python3 "$RS" diff --config repo-settings/fleet.yml
 ```
 
 Or manually:
@@ -336,6 +298,7 @@ If API endpoints change: **Settings > Actions > General** for settings 1-2;
 - **Repository settings**: `repo` scope (PAT) or repository admin access.
 - **GitHub App**: `administration` (write) for rulesets, `actions` (write) for
   Actions permissions.
+- **Repository Actions event policies**: Administration (write), GET included.
 
 ## 10. Related
 

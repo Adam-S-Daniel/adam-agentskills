@@ -23,9 +23,15 @@ corrected 2026-10-04.
 
 ## Eval status
 
-No eval fixture exists for this skill in skills-evals.
+Fixtures exist in skills-evals: `evals/github-actions-repo-settings/drift-diagnosis`
+and `evals/github-actions-repo-settings/onboarding`, the latter marked `draft`.
 
 ## History moved from SKILL.md (2026-10-05)
+
+- 2026-10-09: the engine copy (`scripts/repo_settings.py`) and the assets
+  (schema, example fleet config, fan-out workflow) were removed and the skill
+  points at `Adam-S-Daniel/repo-settings` (issue #62, ADR 0019). The copy was
+  663 lines against repo-settings' 1,771 and nothing kept it in sync.
 
 - In this fleet, `_agent-guidance`'s nightly `drift-report.yml` triggered the
   "hold the ruleset while a workflow pushes to its own default branch" case.

@@ -339,6 +339,12 @@ for section in hook.sync-skills-reminder hook.sync-skills-private-reminder; do
   fi
 done
 
+echo ""
+echo "=== Fleet agent-checks git hooks (ADR 0020) ==="
+# Unlike the hook removed above, these point at no absolute path: a missing
+# include file or runner is a no-op, so they cannot break pushes.
+bash "$REPO_ROOT/scripts/install-agent-hooks.sh" || echo "WARNING: install-agent-hooks.sh failed" >&2
+
 if [[ "$HOST_KIND" == wsl ]]; then
 echo ""
 echo "=== WSL git for the Windows clones under /mnt/ ==="

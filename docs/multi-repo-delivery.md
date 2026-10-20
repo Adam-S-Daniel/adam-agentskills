@@ -298,6 +298,45 @@ hook copy the glob will actually pick, not just that the wiring is in place**,
 and treat `skipped — durable session` in a session you know is remote as that
 diagnosis rather than as a durable machine.
 
+### Git hooks in cloud sessions (ADR 0020)
+
+The fleet's commit-time checks run as config-based git hooks, which need Git
+2.54+. The cloud image ships Ubuntu's Git 2.43 (checked 2026-10-20), which
+ignores them, so without this block a cloud session has no local hooks and CI is
+the only check. Add it to the setup script **before** its final `exit 0`. It
+builds Git once (about a minute on 4 cores, measured 2026-10-20); the snapshot
+keeps it for later sessions.
+
+```bash
+# Config-based git hooks need Git 2.54+ (ADR 0020). Never fatal: without them
+# CI still runs the same checks.
+if ! git version | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=54))}'; then
+  apt-get install -y -q libcurl4-openssl-dev >/dev/null 2>&1 || true
+  src=$(mktemp -d)
+  if git clone -q --depth 1 --branch v2.56.0 https://github.com/git/git "$src/git" \
+     && make -C "$src/git" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
+          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install >/dev/null 2>&1; then
+    echo "git: $(/usr/local/bin/git version)"
+  else
+    echo "git: build failed; local hooks will not run, CI still checks" >&2
+  fi
+  rm -rf "$src"
+fi
+for f in "$project"/*/scripts/install-agent-hooks.sh; do
+  [ -f "$f" ] && { bash "$f" --system || true; break; }
+done
+```
+
+- **`--system`, not the default global scope.** The session's `~/.gitconfig`
+  holds settings the harness writes (commit signing, proxy). Whether it is
+  rewritten when a session starts is not established, so the hooks go in the
+  system file, which nothing else writes. `sysconfdir=/etc` keeps
+  the built Git and Ubuntu's reading the same system file.
+- **`/usr/local/bin` precedes `/usr/bin` on the session's `PATH`**, so the
+  built Git is the one agents run.
+- **The installer comes from whichever attached repo ships it**; it is the same
+  file in each. If none does, nothing is installed.
+
 ## What crosses into a multi-repo session, and what does not
 
 Hooks do not. **Skills do** — and that asymmetry is worth knowing before anyone

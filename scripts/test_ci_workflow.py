@@ -164,6 +164,11 @@ def test_the_salience_gate_pins_the_measured_inert_list():
         "this test pins. If the change is deliberate, re-measure (which tests "
         "read the paths being added?) and update both places."
     )
+    assert 'git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA"' in body, (
+        "the salience gate must diff with --no-renames: with rename detection "
+        "on, moving a salient file to an inert path lists only the inert "
+        "destination and the suite is skipped."
+    )
     assert '"$EVENT_NAME" != "pull_request"' in body, (
         "the salience gate lost its fail-open guard: every non-pull_request "
         "event (push, workflow_dispatch) must run the full suite."
@@ -215,9 +220,10 @@ def test_the_pytest_jobs_run_the_suite_in_parallel_and_identically():
     )
 
 
-def _run_salience_body(tmp_path, changed_files, event_name):
+def _run_salience_body(tmp_path, changed_files, event_name, renames=()):
     """Execute the real gate body from ci.yml in a throwaway two-commit repo
-    and return the GITHUB_OUTPUT it wrote."""
+    and return the GITHUB_OUTPUT it wrote. Each (old, new) in `renames` is
+    committed at `old` in the base and moved to `new` in the head."""
     import shutil
     import subprocess
 
@@ -239,6 +245,11 @@ def _run_salience_body(tmp_path, changed_files, event_name):
     git("config", "user.email", "fixture@example.com")
     (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
     git("add", "seed.txt")
+    for old, _new in renames:
+        path = repo / old
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("moved content\nline two\nline three\n", encoding="utf-8")
+        git("add", old)
     git("commit", "-q", "-m", "base")
     base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True
@@ -248,6 +259,9 @@ def _run_salience_body(tmp_path, changed_files, event_name):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("changed\n", encoding="utf-8")
         git("add", name)
+    for old, new in renames:
+        (repo / new).parent.mkdir(parents=True, exist_ok=True)
+        git("mv", old, new)
     git("commit", "-q", "-m", "head")
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True
@@ -292,6 +306,16 @@ def test_the_gate_treats_skill_markdown_as_salient(tmp_path):
     the lock checks. The inert list must never grow to cover it."""
     out = _run_salience_body(
         tmp_path, ["plugins/adam/skills/x/SKILL.md"], "pull_request")
+    assert "run=true" in out and "run=false" not in out
+
+
+def test_the_gate_runs_when_a_salient_file_is_renamed_to_an_inert_path(tmp_path):
+    """With rename detection on, `git diff --name-only` lists only a
+    rename's destination, so moving scripts/thing.py to docs/thing.md would
+    look docs-only. --no-renames lists both sides, and the source is salient."""
+    out = _run_salience_body(
+        tmp_path, [], "pull_request",
+        renames=[("scripts/thing.py", "docs/thing.md")])
     assert "run=true" in out and "run=false" not in out
 
 

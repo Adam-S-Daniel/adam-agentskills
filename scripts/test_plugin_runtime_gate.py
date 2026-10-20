@@ -502,6 +502,15 @@ def test_a_change_to_the_gate_gates(path):
     assert ("gate-itself", path) in result[1], result
 
 
+def test_a_lockfile_only_change_gates():
+    """actions.lock picks the commit the gate workflow's tag-pinned checkout
+    runs at, so a PR changing only the lockfile must wait for the owner."""
+    base = tree()
+    head = dict(base, **{".github/workflows/actions.lock": b"version: 'v0.0.3'\n"})
+    result = run(base, head)
+    assert ("gate-itself", ".github/workflows/actions.lock") in result[1], result
+
+
 def test_a_change_to_another_workflow_or_script_does_not_gate():
     base = tree()
     head = dict(base, **{".github/workflows/ci.yml": b"x\n", "scripts/check_skills.py": b"x\n"})

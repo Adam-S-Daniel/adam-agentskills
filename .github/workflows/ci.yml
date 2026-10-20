@@ -343,7 +343,7 @@ jobs:
             echo "::notice::${EVENT_NAME} event - running the full suite."
             exit 0
           fi
-          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA"); then
+          if ! changed=$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA"); then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Could not diff the PR range - running the full suite."
             exit 0
@@ -508,7 +508,7 @@ jobs:
             echo "::notice::${EVENT_NAME} event - running the full suite."
             exit 0
           fi
-          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA"); then
+          if ! changed=$(git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA"); then
             echo "run=true" >> "$GITHUB_OUTPUT"
             echo "::notice::Could not diff the PR range - running the full suite."
             exit 0

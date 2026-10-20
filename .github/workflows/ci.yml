@@ -595,6 +595,22 @@ jobs:
             xargs -a "$hooks" shellcheck -S warning
           fi
 
+  # ADR 0020: the same .githooks/agent-checks the local git hooks run, over
+  # every commit this change adds. The local hooks are feedback and can be
+  # skipped with --no-verify; this job is the check that cannot be.
+  agent-checks:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Run the commit-time checks over this change
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"
+
   # ADR 0013: this registry replaced one whose git history carried personal
   # data, so a denylist of personal details is checked on every push and pull
   # request. The list itself is the PRIVACY_DENYLIST repository secret and is

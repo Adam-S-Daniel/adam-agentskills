@@ -7,6 +7,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.0.0'
         - 'actions/setup-python@v7.0.0'
+        - 'adam-s-daniel/verify-actions-lock@v1.0.0'
     '.github/workflows/plugin-runtime-review.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/scheduled-run-health.yml': []
@@ -26,3 +27,8 @@ dependencies:
         commit: 'sha1-5fda3b95a4ea91299a34e894583c3862153e4b97'
         owner_id: 44036562
         repo_id: 192625525
+    'adam-s-daniel/verify-actions-lock@v1.0.0':
+        ref: 'v1.0.0'
+        commit: 'sha1-d43022cb427b6709a1ad088b5a116da50dee8886'
+        owner_id: 4205216
+        repo_id: 1427158560

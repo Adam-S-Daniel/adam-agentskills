@@ -707,11 +707,14 @@ def test_every_action_is_locked_to_a_full_sha():
             if uses is None or uses.startswith(("./", "$/", "docker://",
                                                 "Adam-S-Daniel/cms-platform/")):
                 continue
-            entry = lock["dependencies"].get(uses)
+            # gh actions-lock writes owner/repo in lowercase; the ref stays exact.
+            repo, ref = uses.rsplit("@", 1)
+            key = f"{repo.lower()}@{ref}"
+            entry = lock["dependencies"].get(key)
             assert entry is not None, f"{uses} has no actions.lock entry"
             assert re.fullmatch(r"sha1-[0-9a-f]{40}", entry["commit"]), (uses, entry)
-            assert entry["ref"] == uses.rsplit("@", 1)[1], (uses, entry)
-            assert uses in listed, f"{uses} is not listed for {WORKFLOW.name} in actions.lock"
+            assert entry["ref"] == ref, (uses, entry)
+            assert key in listed, f"{uses} is not listed for {WORKFLOW.name} in actions.lock"
             checked += 1
     assert checked, "expected at least one third-party action to check"
 

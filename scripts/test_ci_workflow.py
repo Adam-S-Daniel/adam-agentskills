@@ -546,7 +546,7 @@ def _fresh(tmp_path):
 #
 # Steps name third-party actions by release tag and .github/workflows/actions.lock
 # pins each tag to a commit (ADR 0021 in _agent-guidance). The `pytest` job's
-# "Verify action lockfile" step is the only thing that checks the lock in CI.
+# "Verify action lockfile" step runs the shared verify-actions-lock action.
 
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
 FULL_SHA_REF = re.compile(r"@[0-9a-f]{40}\Z")
@@ -569,16 +569,7 @@ def test_cross_repo_reusable_workflows_are_pinned_to_a_full_sha():
 
 
 VERIFY_STEP = "Verify action lockfile"
-VERIFY_LINES = [
-    "set -euo pipefail",
-    'gh release download v0.2.0 -R github/gh-actions-lock -p linux-amd64 -O "$ext/gh-actions-lock"',
-    'echo "79ec84c191667fd935a277e6fd3662cf5d3669cccc9e99998731d8f306f373b6  $ext/gh-actions-lock" | sha256sum -c -',
-    '(cd "$ext" && gh extension install .)',
-    "out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?",
-    "if [[ \"$rc\" -ne 0 ]] || ! jq -e '.valid == true and ([.findings[] | "
-    "select(.category != \"cooldown-config-ignored\")] | length) == 0' "
-    "<<<\"$out\" >/dev/null; then",
-]
+VERIFY_USES = re.compile(r"^Adam-S-Daniel/verify-actions-lock@v\d+\.\d+\.\d+$")
 
 
 def test_the_pytest_job_verifies_the_action_lockfile():
@@ -586,8 +577,29 @@ def test_the_pytest_job_verifies_the_action_lockfile():
              if s.get("name") == VERIFY_STEP]
     assert len(steps) == 1, f"job `pytest` must carry exactly one `{VERIFY_STEP}` step"
     step = steps[0]
-    lines = step["run"].split("\n")
-    for expected in VERIFY_LINES:
-        assert expected in lines, f"`{VERIFY_STEP}` lost the line: {expected}"
+    assert VERIFY_USES.match(step.get("uses", "")), step.get("uses")
+    # The action decides by itself whether the PR touched workflow dependencies.
+    assert "if" not in step
     assert "continue-on-error" not in step
-    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"
+
+
+def test_every_ci_action_is_locked_to_a_full_sha():
+    lock = yaml.safe_load((WORKFLOWS_DIR / "actions.lock").read_text(encoding="utf-8"))
+    listed = lock["workflows"][".github/workflows/ci.yml"]
+    checked = 0
+    for job in load_ci()["jobs"].values():
+        for step in job.get("steps", []):
+            uses = step.get("uses")
+            if uses is None or uses.startswith(("./", "$/", "docker://",
+                                                "Adam-S-Daniel/cms-platform/")):
+                continue
+            # gh actions-lock writes owner/repo in lowercase; the ref stays exact.
+            repo, ref = uses.rsplit("@", 1)
+            key = f"{repo.lower()}@{ref}"
+            entry = lock["dependencies"].get(key)
+            assert entry is not None, f"{uses} has no actions.lock entry"
+            assert re.fullmatch(r"sha1-[0-9a-f]{40}", entry["commit"]), (uses, entry)
+            assert entry["ref"] == uses.rsplit("@", 1)[1], (uses, entry)
+            assert key in listed, f"{uses} is not listed for ci.yml in actions.lock"
+            checked += 1
+    assert checked, "expected at least one third-party action to check"

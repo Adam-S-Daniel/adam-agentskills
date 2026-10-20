@@ -312,3 +312,7 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across
   untouched skills: every added file moves that skill's digest, which stales
   `skills.lock` in every consumer until re-pinned. On-touch only.
+
+### Action pins
+
+Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `pytest` job's "Verify action lockfile" step runs `gh actions-lock --verify` and fails on any finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`Adam-S-Daniel/cms-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0021](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0021-actions-pin-through-lockfiles.md).

@@ -18,6 +18,7 @@ id from the same word in one of ci.yml's comments — which is most of the file.
 Run: python3 -m pytest scripts/test_ci_workflow.py -q
 """
 
+import re
 import shlex
 from pathlib import Path
 
@@ -515,3 +516,54 @@ def _fresh(tmp_path):
         if not d.exists():
             d.mkdir()
             return d
+
+
+# --- Action pins: actions.lock and its verify step ---------------------------
+#
+# Steps name third-party actions by release tag and .github/workflows/actions.lock
+# pins each tag to a commit (ADR 0021 in _agent-guidance). The `pytest` job's
+# "Verify action lockfile" step is the only thing that checks the lock in CI.
+
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+FULL_SHA_REF = re.compile(r"@[0-9a-f]{40}\Z")
+
+
+def test_cross_repo_reusable_workflows_are_pinned_to_a_full_sha():
+    # actions.lock does not lock reusable workflows, and neither `--verify` nor `sha_pinning_required` flags a tag there.
+    paths = sorted(WORKFLOWS_DIR.glob("*.yml")) + sorted(WORKFLOWS_DIR.glob("*.yaml"))
+    assert paths
+    for path in paths:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_id, job in (doc.get("jobs") or {}).items():
+            uses = job.get("uses") if isinstance(job, dict) else None
+            if uses is None or uses.startswith(("./", "$/", "Adam-S-Daniel/cms-platform/")):
+                continue
+            assert FULL_SHA_REF.search(uses), (
+                f"{path.name} job `{job_id}` calls a reusable workflow by "
+                f"`{uses}`; pin it to a full 40-character lowercase commit SHA."
+            )
+
+
+VERIFY_STEP = "Verify action lockfile"
+VERIFY_LINES = [
+    "set -euo pipefail",
+    'gh release download v0.2.0 -R github/gh-actions-lock -p linux-amd64 -O "$ext/gh-actions-lock"',
+    'echo "79ec84c191667fd935a277e6fd3662cf5d3669cccc9e99998731d8f306f373b6  $ext/gh-actions-lock" | sha256sum -c -',
+    '(cd "$ext" && gh extension install .)',
+    "out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?",
+    "if [[ \"$rc\" -ne 0 ]] || ! jq -e '.valid == true and ([.findings[] | "
+    "select(.category != \"cooldown-config-ignored\")] | length) == 0' "
+    "<<<\"$out\" >/dev/null; then",
+]
+
+
+def test_the_pytest_job_verifies_the_action_lockfile():
+    steps = [s for s in load_ci()["jobs"]["pytest"]["steps"]
+             if s.get("name") == VERIFY_STEP]
+    assert len(steps) == 1, f"job `pytest` must carry exactly one `{VERIFY_STEP}` step"
+    step = steps[0]
+    lines = step["run"].split("\n")
+    for expected in VERIFY_LINES:
+        assert expected in lines, f"`{VERIFY_STEP}` lost the line: {expected}"
+    assert "continue-on-error" not in step
+    assert step["env"]["GH_TOKEN"] == "${{ github.token }}"

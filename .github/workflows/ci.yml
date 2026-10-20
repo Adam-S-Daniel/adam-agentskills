@@ -54,8 +54,8 @@ jobs:
     # runner for GitHub's 6-hour default.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
         with:
           node-version: '22'
       - name: Install Claude Code
@@ -91,12 +91,12 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           # Full history — required by the skills.lock check below, NOT an
           # oversight. See the comment on that step before shortening this.
           fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -219,8 +219,8 @@ jobs:
       contents: read
       issues: write
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -300,7 +300,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           # Needed by scripts/test_generate_skills_lock.py's dogfood test
           # (test_this_repos_own_lock_is_installable_end_to_end), which drives
@@ -361,7 +361,40 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
           fi
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      # actions.lock pins each tagged `uses:` to the commit the runner runs;
+      # this is the only CI check that the lock still matches (ADR 0021 in
+      # _agent-guidance). Gated like the suites: .github/workflows/** is never
+      # inert. scripts/test_ci_workflow.py pins its key lines.
+      - name: Verify action lockfile
+        if: steps.salient.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ext="$RUNNER_TEMP/gh-actions-lock"
+          mkdir -p "$ext"
+          gh release download v0.2.0 -R github/gh-actions-lock -p linux-amd64 -O "$ext/gh-actions-lock"
+          echo "79ec84c191667fd935a277e6fd3662cf5d3669cccc9e99998731d8f306f373b6  $ext/gh-actions-lock" | sha256sum -c -
+          chmod +x "$ext/gh-actions-lock"
+          (cd "$ext" && gh extension install .)
+          rc=0
+          out=$(gh actions-lock --verify --no-interactive --json=valid,findings) || rc=$?
+          # v0.2.0 exits 0 with a reachability-unknown finding when the API fails; fail on any finding
+          # except cooldown-config-ignored, which reports dependabot.yml's cooldown exclude, not a pin.
+          if [[ "$rc" -ne 0 ]] || ! jq -e '.valid == true and ([.findings[] | select(.category != "cooldown-config-ignored")] | length) == 0' <<<"$out" >/dev/null; then
+            # Escape %, CR and LF so finding text cannot start a new workflow command.
+            if jq -e 'type == "object"' <<<"$out" >/dev/null 2>&1; then
+              jq -r 'def esc: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A"); .findings[]? | select(.category != "cooldown-config-ignored") | "::error::actions.lock \(.category | esc): \(.dependency // .workflow // "-" | esc): \(.detail | esc)"' <<<"$out"
+            else
+              echo '::error::gh actions-lock --verify returned no readable JSON.'
+            fi
+            if jq -e 'any(.findings[]?; .category == "reachability-unknown")' <<<"$out" >/dev/null 2>&1; then
+              echo '::error::reachability-unknown means the GitHub API was unreachable; re-run once it is back.'
+            fi
+            echo "::error::gh actions-lock --verify failed (exit $rc)."
+            exit 1
+          fi
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -452,7 +485,7 @@ jobs:
         # step byte-identical to the ubuntu one above.
         shell: bash
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           # Same reason as the ubuntu job: without full history the dogfood
           # test SKIPS rather than fails, and the end-to-end install path goes
@@ -493,7 +526,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
           fi
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - if: steps.salient.outputs.run == 'true'
@@ -532,7 +565,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
       - name: Install shellcheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Run shellcheck
@@ -613,10 +646,10 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'
       - name: Scan for denylisted personal details

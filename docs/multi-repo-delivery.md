@@ -165,6 +165,14 @@ project=/home/user
 # START, and skills not loading is by far the lesser failure — hence `|| true`
 # here and the unconditional `exit 0` at the end.
 mkdir -p "$project/.claude" || true
+
+# The eval harness (skills-evals' run_eval.py) runs every agent trial under
+# Claude Code's sandbox with failIfUnavailable, which needs bubblewrap and
+# socat; without them every trial ends `sandbox_unavailable` (eval runner
+# routine, 2026-10-20). Needs the environment's default package-manager list.
+apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/dev/null 2>&1 \
+  || echo "wiring: bubblewrap/socat install failed; sandboxed evals will refuse to run"
+
 cat > "$project/.claude/settings.json" <<'JSON'
 {
   "hooks": {

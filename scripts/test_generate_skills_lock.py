@@ -12462,6 +12462,22 @@ def test_committed_sessionstart_matcher_includes_fork():
     assert matching[0]["matcher"] == "startup|resume|fork"
 
 
+def test_setup_script_installs_sandbox_deps_without_failing_the_session():
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    script = document.split("```bash\n#!/bin/bash\n", 1)[1].split("\n```", 1)[0]
+    line = next(
+        (l for l in script.splitlines() if "apt-get install" in l), None
+    )
+    assert line is not None, "setup script no longer installs the sandbox deps"
+    assert "bubblewrap" in line and "socat" in line
+    # A failed install must not fail the session (no `set -e`, and the
+    # install is followed by an `||` fallback on its continuation line).
+    assert not any(l.startswith("set -e") for l in script.splitlines())
+    assert script.split(line, 1)[1].lstrip().startswith("|| echo")
+
+
 @pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
 def test_setup_script_sessionstart_matcher_includes_fork(script_name):
     document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(

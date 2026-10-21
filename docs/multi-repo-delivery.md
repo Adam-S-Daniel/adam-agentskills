@@ -189,6 +189,18 @@ cat > "$project/.claude/settings.json" <<'JSON'
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/agent-checks-guard.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
@@ -336,6 +348,12 @@ done
   built Git is the one agents run.
 - **The installer comes from whichever attached repo ships it**; it is the same
   file in each. If none does, nothing is installed.
+- **The `PreToolUse` group in the wiring above runs the `--no-verify` guard**
+  (`.claude/hooks/agent-checks-guard.sh`), which `_agent-guidance`'s sync
+  delivers to every fleet repo with the runner and the CI check (its ADR 0021).
+  A repo's own registration of the guard does not fire in a multi-repo session
+  for the same reason its `SessionStart` hooks do not, so the wiring runs the
+  first attached copy. With none attached it does nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

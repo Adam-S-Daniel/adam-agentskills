@@ -2,9 +2,13 @@
 # agent-checks: the fleet's commit-time rules, run by local git hooks and by CI.
 #
 # Locally it runs from config-based git hooks (Git 2.54+) that
-# scripts/install-agent-hooks.sh installs once per machine. CI runs the same
-# file over a pull request's commits, and CI is the enforcement: a hook can be
-# skipped with --no-verify, a required check cannot. See ADR 0020.
+# adam-agentskills' scripts/install-agent-hooks.sh installs once per machine.
+# CI runs the same file over a pull request's commits, and CI is the
+# enforcement: a hook can be skipped with --no-verify, a required check
+# cannot. See adam-agentskills ADR 0020 and _agent-guidance ADR 0021.
+#
+# Managed by _agent-guidance (templates/agent-checks/). The sync overwrites
+# this file in every fleet repo, so change it there, not here.
 #
 # Usage:
 #   agent-checks pre-commit

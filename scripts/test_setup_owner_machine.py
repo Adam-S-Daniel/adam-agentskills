@@ -21,6 +21,7 @@ Run: python3 -m pytest scripts/test_setup_owner_machine.py -q
 """
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -133,6 +134,17 @@ def test_a_second_owner_machine_run_does_not_repeat_the_hook_cleanup(tmp_path):
     assert "REMOVED" not in second.stdout
     assert global_hook(tmp_path) == ""
     assert global_hook(tmp_path, section="hook.sync-skills-private-reminder") == ""
+
+
+def test_only_the_owner_machine_opt_in_installs_the_agent_checks_hooks(tmp_path):
+    # ADR 0020: fleet-scoped includeIf entries, never a hook.* section in the
+    # global config itself.
+    assert run_setup(tmp_path).returncode == 0
+    assert "agent-hooks.inc" not in git_global(tmp_path, "--list").stdout
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    listing = git_global(tmp_path, "--list").stdout
+    assert "hasconfig:remote.*.url:https://github.com/Adam-S-Daniel/**.path=~/.config/git/agent-hooks.inc" in listing
+    assert not re.search(r"^hook\.", listing, re.M)
 
 
 def test_a_plain_run_does_not_touch_a_stale_hook_section(tmp_path):
@@ -271,7 +283,9 @@ def test_wsl_owner_machine_keeps_an_existing_windows_clones_config(tmp_path):
     proc = run_setup(tmp_path, "--owner-machine", env_extra={"AGENTSKILLS_HOST_KIND": "wsl"})
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert windows.read_text(encoding="utf-8").startswith("[user]\n\tname = Example Person\n")
-    assert (tmp_path / "gitconfig").read_text(encoding="utf-8") == before
+    # Nothing already there is rewritten. The agent-checks installer (ADR 0020)
+    # appends its own fleet-scoped includeIf entries after it.
+    assert (tmp_path / "gitconfig").read_text(encoding="utf-8").startswith(before)
 
 
 def test_wsl_owner_machine_never_overwrites_a_different_include(tmp_path):

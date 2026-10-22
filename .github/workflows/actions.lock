@@ -5,9 +5,12 @@ version: 'v0.0.3'
 workflows:
     '.github/workflows/ci.yml':
         - 'actions/checkout@v7.0.1'
-        - 'actions/setup-node@v7.0.0'
+        - 'actions/setup-node@v7.1.0'
         - 'actions/setup-python@v7.0.0'
         - 'adam-s-daniel/verify-actions-lock@v1.0.0'
+    '.github/workflows/dependabot-auto-merge.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'dependabot/fetch-metadata@v3.1.0'
     '.github/workflows/plugin-runtime-review.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/scheduled-run-health.yml': []
@@ -17,9 +20,9 @@ dependencies:
         commit: 'sha1-3d3c42e5aac5ba805825da76410c181273ba90b1'
         owner_id: 44036562
         repo_id: 197814629
-    'actions/setup-node@v7.0.0':
-        ref: 'v7.0.0'
-        commit: 'sha1-820762786026740c76f36085b0efc47a31fe5020'
+    'actions/setup-node@v7.1.0':
+        ref: 'v7.1.0'
+        commit: 'sha1-949feb2413d6458794dcd2491c4babbbce0c15c1'
         owner_id: 44036562
         repo_id: 189476904
     'actions/setup-python@v7.0.0':
@@ -32,3 +35,8 @@ dependencies:
         commit: 'sha1-d43022cb427b6709a1ad088b5a116da50dee8886'
         owner_id: 4205216
         repo_id: 1427158560
+    'dependabot/fetch-metadata@v3.1.0':
+        ref: 'v3.1.0'
+        commit: 'sha1-25dd0e34f4fe68f24cc83900b1fe3fe149efef98'
+        owner_id: 27347476
+        repo_id: 371068214

@@ -361,12 +361,12 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
           fi
-      # Shared action: checks that actions.lock still matches the tags (ADR 0021
+      # Shared action: checks that actions.lock still matches the tags (ADR 0024
       # in _agent-guidance). It decides for itself whether the PR touched
       # workflow dependencies, so this step has no `if:` and runs on every PR.
       # The runner rejects forged pins; this check gives early feedback.
       - name: Verify action lockfile
-        uses: Adam-S-Daniel/verify-actions-lock@v1.0.0
+        uses: Adam-S-Daniel/verify-actions-lock@v1.1.0
       - uses: actions/setup-python@v7.0.0
         with:
           python-version: '3.12'

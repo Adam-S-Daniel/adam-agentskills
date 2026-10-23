@@ -545,7 +545,7 @@ def _fresh(tmp_path):
 # --- Action pins: actions.lock and its verify step ---------------------------
 #
 # Steps name third-party actions by release tag and .github/workflows/actions.lock
-# pins each tag to a commit (ADR 0021 in _agent-guidance). The `pytest` job's
+# pins each tag to a commit (ADR 0024 in _agent-guidance). The `pytest` job's
 # "Verify action lockfile" step runs the shared verify-actions-lock action.
 
 WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"

@@ -697,7 +697,7 @@ def test_every_checkout_is_the_base_without_credentials():
 
 def test_every_action_is_locked_to_a_full_sha():
     # Steps name a release tag; .github/workflows/actions.lock pins each one to
-    # the commit the runner actually runs (ADR 0021 in _agent-guidance).
+    # the commit the runner actually runs (ADR 0024 in _agent-guidance).
     lock = yaml.safe_load((WORKFLOW.parent / "actions.lock").read_text(encoding="utf-8"))
     listed = lock["workflows"][f".github/workflows/{WORKFLOW.name}"]
     checked = 0

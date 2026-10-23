@@ -6,7 +6,7 @@
 # cooldown block carries two different waits:
 #   - default-days: 7 — this account's standing cooling-off convention for
 #     third-party action releases (pinned through actions.lock per
-#     _agent-guidance ADR 0021), matching cms-platform's own
+#     _agent-guidance ADR 0024), matching cms-platform's own
 #     .github/dependabot.yml.
 #   - exclude below — a cms-platform release is this account's own code,
 #     gated by its own required checks before a tag ever exists, so it is

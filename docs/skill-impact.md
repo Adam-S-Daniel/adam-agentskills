@@ -41,6 +41,13 @@ no backfill is planned; the file adds the fields git does not capture.
 ---
 
 
+## 2026-10-23 — adam-coding-anywhere/github-actions-repo-settings — edit
+
+- Motivation: repo-settings made `manage` a required array of surfaces ([repo-settings#83](https://github.com/Adam-S-Daniel/repo-settings/issues/83), [repo-settings#98](https://github.com/Adam-S-Daniel/repo-settings/pull/98)). The skill still taught `manage: false`, which the engine now refuses with exit 2.
+- Change: SKILL.md and PURPOSE.md teach `manage: ["all"]`, `manage: []` and a surface list; bundle `adam-coding-anywhere` 1.2.6 -> 1.2.7 (PR pending).
+- Eval: not run. The `onboarding` and `drift-diagnosis` fixtures are updated for the new shape in a companion skills-evals PR, which merges with this one.
+- Outcome: pending review; merges after repo-settings#98.
+
 ## 2026-10-09 — adam-coding-anywhere/github-actions-repo-settings — edit (correction)
 
 - Motivation: the entry below recorded the touch gate as outstanding and the outcome as pending; both have since resolved.

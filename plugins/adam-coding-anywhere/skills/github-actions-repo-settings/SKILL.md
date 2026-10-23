@@ -125,7 +125,13 @@ consulted.
 The fan-out workflow is repo-settings'
 `.github/workflows/repo-settings.yml`. Its one-time GitHub App setup is that
 repo's README, "CI fan-out — one-time setup". Onboarding a repo means a PR
-adding it to `fleet.yml` (with `manage: false` when it should be left alone).
+adding an element to `fleet.yml`'s `repos` array with a `name` and a required
+`manage` array: `manage: ["all"]` to manage every surface, `manage: []` when it
+should be left alone, or the surfaces to manage, such as `manage: ["labels"]`.
+The engine refuses an element without `manage`, a boolean (`manage: false` is
+no longer accepted), an unknown key, and surfaces out of alphabetical order,
+and exits 2 (repo-settings' `repo-settings/schema.md`, "`manage`", and ADR
+0011).
 
 **Authenticate with a GitHub App, not a PAT.** A fine-grained PAT is scoped to a
 single owner, so it cannot administer repos across both `Adam-S-Daniel` and the
@@ -145,7 +151,7 @@ Rules of thumb used:
 - **public, no workflow pushes to the default branch** -> full baseline;
 - **private** -> SHA pinning only (fork approval + ruleset unavailable);
 - **scratch/experimental** -> Actions hardening only, no ruleset;
-- **fork, or owned by another settings system** -> excluded (`manage: false`);
+- **fork, or owned by another settings system** -> excluded (`manage: []`);
 - **a workflow pushes to its own default branch** -> hold the ruleset until the
   workflow is converted to open a PR (e.g. `peter-evans/create-pull-request`).
   (Incident: see PURPOSE.md.) For a fleet-standard bot that must keep writing to every managed
@@ -163,7 +169,7 @@ Rules of thumb used:
 consumers when sites are scaffolded/re-synced, using **rulesets** (history:
 see PURPOSE.md).
 
-**These repos are excluded from the fan-out** (`manage: false`). Reason: the
+**These repos are excluded from the fan-out** (`manage: []`). Reason: the
 fan-out and the platform would otherwise be two independent sources of truth for
 branch protection, and GitHub enforces the **union** of all rulesets/protections
 -- so a second system layering its own ruleset would create drift the platform's

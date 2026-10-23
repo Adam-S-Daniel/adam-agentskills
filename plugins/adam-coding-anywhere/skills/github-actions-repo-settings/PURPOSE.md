@@ -14,7 +14,7 @@ ruleset and that settings are never hand-granted in the UI.
 
 `cms-platform` and the sites that consume it manage their own settings from the
 platform's `repo-settings.yml`, and are excluded from this skill's fan-out
-(`manage: false`): GitHub enforces the union of all rulesets, so a second
+(`manage: []`): GitHub enforces the union of all rulesets, so a second
 writer would create drift the platform's audit cannot see. That section of the
 skill described the platform's Actions-permissions support as a gap while its
 first PR (cms-platform#168) was open. It merged 2026-07-13 and the platform now

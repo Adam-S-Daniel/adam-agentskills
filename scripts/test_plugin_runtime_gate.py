@@ -17,6 +17,7 @@ Run: python3 -m pytest scripts/test_plugin_runtime_gate.py -q
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -501,6 +502,15 @@ def test_a_change_to_the_gate_gates(path):
     assert ("gate-itself", path) in result[1], result
 
 
+def test_a_lockfile_only_change_gates():
+    """actions.lock picks the commit the gate workflow's tag-pinned checkout
+    runs at, so a PR changing only the lockfile must wait for the owner."""
+    base = tree()
+    head = dict(base, **{".github/workflows/actions.lock": b"version: 'v0.0.3'\n"})
+    result = run(base, head)
+    assert ("gate-itself", ".github/workflows/actions.lock") in result[1], result
+
+
 def test_a_change_to_another_workflow_or_script_does_not_gate():
     base = tree()
     head = dict(base, **{".github/workflows/ci.yml": b"x\n", "scripts/check_skills.py": b"x\n"})
@@ -685,12 +695,28 @@ def test_every_checkout_is_the_base_without_credentials():
         assert with_.get("persist-credentials") is False, step
 
 
-def test_every_action_is_pinned_to_a_full_sha():
+def test_every_action_is_locked_to_a_full_sha():
+    # Steps name a release tag; .github/workflows/actions.lock pins each one to
+    # the commit the runner actually runs (ADR 0024 in _agent-guidance).
+    lock = yaml.safe_load((WORKFLOW.parent / "actions.lock").read_text(encoding="utf-8"))
+    listed = lock["workflows"][f".github/workflows/{WORKFLOW.name}"]
+    checked = 0
     for job in load_workflow()["jobs"].values():
         for step in job["steps"]:
-            if "uses" in step:
-                ref = step["uses"].rsplit("@", 1)[1]
-                assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref), step
+            uses = step.get("uses")
+            if uses is None or uses.startswith(("./", "$/", "docker://",
+                                                "Adam-S-Daniel/cms-platform/")):
+                continue
+            # gh actions-lock writes owner/repo in lowercase; the ref stays exact.
+            repo, ref = uses.rsplit("@", 1)
+            key = f"{repo.lower()}@{ref}"
+            entry = lock["dependencies"].get(key)
+            assert entry is not None, f"{uses} has no actions.lock entry"
+            assert re.fullmatch(r"sha1-[0-9a-f]{40}", entry["commit"]), (uses, entry)
+            assert entry["ref"] == ref, (uses, entry)
+            assert key in listed, f"{uses} is not listed for {WORKFLOW.name} in actions.lock"
+            checked += 1
+    assert checked, "expected at least one third-party action to check"
 
 
 def test_the_approval_job_selects_the_environment_failing_closed():

@@ -77,7 +77,9 @@ The workflow `.github/workflows/plugin-runtime-review.yml` runs
   marketplace entry, or adds an entry carrying one;
 - changes a file that a hook names after `${CLAUDE_PLUGIN_ROOT}`, at base or
   head;
-- changes the gate's own workflow, script or tests.
+- changes the gate's own workflow, script or tests, or
+  `.github/workflows/actions.lock`, which chooses the commit the gate's
+  tag-pinned actions run at (added 2026-10-20 with the lockfile migration).
 
 When gated, the job `plugin-runtime-approval` runs in the GitHub environment
 `plugin-runtime-review`, whose required reviewer is the owner, and waits for

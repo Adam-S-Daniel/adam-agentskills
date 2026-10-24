@@ -77,8 +77,10 @@ ROOT_FILES = frozenset({
 })
 # Under pull_request_target the BASE branch's workflow and script run, so a
 # change to either takes effect only after it merges — which is why changing
-# them is itself gated.
+# them is itself gated. The action lockfile is listed too: it chooses the
+# commit each tag-pinned action (the gate's checkout among them) runs at.
 GATE_FILES = frozenset({
+    ".github/workflows/actions.lock",
     ".github/workflows/plugin-runtime-review.yml",
     "scripts/plugin_runtime_gate.py",
     "scripts/test_plugin_runtime_gate.py",

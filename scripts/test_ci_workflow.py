@@ -18,6 +18,7 @@ id from the same word in one of ci.yml's comments — which is most of the file.
 Run: python3 -m pytest scripts/test_ci_workflow.py -q
 """
 
+import re
 import shlex
 from pathlib import Path
 
@@ -163,6 +164,11 @@ def test_the_salience_gate_pins_the_measured_inert_list():
         "this test pins. If the change is deliberate, re-measure (which tests "
         "read the paths being added?) and update both places."
     )
+    assert 'git diff --no-renames --name-only "$BASE_SHA" "$HEAD_SHA"' in body, (
+        "the salience gate must diff with --no-renames: with rename detection "
+        "on, moving a salient file to an inert path lists only the inert "
+        "destination and the suite is skipped."
+    )
     assert '"$EVENT_NAME" != "pull_request"' in body, (
         "the salience gate lost its fail-open guard: every non-pull_request "
         "event (push, workflow_dispatch) must run the full suite."
@@ -214,9 +220,10 @@ def test_the_pytest_jobs_run_the_suite_in_parallel_and_identically():
     )
 
 
-def _run_salience_body(tmp_path, changed_files, event_name):
+def _run_salience_body(tmp_path, changed_files, event_name, renames=()):
     """Execute the real gate body from ci.yml in a throwaway two-commit repo
-    and return the GITHUB_OUTPUT it wrote."""
+    and return the GITHUB_OUTPUT it wrote. Each (old, new) in `renames` is
+    committed at `old` in the base and moved to `new` in the head."""
     import shutil
     import subprocess
 
@@ -238,6 +245,11 @@ def _run_salience_body(tmp_path, changed_files, event_name):
     git("config", "user.email", "fixture@example.com")
     (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
     git("add", "seed.txt")
+    for old, _new in renames:
+        path = repo / old
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("moved content\nline two\nline three\n", encoding="utf-8")
+        git("add", old)
     git("commit", "-q", "-m", "base")
     base = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True
@@ -247,6 +259,9 @@ def _run_salience_body(tmp_path, changed_files, event_name):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("changed\n", encoding="utf-8")
         git("add", name)
+    for old, new in renames:
+        (repo / new).parent.mkdir(parents=True, exist_ok=True)
+        git("mv", old, new)
     git("commit", "-q", "-m", "head")
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
                           check=True, capture_output=True, text=True
@@ -291,6 +306,16 @@ def test_the_gate_treats_skill_markdown_as_salient(tmp_path):
     the lock checks. The inert list must never grow to cover it."""
     out = _run_salience_body(
         tmp_path, ["plugins/adam/skills/x/SKILL.md"], "pull_request")
+    assert "run=true" in out and "run=false" not in out
+
+
+def test_the_gate_runs_when_a_salient_file_is_renamed_to_an_inert_path(tmp_path):
+    """With rename detection on, `git diff --name-only` lists only a
+    rename's destination, so moving scripts/thing.py to docs/thing.md would
+    look docs-only. --no-renames lists both sides, and the source is salient."""
+    out = _run_salience_body(
+        tmp_path, [], "pull_request",
+        renames=[("scripts/thing.py", "docs/thing.md")])
     assert "run=true" in out and "run=false" not in out
 
 
@@ -515,3 +540,66 @@ def _fresh(tmp_path):
         if not d.exists():
             d.mkdir()
             return d
+
+
+# --- Action pins: actions.lock and its verify step ---------------------------
+#
+# Steps name third-party actions by release tag and .github/workflows/actions.lock
+# pins each tag to a commit (ADR 0024 in _agent-guidance). The `pytest` job's
+# "Verify action lockfile" step runs the shared verify-actions-lock action.
+
+WORKFLOWS_DIR = REPO_ROOT / ".github" / "workflows"
+FULL_SHA_REF = re.compile(r"@[0-9a-f]{40}\Z")
+
+
+def test_cross_repo_reusable_workflows_are_pinned_to_a_full_sha():
+    # actions.lock does not lock reusable workflows, and neither `--verify` nor `sha_pinning_required` flags a tag there.
+    paths = sorted(WORKFLOWS_DIR.glob("*.yml")) + sorted(WORKFLOWS_DIR.glob("*.yaml"))
+    assert paths
+    for path in paths:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for job_id, job in (doc.get("jobs") or {}).items():
+            uses = job.get("uses") if isinstance(job, dict) else None
+            if uses is None or uses.startswith(("./", "$/", "Adam-S-Daniel/cms-platform/")):
+                continue
+            assert FULL_SHA_REF.search(uses), (
+                f"{path.name} job `{job_id}` calls a reusable workflow by "
+                f"`{uses}`; pin it to a full 40-character lowercase commit SHA."
+            )
+
+
+VERIFY_STEP = "Verify action lockfile"
+VERIFY_USES = re.compile(r"^Adam-S-Daniel/verify-actions-lock@v\d+\.\d+\.\d+$")
+
+
+def test_the_pytest_job_verifies_the_action_lockfile():
+    steps = [s for s in load_ci()["jobs"]["pytest"]["steps"]
+             if s.get("name") == VERIFY_STEP]
+    assert len(steps) == 1, f"job `pytest` must carry exactly one `{VERIFY_STEP}` step"
+    step = steps[0]
+    assert VERIFY_USES.match(step.get("uses", "")), step.get("uses")
+    # The action decides by itself whether the PR touched workflow dependencies.
+    assert "if" not in step
+    assert "continue-on-error" not in step
+
+
+def test_every_ci_action_is_locked_to_a_full_sha():
+    lock = yaml.safe_load((WORKFLOWS_DIR / "actions.lock").read_text(encoding="utf-8"))
+    listed = lock["workflows"][".github/workflows/ci.yml"]
+    checked = 0
+    for job in load_ci()["jobs"].values():
+        for step in job.get("steps", []):
+            uses = step.get("uses")
+            if uses is None or uses.startswith(("./", "$/", "docker://",
+                                                "Adam-S-Daniel/cms-platform/")):
+                continue
+            # gh actions-lock writes owner/repo in lowercase; the ref stays exact.
+            repo, ref = uses.rsplit("@", 1)
+            key = f"{repo.lower()}@{ref}"
+            entry = lock["dependencies"].get(key)
+            assert entry is not None, f"{uses} has no actions.lock entry"
+            assert re.fullmatch(r"sha1-[0-9a-f]{40}", entry["commit"]), (uses, entry)
+            assert entry["ref"] == uses.rsplit("@", 1)[1], (uses, entry)
+            assert key in listed, f"{uses} is not listed for ci.yml in actions.lock"
+            checked += 1
+    assert checked, "expected at least one third-party action to check"

@@ -12462,6 +12462,68 @@ def test_committed_sessionstart_matcher_includes_fork():
     assert matching[0]["matcher"] == "startup|resume|fork"
 
 
+def _documented_setup_script(project: Path) -> str:
+    """The cloud setup script from docs/multi-repo-delivery.md, runnable.
+
+    It hardcodes `project=/home/user` on purpose (its comments say why), so
+    the only edit is pointing that one line at a temp dir.
+    """
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    blocks = re.findall(r"^```bash\n(.*?)^```$", document, re.S | re.M)
+    scripts = [b for b in blocks if b.startswith("#!/bin/bash\n")
+               and "wiring: wrote" in b]
+    assert len(scripts) == 1, "expected exactly one documented setup script"
+    line = "\nproject=/home/user\n"
+    assert scripts[0].count(line) == 1
+    return scripts[0].replace(line, f"\nproject={project}\n")
+
+
+def _run_setup_script(tmp_path: Path, apt_exit: int):
+    project = tmp_path / "project"
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    calls = tmp_path / "apt-calls"
+    apt = stubs / "apt-get"
+    apt.write_text(
+        f'#!/bin/bash\necho "$*" >> "{calls}"\nexit {apt_exit}\n',
+        encoding="utf-8",
+    )
+    apt.chmod(0o755)
+    script = tmp_path / "setup.sh"
+    script.write_text(_documented_setup_script(project), encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    proc = subprocess.run([BASH, str(script)], capture_output=True,
+                          text=True, env=env, timeout=60)
+    recorded = calls.read_text(encoding="utf-8").splitlines() \
+        if calls.exists() else []
+    return proc, recorded, project / ".claude" / "settings.json"
+
+
+# The script runs only as a Linux cloud environment's setup script, as root,
+# before Claude Code starts; Windows has no apt-get and no setup script.
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_installs_sandbox_deps(tmp_path):
+    proc, calls, settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    assert calls == ["update -q", "install -y -q bubblewrap socat"]
+    assert "install failed" not in proc.stdout
+    json.loads(settings.read_text(encoding="utf-8"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_survives_a_failed_install(tmp_path):
+    # A setup script that exits non-zero stops the session from starting, so
+    # a failed install must be reported and the settings still written.
+    proc, calls, settings = _run_setup_script(tmp_path, apt_exit=100)
+    assert proc.returncode == 0, proc.stderr
+    assert calls == ["update -q"]
+    assert "wiring: bubblewrap/socat install failed" in proc.stdout
+    settings_json = json.loads(settings.read_text(encoding="utf-8"))
+    assert settings_json["hooks"]["SessionStart"]
+
+
 @pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
 def test_setup_script_sessionstart_matcher_includes_fork(script_name):
     document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(

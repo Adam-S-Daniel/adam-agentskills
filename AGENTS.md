@@ -155,15 +155,19 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 - Eval skill installs need the nested path: copy `plugins/<name>/skills/<name>/`
   into `.claude/skills/<name>/`. Copying the outer plugin directory buries
   `SKILL.md` and the skill silently never loads.
-- `autoMemoryDirectory` accepts only absolute or `~/` paths (no repo-relative
-  form). Don't assume the in-repo pattern resolves identically on every
-  machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
+- A path setting that accepts only absolute or `~/` paths (the retired
+  in-repo `autoMemoryDirectory` was one; this repo no longer sets it) cannot
+  name a checkout portably. Don't assume a `~/repos/<name>` path resolves
+  identically on every machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
   guidance's "Workstation layout" section (Windows `D:\repos\<owner>\<repo>`,
   WSL `~/repos/<repo>`) is the counterexample. That exact assumption once
   broke sync-skills: it guessed `~/repos/<name>` ahead of the checkout it was
   actually running from, a decoy outranked the real clone, and `--all`
   enumerated nothing. Check the resolved path on the machine in front of you;
   never encode a repo location as a constant.
+- After a plugin move or rename, expect a one-time
+  `claude plugin install <plugin>@adam-agentskills` per machine (plugin cache
+  miss).
 - `sync.sh` never force-pushes a stale remote `agents-md-sync/update` branch
   (the push is non-fast-forward and it deliberately won't override). Recover
   by opening a PR from the stale branch and merging it to free the name, then

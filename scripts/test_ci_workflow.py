@@ -120,8 +120,7 @@ def test_no_concurrency_group_governs_a_required_job(context):
 # a light wired to nothing.
 
 INERT_DOCS_REGEX = (
-    r"^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md"
-    r"|\.claude/memory/.*\.md)$"
+    r"^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md)$"
 )
 
 PYTEST_JOBS = ["pytest", "pytest-windows"]
@@ -288,7 +287,7 @@ def _run_salience_body(tmp_path, changed_files, event_name, renames=()):
 def test_the_gate_skips_a_docs_only_change(tmp_path):
     out = _run_salience_body(
         tmp_path,
-        ["docs/guide.md", "README.md", "AGENTS.md", ".claude/memory/MEMORY.md"],
+        ["docs/guide.md", "README.md", "AGENTS.md", "CLAUDE.md", "STRATEGY.md"],
         "pull_request")
     assert "run=false" in out and "run=true" not in out
 

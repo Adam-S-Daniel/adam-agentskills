@@ -354,7 +354,7 @@ jobs:
           # matched (the skip case) - the status is discarded on purpose; the
           # emptiness test below is the verdict, not grep's exit code. No -q,
           # so there is no early-exit SIGPIPE race either.
-          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md|\.claude/memory/.*\.md)$' || true)
+          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md)$' || true)
           if [ -n "$salient" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
@@ -492,7 +492,7 @@ jobs:
           # matched (the skip case) - the status is discarded on purpose; the
           # emptiness test below is the verdict, not grep's exit code. No -q,
           # so there is no early-exit SIGPIPE race either.
-          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md|\.claude/memory/.*\.md)$' || true)
+          salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md)$' || true)
           if [ -n "$salient" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else

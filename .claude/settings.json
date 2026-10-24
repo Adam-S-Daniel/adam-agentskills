@@ -1,5 +1,4 @@
 {
-  "autoMemoryDirectory": "~/repos/adam-agentskills/.claude/memory",
   "hooks": {
     "SessionStart": [
       {

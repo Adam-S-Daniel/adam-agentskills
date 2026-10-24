@@ -363,8 +363,7 @@ store" below). The repo clone can additionally *write* into `~/.claude`; that
 write is the delivery channel for ephemeral surfaces. What works where:
 
 - **Claude Code on the web / cloud sessions**: files committed to the repo being
-  worked on — `CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`, `.claude/skills/`,
-  `.claude/memory/` — are all picked up. Repo-declared `extraKnownMarketplaces` +
+  worked on — `CLAUDE.md`, `AGENTS.md`, `.claude/settings.json`, `.claude/skills/` — are all picked up. Repo-declared `extraKnownMarketplaces` +
   `enabledPlugins` are honored for *local* teammate sessions, but as of 2026-07
   they do **not** install anything in cloud sessions (verified by experiment —
   see [ADR 0001](docs/decisions/0001-consolidate-plugins-into-bundles.md),
@@ -429,10 +428,10 @@ write is the delivery channel for ephemeral surfaces. What works where:
   [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)
   (background: [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md),
   [E6](docs/experiments/E6-account-plugin-channel.md)).
-- **Memory**: hosted sessions see a repo's git-tracked `.claude/memory/` (see the
-  Memory section in [`STRATEGY.md`](STRATEGY.md) and the
-  [portable-memory guide](https://github.com/Adam-S-Daniel/claude-memory-map/blob/main/docs/portable-memory.md);
-  migrate existing machine-local stores with the `migrate-claude-memory` plugin).
+- **Memory**: this repo keeps none in git, and hosted sessions do not see
+  machine-local stores (see the Memory section in [`STRATEGY.md`](STRATEGY.md)).
+  Durable repo facts live in `AGENTS.md`; the `migrate-claude-memory` plugin
+  still inventories machine-local stores.
 
 ## Repo layout
 

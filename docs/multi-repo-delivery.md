@@ -165,6 +165,14 @@ project=/home/user
 # START, and skills not loading is by far the lesser failure — hence `|| true`
 # here and the unconditional `exit 0` at the end.
 mkdir -p "$project/.claude" || true
+
+# The eval harness (skills-evals' run_eval.py) runs every agent trial under
+# Claude Code's sandbox with failIfUnavailable, which needs bubblewrap and
+# socat; without them every trial ends `sandbox_unavailable` (eval runner
+# routine, 2026-10-20). Needs the environment's default package-manager list.
+apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/dev/null 2>&1 \
+  || echo "wiring: bubblewrap/socat install failed; sandboxed evals will refuse to run"
+
 cat > "$project/.claude/settings.json" <<'JSON'
 {
   "hooks": {
@@ -186,6 +194,18 @@ cat > "$project/.claude/settings.json" <<'JSON'
             "type": "command",
             "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/skills-bootstrap.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done'",
             "timeout": 90
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/agent-checks-guard.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
+            "timeout": 10
           }
         ]
       }
@@ -297,6 +317,51 @@ nothing — because the copy it resolved is older than the guard fix. **Check th
 hook copy the glob will actually pick, not just that the wiring is in place**,
 and treat `skipped — durable session` in a session you know is remote as that
 diagnosis rather than as a durable machine.
+
+### Git hooks in cloud sessions (ADR 0020)
+
+The fleet's commit-time checks run as config-based git hooks, which need Git
+2.54+. The cloud image ships Ubuntu's Git 2.43 (checked 2026-10-20), which
+ignores them, so without this block a cloud session has no local hooks and CI is
+the only check. Add it to the setup script **before** its final `exit 0`. It
+builds Git once (about a minute on 4 cores, measured 2026-10-20); the snapshot
+keeps it for later sessions.
+
+```bash
+# Config-based git hooks need Git 2.54+ (ADR 0020). Never fatal: without them
+# CI still runs the same checks.
+if ! git version | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=54))}'; then
+  apt-get install -y -q libcurl4-openssl-dev >/dev/null 2>&1 || true
+  src=$(mktemp -d)
+  if git clone -q --depth 1 --branch v2.56.0 https://github.com/git/git "$src/git" \
+     && make -C "$src/git" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
+          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install >/dev/null 2>&1; then
+    echo "git: $(/usr/local/bin/git version)"
+  else
+    echo "git: build failed; local hooks will not run, CI still checks" >&2
+  fi
+  rm -rf "$src"
+fi
+for f in "$project"/*/scripts/install-agent-hooks.sh; do
+  [ -f "$f" ] && { bash "$f" --system || true; break; }
+done
+```
+
+- **`--system`, not the default global scope.** The session's `~/.gitconfig`
+  holds settings the harness writes (commit signing, proxy). Whether it is
+  rewritten when a session starts is not established, so the hooks go in the
+  system file, which nothing else writes. `sysconfdir=/etc` keeps
+  the built Git and Ubuntu's reading the same system file.
+- **`/usr/local/bin` precedes `/usr/bin` on the session's `PATH`**, so the
+  built Git is the one agents run.
+- **The installer comes from whichever attached repo ships it**; it is the same
+  file in each. If none does, nothing is installed.
+- **The `PreToolUse` group in the wiring above runs the `--no-verify` guard**
+  (`.claude/hooks/agent-checks-guard.sh`), which `_agent-guidance`'s sync
+  delivers to every fleet repo with the runner and the CI check (its ADR 0021).
+  A repo's own registration of the guard does not fire in a multi-repo session
+  for the same reason its `SessionStart` hooks do not, so the wiring runs the
+  first attached copy. With none attached it does nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

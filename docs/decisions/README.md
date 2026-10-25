@@ -102,6 +102,11 @@ Optional sections for high-impact decisions:
 | [0010](0010-let-pinned-channels-own-the-terminal.md) | Let pinned channels own the terminal and leave the account channel the surfaces with nothing else | Accepted (partially superseded by 0014) |
 | [0011](0011-remove-a-school-bell-schedule-skill-from-registry-and-account.md) | Remove a school bell-schedule skill from the registry and the account store | Accepted |
 | [0012](0012-serve-the-account-skills-as-one-repo-synced-plugin.md) | Serve the account's skills as one repo-synced plugin | Superseded by 0013 |
-| [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) | Start a fresh public registry and group plugins by audience and runtime | Accepted |
+| [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) | Start a fresh public registry and group plugins by audience and runtime | Accepted (closed-folder clause amended by 0016) |
 | [0014](0014-retire-the-account-zip-upload-channel.md) | Retire the account ZIP-upload channel | Accepted |
 | [0015](0015-turn-the-non-coding-local-bundle-off-on-linux-and-wsl.md) | Turn the non-coding local bundle off on Linux and WSL, leave it on in Windows | Accepted |
+| [0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md) | Open plugin folders and gate runtime changes on owner approval | Accepted |
+| [0017](0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md) | Write harness-aware plugin hooks, because Codex loads them too | Accepted |
+| [0018](0018-api-credit-lane-for-claude-code.md) | Delegate to an API-credit lane when weekly usage runs ahead of pace | Accepted |
+| [0019](0019-point-the-repo-settings-skill-at-repo-settings-instead-of-a-copy.md) | Point the repo-settings skill at repo-settings instead of shipping a copy of its engine | Accepted |
+| [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (pilot in this repo) |

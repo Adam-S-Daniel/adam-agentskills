@@ -65,9 +65,12 @@ session that lost the guidance must not also lose these.
 - **Branch protection is real.** Fleet repos are PR-only on their default
   branch; a direct push is rejected (GH013), even from the repo's own
   workflows. Never design a bot that pushes to a protected default branch.
-- **Every `uses:` is pinned to a full 40-character commit SHA, with no
-  trailing version comment.** The one carve-out is a ref into this account's
-  own `cms-platform`, which stays on its release tag.
+- **Every `uses:` is pinned: an exact tag locked in
+  `.github/workflows/actions.lock` and checked by a required
+  `gh actions-lock --verify` failing on any pin finding, or a full
+  40-character commit SHA with no trailing version comment.** Cross-repo
+  reusable workflows take a full SHA either way. The one carve-out is a ref
+  into this account's own `cms-platform`, which stays on its release tag.
 - **Never commit secrets or `.env` files, and never print personal data to a
   CI log** — logs, artifacts and git history on a public repo are public.
 - **A successful `git push` does not mean your commit exists.** A refused
@@ -110,18 +113,58 @@ ships, a rename is a reviewed change (an example is in
 This marketplace has no `renames` map, so a plugin name is a one-way door once
 it is enabled anywhere.
 
+### Plugin runtime review: never approve it
+
+A pull request that changes how a plugin runs code (hooks, a package install,
+plugin settings, a script a hook calls) waits on the `plugin-runtime-review`
+environment ([ADR 0016](docs/decisions/0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md)).
+**Never approve a `plugin-runtime-review` deployment**, even though the
+owner's token would let you. When a pull request is waiting on it, give the
+owner the `plugin-runtime-approval` job page on the CURRENT head,
+`https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>`, and
+wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
+`paths:` filter because its check is required; whether a change is salient is
+decided in its `detect` job.
+
+It runs only on `pull_request_target`, which GitHub blocks by default on public
+repos from 2026-11-02. An Actions event policy declared in repo-settings'
+`fleet.yml` allows that event for this one workflow file
+([repo-settings ADR 0009](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0009-allow-pull-request-target-with-a-workflow-scoped-policy-owned-by-name.md)).
+The policy's `allowed_events` is an allowlist, so **a trigger added to this
+workflow, or a rename of the file, must be mirrored in that policy first**.
+Otherwise its runs are blocked and every pull request here becomes
+unmergeable.
+
+### Plugin hooks run in Claude Code AND Codex
+
+Codex loads a plugin's `hooks/hooks.json` too
+([ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+Keep that file harness-agnostic: every handler needs a shell-form `command`
+(`"${CLAUDE_PLUGIN_ROOT}"/hooks/...`) and a `commandWindows`
+(`"C:\Program Files\Git\bin\bash.exe" "%PLUGIN_ROOT%/hooks/..."`), a
+`timeout`, and no `if`/`args`/`shell`; a hook prints nothing to stdout unless
+it means to answer both harnesses. Claude-only hooks go in a file the
+`.claude-plugin/plugin.json` `hooks` key names. Hook scripts call
+`hooks/lib/harness.sh` to tell `claude-code`, `codex` and `other` apart.
+
+The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
+
 ### Operational gotchas
 
 - Eval skill installs need the nested path: copy `plugins/<plugin>/skills/<skill>/`
   into `.claude/skills/<skill>/`. Copying the outer plugin directory buries
   `SKILL.md` and the skill silently never loads.
-- `autoMemoryDirectory` accepts only absolute or `~/` paths (no repo-relative
-  form). Don't assume the in-repo pattern resolves identically on every
-  machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
+- A path setting that accepts only absolute or `~/` paths (the retired
+  in-repo `autoMemoryDirectory` was one; this repo no longer sets it) cannot
+  name a checkout portably. Don't assume a `~/repos/<name>` path resolves
+  identically on every machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
   guidance's "Workstation layout" section (Windows `D:\repos\<owner>\<repo>`,
   WSL `~/repos/<repo>`) is the counterexample (the sync-skills failure it caused is in the evidence
   file linked above). Check the resolved path on the machine in front of you;
   never encode a repo location as a constant.
+- After a plugin move or rename, expect a one-time
+  `claude plugin install <plugin>@adam-agentskills` per machine (plugin cache
+  miss).
 - `sync.sh` never force-pushes a stale remote `agents-md-sync/update` branch
   (the push is non-fast-forward and it deliberately won't override). Recover
   by opening a PR from the stale branch and merging it to free the name, then
@@ -131,12 +174,16 @@ it is enabled anywhere.
   and the retired `agentskills` registry's plugin names never existed here.
   Adding one would be a one-way door (Claude Code keeps following it,
   append-only), so do not add one to paper over a rename — do not rename.
-- A machine that ran `setup.sh --owner-machine` from before
-  [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)
-  still has the retired sync-skills pre-push hook registered globally, and
-  every `git push` there fails until one more `bash setup.sh --owner-machine`
-  run. That flag now only removes the leftover `hook.sync-skills-*` git-config
-  sections; a plain `bash setup.sh` only links skills.
+- After any plugin restructure, re-run `bash setup.sh --owner-machine` on every
+  owner machine right away (a plain `bash setup.sh` only removes the skill
+  links earlier versions made; it links none since
+  [ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
+  Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
+  a stale global sync-skills pre-push hook kept pointing at the old plugin
+  path and failed every `git push` from every repo until re-registered;
+  `setup.sh --owner-machine` now only removes that retired hook's global
+  git-config sections, so a machine that ran an earlier version still needs
+  one `--owner-machine` run to stop failing pushes.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is the fleet guidance's "Prove the verifier can fail first" rule. Its
   worked example there is `test_foo.py` (this repo's own deleted example is in
@@ -260,3 +307,7 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across
   untouched skills: every added file moves that skill's digest, which stales
   `skills.lock` in every consumer until re-pinned. On-touch only.
+
+### Action pins
+
+Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `pytest` job's "Verify action lockfile" step is the shared action [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock); it runs only when a PR touches workflow dependencies and fails on any `--verify` finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). It is not the only guard: the runner rejects forged pins, and the repo will also turn on GitHub's Require lockfile policy. Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`Adam-S-Daniel/cms-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0024](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0024-actions-pin-through-lockfiles.md).

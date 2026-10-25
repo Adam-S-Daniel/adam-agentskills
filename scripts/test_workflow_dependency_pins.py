@@ -98,9 +98,9 @@ wider glob, and it is not written. The YAML this repo runs its own CI from is
 .github/actions/**/action.yml. A composite action's
 `runs.steps[].run` is shell this repo's jobs execute exactly as a workflow step
 is, so leaving it out would have left a place a pin could drift back into with
-nothing looking. Skills SHIP workflow YAML as assets
-(plugins/adam-coding-anywhere/skills/github-actions-repo-settings/assets/workflows/) that runs
-in other people's repositories; their dependencies are not ours to pin, and
+nothing looking. A workflow template a skill ships as an asset runs in other
+people's repositories, so its own pins are theirs; its dependencies are not
+ours to pin, and
 sweeping them in here would fail this repo's CI over a template.
 
 Run: python3 -m pytest scripts/test_workflow_dependency_pins.py -q

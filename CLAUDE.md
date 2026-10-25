@@ -1,13 +1,6 @@
 <!-- Bridges Claude Code (which reads CLAUDE.md, not AGENTS.md) to the managed guidance. -->
 @AGENTS.md
 
-## Project memory (portable, in-repo)
+## Memory
 
-This repo's Claude Code auto memory lives in `.claude/memory/` (git-tracked), via
-`autoMemoryDirectory` in `.claude/settings.json`
-(`~/repos/adam-agentskills/.claude/memory`) — so memory travels to every
-machine and into hosted-session clones. In environments where that setting isn't
-active (Claude Code on the web, other harnesses), read `.claude/memory/MEMORY.md`
-for accumulated project knowledge when you need it.
-
-**This is a public repo: never write secrets, tokens, or PII into memory files.**
+This repo keeps no Claude Code memory. Durable repo facts live in `AGENTS.md`; the strategy is in [`STRATEGY.md`](STRATEGY.md)'s "Memory" section.

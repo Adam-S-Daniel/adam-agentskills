@@ -105,12 +105,11 @@ Skills are grouped into four plugins by audience and runtime —
 cloud-safe, default-enabled), `plugins/adam-coding-local/` and
 `plugins/adam-non-coding-local/` (machine-bound, opt-in) — each holding real
 `skills/<skill>/` dirs, never symlinks. Skill directory basenames must stay
-unique and never change once a skill has shipped — uploaded to the claude.ai
-account store, or locked by a consumer `skills.lock` (they key `setup.sh`
-symlinks and claude.ai uploads). Before either, a rename is a reviewed change:
-`launch-wsl-claude-session` became `launch-top-level-claude-session` on
-2026-09-25, before it had been uploaded or locked; `setup.sh` removes the
-links it made for a skill that no longer exists.
+unique and never change once a skill has shipped — locked by a consumer
+`skills.lock` (the basename keys it and the `setup.sh` symlinks). Before it
+ships, a rename is a reviewed change (an example is in
+[`docs/evidence/agents-md-history-narratives.md`](docs/evidence/agents-md-history-narratives.md));
+`setup.sh` removes the links it made for a skill that no longer exists.
 This marketplace has no `renames` map, so a plugin name is a one-way door once
 it is enabled anywhere.
 
@@ -152,18 +151,16 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 
 ### Operational gotchas
 
-- Eval skill installs need the nested path: copy `plugins/<name>/skills/<name>/`
-  into `.claude/skills/<name>/`. Copying the outer plugin directory buries
+- Eval skill installs need the nested path: copy `plugins/<plugin>/skills/<skill>/`
+  into `.claude/skills/<skill>/`. Copying the outer plugin directory buries
   `SKILL.md` and the skill silently never loads.
 - A path setting that accepts only absolute or `~/` paths (the retired
   in-repo `autoMemoryDirectory` was one; this repo no longer sets it) cannot
   name a checkout portably. Don't assume a `~/repos/<name>` path resolves
   identically on every machine just because repos "live at `~/repos/<name>` everywhere" — the fleet
   guidance's "Workstation layout" section (Windows `D:\repos\<owner>\<repo>`,
-  WSL `~/repos/<repo>`) is the counterexample. That exact assumption once
-  broke sync-skills: it guessed `~/repos/<name>` ahead of the checkout it was
-  actually running from, a decoy outranked the real clone, and `--all`
-  enumerated nothing. Check the resolved path on the machine in front of you;
+  WSL `~/repos/<repo>`) is the counterexample (the sync-skills failure it caused is in the evidence
+  file linked above). Check the resolved path on the machine in front of you;
   never encode a repo location as a constant.
 - After a plugin move or rename, expect a one-time
   `claude plugin install <plugin>@adam-agentskills` per machine (plugin cache
@@ -189,10 +186,8 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
   one `--owner-machine` run to stop failing pushes.
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is the fleet guidance's "Prove the verifier can fail first" rule. Its
-  worked example there is `test_foo.py`; this repo's own earlier example,
-  `test_account_zip_selection.py`, left base.md when it was condensed and was
-  deleted with the account-zip channel (ADR 0014), so only the
-  repo-specific facts stay here rather than re-narrating it: unless a test
+  worked example there is `test_foo.py` (this repo's own deleted example is in
+  the evidence file linked above). Repo-specific facts: unless a test
   file ends in an `if __name__ == "__main__"` block that invokes a runner,
   running it directly imports the module and exits 0 having asserted nothing.
   None of the `scripts/test_*.py` files has such a block, so every one is that
@@ -208,7 +203,7 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 - **A hosted session starts with NONE of the dev dependencies**, so that command
   and `scripts/check_skills.py` both fail before they check anything. CI installs
   `requirements-dev.txt` per job; nothing installs it here, and no SessionStart
-  hook does either (`.claude/settings.json` wires only `skills-bootstrap.sh`).
+  hook does either.
   Install it first — and expect the plain form to fail on these images:
 
   ```bash
@@ -220,20 +215,15 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
   RECORD file not found. Hint: The package was installed by debian.` and installs
   **nothing else either** — one unrelated package aborts the whole file, which
   reads as "the repo's dependencies are broken" rather than "one of them is
-  undeletable". Measured on `remote_mobile`, 2026-08-25.
+  undeletable" (measurements in the evidence file linked above).
 
-  **And the flag really does leave the pinned version importable — measured,
-  because the obvious worry is real and the answer is not obvious.**
-  `--ignore-installed` does not remove Debian's copy; it installs alongside it,
-  so both are on disk and which one wins is a `sys.path` ORDER question rather
-  than an install question. It wins: pip lands the pinned wheel in
-  `/usr/local/lib/python3.11/dist-packages`, Debian's lives in
-  `/usr/lib/python3/dist-packages`, and the former precedes the latter, so
-  `import yaml` gives **6.0.3** — `requirements-dev.txt`'s pin — with the full
-  suite green. Verified 2026-08-30 on a hosted session that started with
-  `yaml` at Debian's 6.0.1 and `pytest`, `jsonschema` and `markdown_it` all
-  absent. The counts that run showed (1943 passed, 11 skipped) are dropped
-  because they change with every PR; take the current ones from the run.
+  **The flag leaves the pinned version importable.** `--ignore-installed` does
+  not remove Debian's copy; it installs alongside it, so which one wins is a
+  `sys.path` ORDER question. The pinned wheel wins: pip's
+  `/usr/local/lib/python3.11/dist-packages` precedes Debian's
+  `/usr/lib/python3/dist-packages`, so `import yaml` gives **6.0.3**
+  (`requirements-dev.txt`'s pin) with the full suite green. Take test counts
+  from the current run; they change with every PR.
 
   That distinction is the whole reason to write this down. A hook that
   installed only the three genuinely-MISSING modules would exit 0 and look
@@ -252,16 +242,17 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
   run time rather than from the collected module — `test_every_test_this_repo_cites_by_name_exists`
   is one. Edit during the run and it judges the new tree against the old run,
   so a failure it reports may be from a file the run never started with.
-  (Measured 2026-08-25: a "pre-existing" red turned out to be a dangling test
-  citation written 90 seconds into the run.) Take the baseline before editing,
+  (A "pre-existing" red once turned out to be a dangling citation written
+  mid-run; see the evidence file linked above.) Take the baseline before editing,
   or re-run it after — never read one that overlapped the edits.
 
 ### One-way doors get an adversarial round
 
 - The irreversible surfaces in this repo are plugin names once enabled
   anywhere (there is no `renames` map to migrate them), skill directory
-  basenames once shipped (they key `setup.sh` symlinks and claude.ai uploads), and an upload to the claude.ai account
-  store — which has no delete in the upload path (ADR 0002). A change that
+  basenames once shipped (they key the consumer `skills.lock` and `setup.sh`
+  symlinks), and the account store's contents, which the owner removes by hand
+  in the claude.ai UI (ADR 0014; ADR 0002 sets what may go there). A change that
   touches one of them gets an **independent adversarial round before merge**:
   a separately prompted agent whose job is to break the change, not to
   approve it, run against the diff and — where the change is one-way — against
@@ -293,7 +284,7 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 ### Skill changes get recorded, and evals gate them
 
 The method (instrument classes, fixture mining, harness rules) is skills-evals'
-`DESIGN.md`, "Scaling to the registry"; these are the two hooks that live here:
+`DESIGN.md`, "Scaling to the registry"; these are the hooks that live here:
 
 - **Every skill-content change appends an entry to
   [`docs/skill-impact.md`](docs/skill-impact.md)** — creations, edits,
@@ -309,11 +300,8 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   skill's eval (report exit code and counts) or adds its first fixture.
   Skills in DESIGN.md's deliberate-non-coverage table are exempt — the
   table is the record of why.
-- **`claude plugin eval` (Claude Code 2.1.269+) is not this gate.** skills-evals'
-  `DESIGN.md` ("`claude plugin eval`", assessed 2026-08-30) decided to monitor it
-  rather than wrap it: no scriptable grader, so it cannot host the objective
-  scorers. Nothing here re-assessed that; whether to revisit it is the owner's
-  call.
+- **`claude plugin eval` is not this gate** (no scriptable grader; assessment
+  in the evidence file linked above).
 - **A new or touched skill adds a `PURPOSE.md` beside `SKILL.md`** mapping
   it to the incidents/patterns that motivated it — maintenance context only,
   never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across

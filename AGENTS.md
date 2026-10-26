@@ -272,6 +272,11 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 - Depth, including the negative-control rule that keeps "the exploit stopped
   working" from being mistaken for "the harness stopped working", is in
   [`docs/experiments/E4-federated-bundle-delivery.md`](docs/experiments/E4-federated-bundle-delivery.md).
+- **The one exception: the evals loop's own pull requests.** A removal
+  (`retire-skill/<skill>`) or an accepted improvement (`eval-improve/<skill>`)
+  from skills-evals merges by auto-merge once required checks pass, with no
+  adversarial round or human review, within the scope limits of
+  [ADR 0021](docs/decisions/0021-automated-skill-changes-merge-without-review.md).
 
 ### Privacy: invented data only
 

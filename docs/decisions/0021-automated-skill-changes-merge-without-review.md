@@ -5,12 +5,12 @@
 - **Deciders:** Adam Daniel: on a decision card on 2026-10-25, that removal
   pull requests from the evals loop merge automatically with no human review,
   despite the fleet rule, with exception ADRs; and on 2026-10-26, that the
-  loop merges accepted improvements automatically, with no human in the loop.
+  loop merges accepted changes automatically, with no human in the loop.
 
 ## Context
 
-Two kinds of pull request reach this registry from skills-evals' eval loop,
-and both used to wait for a person:
+Three kinds of pull request reach this registry from skills-evals' eval
+loop, and all used to wait for a person:
 
 - **A removal.** skills-evals' `scripts/retire_skill.py` acts on a `retire`
   verdict: every fixture crossed with every roster model shows no benefit at
@@ -25,6 +25,11 @@ and both used to wait for a person:
   opens `eval-improve/<skill>`
   ([skills-evals ADR 0005](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/decisions/0005-improvement-loop-reuses-skill-creator.md),
   "Automatic merge addendum (2026-10-26)").
+- **A new skill.** skills-evals' draft loop drafts a skill for a recurring
+  lesson and keeps it only when it beat no skill on its own fixtures. Its
+  `routine-draft-skill-gate.yml` opens `draft-skill/<skill>` here, and a
+  companion pull request with the fixtures in skills-evals, to merge after
+  this one.
 
 This repository's rules assume a person in between. `AGENTS.md`'s "One-way
 doors get an adversarial round" requires an independent adversarial round
@@ -39,28 +44,29 @@ merges". Adam chose the opposite for both.
 
 ## Decision
 
-1. **Both kinds merge by auto-merge, with a merge commit, once this
+1. **All three merge by auto-merge, with a merge commit, once this
    repository's required checks pass.** No person reviews or approves them.
    The ruleset is unchanged: it requires no approving review, so a pull
    request that passes its checks merges without any bypass actor.
 2. **This is the one exception to the adversarial round.** For a removal,
-   the retirement verdict stands in for it; for an improvement, the
-   acceptance measurement does. Any other change to a shipped skill still
+   the retirement verdict stands in for it; for an improvement or a new
+   skill, the acceptance measurement does. Any other change to a shipped skill still
    gets the round.
 3. **Only the skill and its bookkeeping change.** Such a pull request
-   touches the skill's own directory, `docs/skill-impact.md`, the plugin's
+   touches the one skill's own directory, `docs/skill-impact.md`, the plugin's
    two manifests (the version only), `README.md`'s generated table and
    `skills.lock`, and nothing else.
 4. **Never through plugin-runtime-review.** A skill whose plugin runs code
    (a `hooks/` or `bin/` directory, a settings or package file, or a
    manifest `hooks` or `settings` key) is never merged automatically: the
-   improvement gate opens a draft instead. `retire_skill.py` does not check
+   improvement and draft-skill gates open a draft instead. `retire_skill.py` does not check
    this yet, so its auto mode must not be switched on until it does. No
    automation approves a `plugin-runtime-review` deployment.
-5. **One loop pull request at a time.** Both write the bundle version,
-   `docs/skill-impact.md` and `skills.lock`, so a second open one would
-   conflict once the first merged. The improvement gate opens nothing while
-   any `eval-improve/*` or `retire-skill/*` pull request is open.
+5. **One loop pull request at a time.** All three write the bundle
+   version, `docs/skill-impact.md` and `skills.lock`, so a second open one
+   would conflict once the first merged. While any `eval-improve/*`,
+   `draft-skill/*` or `retire-skill/*` pull request is open, the
+   improvement gate opens nothing and the draft-skill gate opens drafts.
 6. **The record is written by the automation.** The pull request carries its
    own `docs/skill-impact.md` entry with the eval numbers, a `PURPOSE.md`
    stub when the skill has none, the version bump ADR 0009 requires, and the
@@ -69,9 +75,9 @@ merges". Adam chose the opposite for both.
 7. **The private registry is never changed automatically.**
    adam-agentskills-private is not a target of either path; both name this
    repository alone.
-8. **Adam turns either off in skills-evals**: `improve_merge_mode: draft` in
-   `evals/improve-policy.yml`, `retirement_mode: proposal` in
-   `evals/gate-policy.yml`.
+8. **Adam turns them off in skills-evals**: `improve_merge_mode: draft` in
+   `evals/improve-policy.yml` (improvements and new skills),
+   `retirement_mode: proposal` in `evals/gate-policy.yml` (removals).
 
 ## Consequences
 
@@ -97,7 +103,7 @@ merges". Adam chose the opposite for both.
 
 - **Adam merges every loop pull request** (the thresholds design's default).
   Rejected by Adam on 2026-10-25 for removals and 2026-10-26 for
-  improvements.
+  improvements and new skills (the loop merges accepted changes).
 - **A ruleset bypass that pushes straight to `main`.** Rejected: the fleet
   rule forbids a bot pushing to a protected default branch, and it would skip
   the required checks that are the only gate left.

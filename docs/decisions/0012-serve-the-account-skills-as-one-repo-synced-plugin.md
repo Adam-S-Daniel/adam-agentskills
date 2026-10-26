@@ -1,6 +1,6 @@
 # 0012. Serve the account's skills as one repo-synced plugin
 
-- **Status:** Superseded by [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)
+- **Status:** Superseded by [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md); the `sync-skills` uploads it names are retired by [0014](0014-retire-the-account-zip-upload-channel.md)
 - **Date:** 2026-09-23 (shape revised 2026-09-24)
 - **Deciders:** Adam Daniel
 

@@ -1,6 +1,6 @@
 # 0009. Bump bundle versions on every release so `plugin update` can fire
 
-- **Status:** Proposed
+- **Status:** Proposed (one constraint names the `sync-skills` account uploads, since retired by [0014](0014-retire-the-account-zip-upload-channel.md))
 - **Date:** 2026-08-31
 - **Deciders:** Adam Daniel
 

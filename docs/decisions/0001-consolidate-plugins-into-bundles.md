@@ -1,6 +1,6 @@
 # 0001. Consolidate single-skill plugins into three bundles
 
-- **Status:** Superseded by [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)
+- **Status:** Superseded by [0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md); the `sync-skills` uploads it names are retired by [0014](0014-retire-the-account-zip-upload-channel.md)
 - **Date:** 2026-07-16
 - **Deciders:** Adam Daniel
 

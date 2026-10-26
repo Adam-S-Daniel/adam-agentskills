@@ -151,6 +151,14 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 
 ### Operational gotchas
 
+- **The ADR 0013 layout is data, not test source.** Which skills each plugin
+  ships is pinned in [`scripts/plugin_layout.json`](scripts/plugin_layout.json)
+  and read by `scripts/test_check_consistency.py`; a second test holds the file
+  to one canonical serialization (`json.dumps(doc, indent=2)` plus a trailing
+  newline, plugins and skills sorted). Adding or removing a skill updates that
+  file in the same change, by hand or with a JSON parser — skills-evals'
+  `scripts/retire_skill.py` edits it that way so a skill-removal pull request
+  can pass these checks with no human edit. Do not re-inline the table.
 - Eval skill installs need the nested path: copy `plugins/<plugin>/skills/<skill>/`
   into `.claude/skills/<skill>/`. Copying the outer plugin directory buries
   `SKILL.md` and the skill silently never loads.

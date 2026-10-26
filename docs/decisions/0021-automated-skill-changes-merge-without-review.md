@@ -15,7 +15,8 @@ loop, and all used to wait for a person:
 - **A removal.** skills-evals' `scripts/retire_skill.py` acts on a `retire`
   verdict: every fixture crossed with every roster model shows no benefit at
   two fixed looks. It opens `retire-skill/<skill>`, which deletes the skill
-  directory, raises the plugin's patch version and adds a
+  directory, raises the plugin's major version (a removal breaks anyone using
+  the skill) and adds a
   `docs/skill-impact.md` `remove` entry
   ([skills-evals ADR 0014](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/decisions/0014-removal-pull-requests-merge-without-review.md)).
 - **An improvement.** skills-evals' improvement loop proposes a `SKILL.md`
@@ -54,19 +55,21 @@ merges". Adam chose the opposite for both.
    gets the round.
 3. **Only the skill and its bookkeeping change.** Such a pull request
    touches the one skill's own directory, `docs/skill-impact.md`, the plugin's
-   two manifests (the version only), `README.md`'s generated table and
-   `skills.lock`, and nothing else.
+   two manifests (the version only), `README.md`'s generated table,
+   `skills.lock` and, for a removal, `scripts/plugin_layout.json` (the ADR
+   0013 layout data), and nothing else.
 4. **Never through plugin-runtime-review.** A skill whose plugin runs code
    (a `hooks/` or `bin/` directory, a settings or package file, or a
    manifest `hooks` or `settings` key) is never merged automatically: the
-   improvement and draft-skill gates open a draft instead. `retire_skill.py` does not check
-   this yet, so its auto mode must not be switched on until it does. No
+   improvement and draft-skill gates open a draft instead, and
+   `retire_skill.py` files an issue instead of a pull request. No
    automation approves a `plugin-runtime-review` deployment.
 5. **One loop pull request at a time.** All three write the bundle
    version, `docs/skill-impact.md` and `skills.lock`, so a second open one
    would conflict once the first merged. While any `eval-improve/*`,
    `draft-skill/*` or `retire-skill/*` pull request is open, the
-   improvement gate opens nothing and the draft-skill gate opens drafts.
+   improvement gate and `retire_skill.py` open nothing and the draft-skill
+   gate opens drafts.
 6. **The record is written by the automation.** The pull request carries its
    own `docs/skill-impact.md` entry with the eval numbers, a `PURPOSE.md`
    stub when the skill has none, the version bump ADR 0009 requires, and the

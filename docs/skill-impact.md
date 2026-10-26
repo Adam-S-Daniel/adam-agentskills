@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-26 — adam-coding-anywhere/ci-job-performance — create (eval result; corrects the entry below)
+
+- Motivation: the entry below says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.
+- Change: none to skill content. Fixture `evals/ci-job-performance/browser-cache` merged in [skills-evals#437](https://github.com/Adam-S-Daniel/skills-evals/pull/437).
+- Eval: routine run `20261026T211234Z-1b7681`, 3 trials per arm, subscription billing ([report](https://github.com/Adam-S-Daniel/skills-evals/blob/persistent/eval-results/routine-results/20261026T211234Z-1b7681/ci-job-performance/20261026T211503Z/report.md)). `with_skill` objective 6/7 every trial, `without_skill` 5/7; judge skipped (objective-decided). The difference is keying the remaining cache on the lockfile: 3/3 with the skill, 0/3 without. Both arms dropped the firefox cache and kept chromium's, and neither ran `playwright install` on every leg (0/3 each), so the skill's "keep the install step un-conditioned on the cache hit" line is not landing. That is a target for the improvement loop. An earlier routine run (`20261026T201828Z-d1e312`) scored 3/7 in both arms because the scorer sandbox could not exec `/usr/bin/python3` (a symlink to an unmounted `/etc/alternatives`); fixed in [skills-evals#438](https://github.com/Adam-S-Daniel/skills-evals/pull/438). The first attempt, on `eval.yml`, failed because the API credit was used up.
+- Outcome: merged 2026-10-26 ([#83](https://github.com/Adam-S-Daniel/adam-agentskills/pull/83)).
+
+## 2026-10-26 — adam-coding-anywhere/debug-github-workflows — edit (eval result; corrects the entry below)
+
+- Motivation: same as above, for the stale-runs-listing section from #83.
+- Change: none to skill content.
+- Eval: `evals/debug-github-workflows/swallowed-failure`, routine run `20261026T211240Z-222449`, 3 trials per arm ([report](https://github.com/Adam-S-Daniel/skills-evals/blob/persistent/eval-results/routine-results/20261026T211240Z-222449/debug-github-workflows/20261026T211546Z/report.md)). `with_skill` objective 5.3/7, `without_skill` 5/7; judge skipped (objective-decided). This fixture does not exercise the new section, so it is a regression check only: no drop. Its `run-log-read-without-writes` check failed 0/3 in both arms because no `.gh-invocations.log` was written (the agents did not call `gh`); that looks like a fixture issue, not a skill one.
+- Outcome: merged 2026-10-26 ([#83](https://github.com/Adam-S-Daniel/adam-agentskills/pull/83)).
+
 ## 2026-10-26 — adam-coding-anywhere/ci-job-performance — create
 
 - Motivation: CI speed fixes (caching browser downloads, worker counts, sharding, nektos/act as an inner loop) kept being redone from intuition across cms-platform, adamdaniel.ai and jodidaniel.com, and the intuitive fix was often wrong: caching Playwright's firefox download makes the job slower. Written 2026-09-24 as old-registry PR 180, a draft that never merged.

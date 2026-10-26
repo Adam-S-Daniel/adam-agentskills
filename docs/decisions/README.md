@@ -110,3 +110,4 @@ Optional sections for high-impact decisions:
 | [0018](0018-api-credit-lane-for-claude-code.md) | Delegate to an API-credit lane when weekly usage runs ahead of pace | Accepted |
 | [0019](0019-point-the-repo-settings-skill-at-repo-settings-instead-of-a-copy.md) | Point the repo-settings skill at repo-settings instead of shipping a copy of its engine | Accepted |
 | [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (pilot in this repo) |
+| [0021](0021-automated-skill-changes-merge-without-review.md) | Automated skill changes from the evals loop (removals, accepted improvements and new skills) merge without review | Accepted |

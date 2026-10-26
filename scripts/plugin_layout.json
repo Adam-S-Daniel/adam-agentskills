@@ -10,6 +10,7 @@
     "adam-coding-anywhere": {
       "defaultEnabled": true,
       "skills": [
+        "ci-job-performance",
         "debug-github-workflows",
         "disarm-inherited-reach",
         "github-actions-repo-settings",

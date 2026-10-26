@@ -142,6 +142,7 @@ Available skills:
 | --- | --- | --- |
 | `adam-anything-anywhere` | `/adam-anything-anywhere:finding-unknowns` | Surface and resolve the ambiguities in a task before, during, and after implementation — the blind-spot pass, the self-interview, reference-driven specs, implementation notes, and a post-hoc explainer or quiz. |
 | `adam-anything-anywhere` | `/adam-anything-anywhere:writing-adrs` | Write a lightweight Nygard-style Architecture Decision Record under `docs/decisions/` when a non-obvious decision needs context that won't fit in a code comment and would rot if left only in a PR description. |
+| `adam-coding-anywhere` | `/adam-coding-anywhere:ci-job-performance` | Speed up a slow GitHub Actions job or test step using measurements, not guesses. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:debug-github-workflows` | Debugging GitHub Actions workflow failures. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:disarm-inherited-reach` | Sever a scratch tree's inherited push path to the real repository the moment the tree exists, before anything runs in it. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:github-actions-repo-settings` | Configure and enforce GitHub repository security settings as code: require actions to be pinned to full-length commit SHAs, require approval for all outside collaborators' fork pull-request workflow runs, and protect the default branch via a repository ruleset. |

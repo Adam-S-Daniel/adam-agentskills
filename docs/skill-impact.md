@@ -40,6 +40,20 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-26 — adam-coding-anywhere/ci-job-performance — create
+
+- Motivation: CI speed fixes (caching browser downloads, worker counts, sharding, nektos/act as an inner loop) kept being redone from intuition across cms-platform, adamdaniel.ai and jodidaniel.com, and the intuitive fix was often wrong: caching Playwright's firefox download makes the job slower. Written 2026-09-24 as old-registry PR 180, a draft that never merged.
+- Change: new skill (SKILL.md + PURPOSE.md), ported from that draft with `AGENTS.md` pointers changed to the fleet guidance; `adam-coding-anywhere` 1.2.7 -> 1.3.0 (PR pending).
+- Eval: none run yet. First fixture is in a companion skills-evals PR; the paid `with_skill` run reads the skill from this registry's default branch, so it runs after merge, as for vendor-release-impact-issues (#22).
+- Outcome: pending merge.
+
+## 2026-10-26 — adam-coding-anywhere/debug-github-workflows — edit
+
+- Motivation: GitHub's per-workflow runs listing intermittently returned a ~3-week-old snapshot while the repo-wide listing, queried seconds later, already held the recent runs; it produced false "no recent success" alerts ([jodidaniel.com#264](https://github.com/jodidaniel/jodidaniel.com/issues/264), fixed in [cms-platform#459](https://github.com/Adam-S-Daniel/cms-platform/pull/459)). Also from draft old-registry PR 180.
+- Change: adds "A Runs Listing Can Return a Stale Snapshot": cross-check a second, independent listing before asserting absence. Same PR as the ci-job-performance creation above.
+- Eval: not run before merge, for the same reason as above; the skill's four existing fixtures run after merge.
+- Outcome: pending merge.
+
 
 ## 2026-10-23 — adam-coding-anywhere/github-actions-repo-settings — edit
 

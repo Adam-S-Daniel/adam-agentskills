@@ -24,6 +24,20 @@ exist only on another branch.
   pin. It was a hand-refreshed pin (v2.101.0, published 2026-09-15, refreshed
   2026-10-04; v2.67.0 before) until 2026-10-05.
 
+- **A runs listing can lie about absence.** In 2026-09 the per-workflow
+  `/actions/workflows/<id>/runs` endpoint intermittently answered with a
+  ~3-week-old snapshot while the repo-wide `/actions/runs` listing, queried
+  seconds later, already had the recent runs (not reproducible afterward:
+  15/15 calls came back current). It produced false "no recent success"
+  alerts
+  ([jodidaniel.com#264](https://github.com/jodidaniel/jodidaniel.com/issues/264),
+  fixed in
+  [cms-platform#459](https://github.com/Adam-S-Daniel/cms-platform/pull/459)).
+  It is its own section rather than folded into another, because the failure
+  is in the listing itself, not in a script run inside a job. First written
+  in the retired registry's draft
+  old-registry PR 180.
+
 ## Eval status
 
 No eval fixture exists for this skill in skills-evals.

@@ -1,0 +1,44 @@
+{
+  "plugins": {
+    "adam-anything-anywhere": {
+      "defaultEnabled": true,
+      "skills": [
+        "finding-unknowns",
+        "writing-adrs"
+      ]
+    },
+    "adam-coding-anywhere": {
+      "defaultEnabled": true,
+      "skills": [
+        "debug-github-workflows",
+        "disarm-inherited-reach",
+        "github-actions-repo-settings",
+        "review-bash-ci-reliability",
+        "skills-doctor",
+        "vendor-release-impact-issues",
+        "workflow-path-audit"
+      ]
+    },
+    "adam-coding-local": {
+      "defaultEnabled": false,
+      "skills": [
+        "launch-top-level-claude-session",
+        "migrate-claude-memory",
+        "sync-cc-settings-between-wsl-and-windows",
+        "windows-elevation-from-wsl"
+      ]
+    },
+    "adam-non-coding-local": {
+      "defaultEnabled": false,
+      "skills": [
+        "add-from-address",
+        "add-received-from-addresses",
+        "compare-pdfpairs",
+        "fastmail",
+        "ocr-pdfs",
+        "pdf-ocr-audit",
+        "rename-pdfs"
+      ]
+    }
+  }
+}

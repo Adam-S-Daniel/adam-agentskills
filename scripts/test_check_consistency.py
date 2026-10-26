@@ -748,21 +748,36 @@ def test_no_shipped_federated_bundle_is_shadowed_by_a_local_directory():
 
 
 # ADR 0013: the plugins this repo publishes, and which skills each one holds.
-# Pinned here so a skill moving between audiences/runtimes is a reviewed change
-# to this table, not a side effect of a directory move.
-EXPECTED_LAYOUT = {
-    "adam-anything-anywhere": (True, {"finding-unknowns", "writing-adrs"}),
-    "adam-coding-anywhere": (True, {
-        "debug-github-workflows", "disarm-inherited-reach", "github-actions-repo-settings",
-        "review-bash-ci-reliability", "skills-doctor", "vendor-release-impact-issues",
-        "workflow-path-audit"}),
-    "adam-coding-local": (False, {
-        "sync-cc-settings-between-wsl-and-windows", "launch-top-level-claude-session",
-        "migrate-claude-memory", "windows-elevation-from-wsl"}),
-    "adam-non-coding-local": (False, {
-        "ocr-pdfs", "pdf-ocr-audit", "rename-pdfs", "compare-pdfpairs", "fastmail",
-        "add-from-address", "add-received-from-addresses"}),
-}
+# Pinned so a skill moving between audiences/runtimes is a reviewed change to
+# the table, not a side effect of a directory move. The table is data in
+# scripts/plugin_layout.json rather than a literal here, so a tool that removes
+# a skill (skills-evals' scripts/retire_skill.py) updates it with a JSON parser
+# instead of rewriting Python source; the change still shows in the diff.
+LAYOUT_PATH = Path(__file__).resolve().parent / "plugin_layout.json"
+
+
+def _load_layout():
+    plugins = json.loads(LAYOUT_PATH.read_text(encoding="utf-8"))["plugins"]
+    return {name: (entry["defaultEnabled"], set(entry["skills"]))
+            for name, entry in plugins.items()}
+
+
+EXPECTED_LAYOUT = _load_layout()
+
+
+def test_the_layout_file_is_in_canonical_form():
+    # One serialization (json.dumps(doc, indent=2) + "\n", plugins and skills
+    # sorted), so a tool's rewrite changes only the lines it means to.
+    text = LAYOUT_PATH.read_text(encoding="utf-8")
+    doc = json.loads(text)
+    assert set(doc) == {"plugins"}
+    assert list(doc["plugins"]) == sorted(doc["plugins"])
+    for name, entry in doc["plugins"].items():
+        assert set(entry) == {"defaultEnabled", "skills"}, name
+        assert isinstance(entry["defaultEnabled"], bool), name
+        assert entry["skills"], name
+        assert entry["skills"] == sorted(set(entry["skills"])), name
+    assert text == json.dumps(doc, indent=2) + "\n"
 
 
 def test_the_shipped_plugins_match_the_adr_0013_layout():

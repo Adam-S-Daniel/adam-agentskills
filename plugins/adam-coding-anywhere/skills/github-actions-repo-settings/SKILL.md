@@ -34,7 +34,7 @@ Configure and enforce GitHub repository security settings. Two ways to use this:
 
 | # | Setting | Purpose | API |
 |---|---------|---------|-----|
-| 1 | **Require actions pinned to a full-length SHA** | Prevents mutable tag refs; mitigates supply-chain attacks | `repos/{repo}/actions/permissions` |
+| 1 | **Require actions pinned to a full-length SHA** | Prevents mutable tag refs; mitigates supply-chain attacks. A tag locked in `actions.lock` satisfies it | `repos/{repo}/actions/permissions` |
 | 2 | **Require approval for all outside collaborators** | Manual approval before fork PRs from non-collaborators run workflows | `.../actions/permissions/fork-pr-contributor-approval` |
 | 3 | **Default-branch protection (ruleset)** | Require PRs, block force-push/deletion on the default branch | `repos/{repo}/rulesets` |
 
@@ -309,13 +309,16 @@ If API endpoints change: **Settings > Actions > General** for settings 1-2;
 ## 10. Related
 
 - After enabling `sha_pinning_required`, existing workflows with unpinned
-  actions will fail. The pin format this repo setting demands is not a skill
-  you have to load -- it is always-on managed guidance: see the fleet guidance's
-  **"Pinning GitHub Actions"** section (installed into user memory by the
-  fleet-memory hook) for the full 40-character SHA, the 7-day
-  cooling-off before adopting a release, dereferencing annotated tags, and the
-  `./local` / `docker://` refs that have nothing to pin. The SHA stands alone:
-  do NOT annotate it with a trailing `# vX.Y.Z` version comment. That
-  convention was retired -- see ADR 0004 in the registry -- because nothing
-  keeps such a comment honest and a stale one is read and believed.
+  actions will fail. Despite its name, the setting is satisfied by an exact
+  tag locked in `.github/workflows/actions.lock`, which is the fleet's pin
+  form; a full 40-character SHA is the legacy form for a repo not yet
+  migrated. The pin format is not a skill you have to load -- it is always-on
+  managed guidance: see the fleet guidance's **"Pinning GitHub Actions"**
+  section (installed into user memory by the fleet-memory hook) for the
+  lockfile workflow, the 7-day cooling-off before adopting a release,
+  dereferencing annotated tags, and the `./local` / `docker://` refs that
+  have nothing to pin. A legacy SHA stands alone: do NOT annotate it with a
+  trailing `# vX.Y.Z` version comment. That convention was retired -- see
+  ADR 0004 in the registry -- because nothing keeps such a comment honest and
+  a stale one is read and believed.
 - **`workflow-path-audit`** -- ensure workflows only run on salient path changes.

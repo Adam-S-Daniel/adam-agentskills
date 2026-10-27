@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-27 — adam-coding-anywhere/github-actions-repo-settings — edit
+
+- Motivation: owner decision 2026-10-27 on [_agent-guidance#348](https://github.com/Adam-S-Daniel/_agent-guidance/issues/348): an exact tag locked in `actions.lock` is the preferred pin; the prompt-audit sweep read this skill as stating SHA-only.
+- Change: section 10 and the settings table say a locked tag satisfies `sha_pinning_required` and is the fleet's pin form, with a full SHA as the legacy form; the no-version-comment rule now names the legacy SHA.
+- Eval: not run. Neither fixture (`evals/github-actions-repo-settings/drift-diagnosis`, `onboarding`) exercises the pin format, so a run would not measure this edit.
+- Outcome: pending
+
 ## 2026-10-26 — adam-coding-anywhere/ci-job-performance — create (eval result; corrects the entry below)
 
 - Motivation: the entry below says "Eval: none run yet" and "Outcome: pending merge"; both are now stale, and the log is append-only.

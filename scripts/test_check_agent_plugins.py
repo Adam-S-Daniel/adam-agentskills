@@ -553,9 +553,11 @@ def test_shipped_manifests_omit_marketplace_only_keys():
         assert "skills" not in manifest
 
 
-def test_shipped_manifests_assert_no_license():
-    # The repo ships no LICENSE file, so declaring one would be a false claim.
-    assert not (cap.REPO_ROOT / "LICENSE").exists()
+def test_shipped_manifests_claim_only_the_repo_license():
+    # The repo ships the Apache-2.0 LICENSE, so a manifest may omit "license"
+    # or name that one; any other value would be a false claim.
+    assert (cap.REPO_ROOT / "LICENSE").read_text(encoding="utf-8").lstrip().startswith(
+        "Apache License\n                           Version 2.0")
     for bundle in cap.discover_bundles():
         manifest = json.loads((bundle / "plugin.json").read_text(encoding="utf-8"))
-        assert "license" not in manifest
+        assert manifest.get("license", "Apache-2.0") == "Apache-2.0"

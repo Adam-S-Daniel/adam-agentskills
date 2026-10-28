@@ -40,6 +40,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-28 — adam-coding-anywhere/review-bash-ci-reliability — edit
+
+- Motivation: skills-evals improvement run `20261028T011134Z-914f9a`: train checks failed, and `scripts/propose_skill_edit.py`'s acceptance rule accepted its proposed edit ([skills-evals#71](https://github.com/Adam-S-Daniel/skills-evals/issues/71)).
+- Change: SKILL.md edited by the improvement loop; bundle `adam-coding-anywhere` 1.3.1 -> 1.3.2, by skills-evals' `routine-improve-gate.yml`.
+- Eval: objective checks passed, baseline -> candidate, 3 trial(s) per fixture in the eval routine (a local exhibit, not badge input): train empty-repo-discovery 21/21 -> 21/21; train release-pipeline 24/33 -> 33/33; train test-runner-assertions 19/21 -> 21/21; validation drift-report-capture 21/21 -> 21/21.
+- Outcome: auto-merges once required checks pass, with no human review (ADR 0021, Adam's 2026-10-26 decision).
+
 ## 2026-10-27 — adam-coding-anywhere/github-actions-repo-settings — edit
 
 - Motivation: owner decision 2026-10-27 on [_agent-guidance#348](https://github.com/Adam-S-Daniel/_agent-guidance/issues/348): an exact tag locked in `actions.lock` is the preferred pin; the prompt-audit sweep read this skill as stating SHA-only.

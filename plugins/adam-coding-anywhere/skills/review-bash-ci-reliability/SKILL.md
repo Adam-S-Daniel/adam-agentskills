@@ -63,13 +63,20 @@ Review uses of `|| true`, `2>/dev/null`, and `|| :` to ensure they are intention
 
 ### 5. Commit Signing in CI
 
-If the git config has `commit.gpgsign = true` globally, CI environments need either:
-- `git config commit.gpgsign false` in test repos
+You cannot see the runner's global git config from inside the repo, so treat it as unknown: if it
+has `commit.gpgsign = true`, every `git commit` fails for want of a key. Any script that commits in CI needs one of:
+- `git config commit.gpgsign false` in the repo it commits in, or `git -c commit.gpgsign=false commit ...`
 - Or proper signing key setup
+
+Apply this whenever you add a CI identity (item 2), not only when you happen to find `gpgsign` set.
 
 ### 6. Missing Dependencies
 
-CI scripts may assume tools are installed. Verify that all required tools (yq, jq, gh, etc.) are either pre-installed on the runner or explicitly installed in the workflow.
+CI scripts may assume tools are installed. Every tool beyond bash and coreutils (yq, jq, gh, etc.) must be guaranteed, not assumed: either the workflow installs it (a package-manager step or a setup action), the script checks for it up front and fails loudly, or the call is replaced with plain bash and coreutils when the use is trivial. "The runner image usually has it" is not a fix.
+
+```bash
+command -v jq >/dev/null || { echo "ERROR: jq is required but not installed" >&2; exit 1; }
+```
 
 ### 7. An Expected Non-Zero Inside `$(...)`
 
@@ -94,14 +101,28 @@ command that should not fail (see item 4).
 
 **Test harnesses:** an assertion or diagnostic helper must never be able to abort the
 run. One failing assertion that kills the runner mid-file prints no summary line and
-hides every test after it, instead of recording a single FAIL.
+hides every test after it, instead of recording a single FAIL. The same goes for the
+command under test itself: `out=$(./program args)` aborts the runner when the program
+crashes or exits non-zero, which is exactly the outcome the test exists to catch. Capture
+the status and record it:
 
-Search for: `$(` substitutions that contain `grep`, `diff` or `cmp` in scripts with `set -e`.
+```bash
+if out=$(./program "$input" 2>&1); then rc=0; else rc=$?; fi
+[[ $rc -eq 0 ]] || { echo "FAIL: $name (exit $rc): $out"; failures=$((failures + 1)); return; }
+```
+
+Verify the fix by making the command under test fail (a bad argument, a planted `exit 1`),
+not only by making an assertion fail, and confirm the summary line still prints.
+
+Search for: every `$(` substitution in scripts with `set -e`. In a test harness, treat each
+one that captures the command under test as an abort point; elsewhere, look for `grep`,
+`diff` or `cmp` inside it.
 
 ## How to Use This Skill
 
 1. Find all shell scripts: `find . -name '*.sh' -type f`
-2. For each script with `set -e`, grep for `< <(` patterns and for `grep`, `diff` or `cmp` inside `$(...)`
-3. For each script that uses `git commit`, check for user config
-4. For each script that exits 0 on "empty results," verify the discovery command errors are caught
-5. Run scripts locally to validate they pass before pushing
+2. For each script with `set -e`, grep for `< <(` patterns and for `$(...)` whose command may legitimately exit non-zero: `grep`, `diff`, `cmp`, or the command under test in a harness
+3. For each script that uses `git commit`, check for user config and that signing is disabled or keyed
+4. For each tool beyond bash and coreutils, confirm the workflow installs it or the script guards with `command -v`
+5. For each script that exits 0 on "empty results," verify the discovery command errors are caught
+6. Run scripts locally to validate they pass before pushing; for a test harness, also make one test fail and one command under test crash and confirm the summary still prints

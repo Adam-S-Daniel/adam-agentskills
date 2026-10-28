@@ -48,7 +48,8 @@
 # with core.autocrlf=true; converging ~/.claude/settings.json — which
 # registers the owner's PRIVATE marketplace, enables the owner's plugins and
 # sets `syncClaudeAiSkills: false`, turning off that user's claude.ai account
-# skills in their terminals (ADR 0010, ADR 0013), and applies the per-OS
+# skills in their terminals (ADR 0010, ADR 0013), sets
+# `disableSkillShellExecution: true`, and applies the per-OS
 # policy for `adam-non-coding-local` (off in WSL/Linux, left on in Windows;
 # ADR 0015); and, in Windows Git Bash, registering the `adam-clone-sync`
 # scheduled task (ADR 0017). They run only with `--owner-machine` or
@@ -570,7 +571,17 @@ TARGET_ENABLED_PLUGINS.update(NON_CODING_LOCAL_BY_HOST[host_os()])
 # this fleet owns are turned off by name in TARGET_ENABLED_PLUGINS instead
 # (ADR 0013). The key stays absent rather than
 # written either way.
-TARGET_SETTINGS = {"syncClaudeAiSkills": False}
+#
+# disableSkillShellExecution: true, the JSON boolean. Claude Code runs
+# `!`cmd`` lines and ```! blocks in a SKILL.md (and in custom commands) as
+# shell commands the moment the skill is invoked, before the model reads it
+# (https://code.claude.com/docs/en/skills, "Inject dynamic context"). No skill
+# in this registry uses that syntax, so turning it off costs nothing here and
+# closes a path where a skill's text becomes a command. The key covers user,
+# project, plugin and additional-directory skills. The companion fleet change
+# in _agent-guidance adds the same key to fleet repos' .claude/settings.json
+# plus an agent-checks git hook that refuses the syntax in a commit.
+TARGET_SETTINGS = {"syncClaudeAiSkills": False, "disableSkillShellExecution": True}
 
 
 def deep_merge(dst, src):

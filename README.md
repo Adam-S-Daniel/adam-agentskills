@@ -232,7 +232,10 @@ is **not** for anyone else's machine:
   copies and for the retired registry's plugins, and sets
   `syncClaudeAiSkills: false` — which turns off claude.ai account skills in
   that machine's terminals ([ADR 0010](docs/decisions/0010-let-pinned-channels-own-the-terminal.md),
-  [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md));
+  [ADR 0013](docs/decisions/0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md)),
+  and sets `disableSkillShellExecution: true`, so `` !`cmd` `` lines and
+  ```` ```! ```` blocks in a skill never run as shell commands
+  ([docs](https://code.claude.com/docs/en/skills); no skill here uses them);
   and applies the per-OS bundle policy below;
 - in Windows Git Bash, registers the `adam-clone-sync` scheduled task by
   running `plugins/adam-coding-local/hooks/clone-sync/Register-CloneSyncTask.ps1`

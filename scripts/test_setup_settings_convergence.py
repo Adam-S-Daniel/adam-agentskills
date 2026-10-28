@@ -241,6 +241,27 @@ def test_the_account_skill_sync_is_turned_off(tmp_path):
     assert settings["syncClaudeAiSkills"] is False
 
 
+def test_skill_shell_execution_is_disabled_on_a_fresh_file(tmp_path):
+    """The JSON boolean `true`: the CLI honours only a real boolean, so a
+    string "true" would be an opt-out that silently does not happen."""
+    settings = converge(tmp_path)
+    assert settings["disableSkillShellExecution"] is True
+
+
+def test_an_operator_who_enabled_skill_shell_execution_is_overridden(tmp_path):
+    settings = converge(tmp_path, {"disableSkillShellExecution": False})
+    assert settings["disableSkillShellExecution"] is True
+
+
+def test_skill_shell_execution_convergence_preserves_other_keys(tmp_path):
+    settings = converge(tmp_path, {"model": "claude-opus-5",
+                                   "permissions": {"allow": ["Bash(git status)"]}})
+    assert settings["disableSkillShellExecution"] is True
+    assert settings["model"] == "claude-opus-5"
+    assert settings["permissions"] == {"allow": ["Bash(git status)"]}
+    assert settings["syncClaudeAiSkills"] is False
+
+
 def test_the_plugin_sync_is_left_alone(tmp_path):
     """ADR 0010 deferred this to E6 (#160). E6 found the account's plugins
     syncing (Anthropic's six since 2026-09-20), and ADR 0013 turns off only

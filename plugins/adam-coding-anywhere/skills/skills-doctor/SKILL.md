@@ -332,7 +332,7 @@ does claim that pair joins the session, which brings it back in scope and makes
 the next run remove it. `stale-out-of-scope` is therefore a statement about the
 session as it stands, not about the directory.
 
-### The account store is no longer a delivery channel for this registry
+### The account store is not a delivery channel for this registry
 
 [ADR 0014](../../../../docs/decisions/0014-retire-the-account-zip-upload-channel.md)
 retired the ZIP uploads: every surface takes this registry's skills from the
@@ -346,8 +346,7 @@ still arrive through `synced/` and are none of this registry's business.
 ### Which surface the account channel is on
 
 From Claude Code 2.1.273+ a **terminal** session signed in with the account
-downloads every skill enabled on it. That used to be a cloud/chat/mobile-only
-channel. A synced skill is named `anthropic-skills:<name>` (cloud sessions since
+downloads every skill enabled on it. A synced skill is named `anthropic-skills:<name>` (cloud sessions since
 2.1.269) and the bare name still works when nothing else uses it; from 2.1.281
 the `/` menu, `/skills`, `/context` and `/plugin` show it by the short name
 unless another command uses that name.

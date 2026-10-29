@@ -40,6 +40,12 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-29 — adam-coding-anywhere/skills-doctor — edit
+- Motivation: Adam-S-Daniel/_agent-guidance#348 (prompt audit) and its fleet dry run of a dated-phrasing check: migration-relative wording in always-loaded text goes stale.
+- Change: the heading "The account store is no longer a delivery channel" now says "is not", and the aside "That used to be a cloud/chat/mobile-only channel" is removed. No instruction changes; bundle `adam-coding-anywhere` 1.3.2 -> 1.3.3.
+- Eval: not run; wording-only change to a heading and one historical sentence, and the skills-doctor fixtures in skills-evals reference neither (grep: 0 matches).
+- Outcome: pending
+
 ## 2026-10-28 — adam-coding-anywhere/review-bash-ci-reliability — edit
 
 - Motivation: skills-evals improvement run `20261028T011134Z-914f9a`: train checks failed, and `scripts/propose_skill_edit.py`'s acceptance rule accepted its proposed edit ([skills-evals#71](https://github.com/Adam-S-Daniel/skills-evals/issues/71)).

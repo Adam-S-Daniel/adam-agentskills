@@ -583,9 +583,7 @@ jobs:
           # shellcheck exits 1 ("No files specified") instead of passing on an
           # empty set — a green step that checked nothing is the bug being fixed.
           #
-          # -S error: two SC2088 (tilde-in-quotes) *warnings* exist today in
-          # plugins/adam-coding-local/skills/migrate-claude-memory/scripts/memory-migrate.sh
-          # (lines 90, 93) — pre-existing, out of scope for this change. Errors still fail CI.
+          # -S error: warnings are reported but do not fail the step. Errors still fail CI.
           #
           # Extensionless shell files matched NEITHER find when this step
           # globbed only '*.sh'. A git hook cannot carry an extension, so

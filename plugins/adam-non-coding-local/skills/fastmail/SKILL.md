@@ -8,8 +8,10 @@ description: >
   an interactive browser available. Trigger when the user wants to: search
   Fastmail for emails by sender, subject, or keyword; read email threads or
   attachment contents (including spreadsheets); compose and send new messages;
-  or draft and send replies. Trigger on any mention of "Fastmail", "check my
-  email", "search my inbox", "reply to", or similar email-management requests.
+  or draft and send replies. Trigger on "Fastmail", "check my email", "search my
+  inbox", "reply to", or similar email-management requests. Not for adding From
+  addresses or sending identities; those use add-from-address /
+  add-received-from-addresses.
 compatibility: Requires Claude in Chrome (browser automation) with a logged-in Fastmail session; local interactive execution only — not usable in headless or cloud sessions
 ---
 
@@ -94,7 +96,7 @@ For **spreadsheet attachments** (.xlsx / .csv):
    and source, then wait for "yes" / "confirmed".
 3. Once approved, click the **Download** link for the attachment.
 4. After download, use the `xlsx` or `pdf` skill (as appropriate) to parse and
-   summarise the contents.
+   summarize the contents.
 
 For **PDF attachments**, use the `pdf` skill after downloading.
 
@@ -147,39 +149,3 @@ For **inline images**, use `screenshot` + `zoom` to read visible content.
 | Search returns no results | Try loosening query (remove date range, try partial sender name) |
 | Attachment download blocked | Guide user to download manually if automation is blocked |
 | Reply vs Reply-all confusion | Always confirm with user before choosing reply scope |
-
----
-
-## 6. Example workflows
-
-### "Find emails from Sarah about the Q1 budget"
-
-```
-1. Navigate to https://app.fastmail.com/mail/
-2. Press / to focus search
-3. Type: from:sarah subject:"Q1 budget"  -> Enter
-4. Read results list with get_page_text
-5. Click the most relevant result
-6. Use get_page_text to extract thread
-```
-
-### "Reply to the last email from finance@example.com"
-
-```
-1. Search: from:finance@example.com
-2. Click the top (most recent) result
-3. Read thread to confirm context
-4. Click Reply
-5. Draft message, confirm with user
-6. Send after explicit confirmation
-```
-
-### "Download the spreadsheet from Tom's email and summarise it"
-
-```
-1. Search: from:tom hasattachment:true
-2. Open the matching thread
-3. Ask user: "I found an attachment called 'Q4-data.xlsx'. OK to download?"
-4. On confirmation, download the file
-5. Use the xlsx skill to parse and summarise
-```

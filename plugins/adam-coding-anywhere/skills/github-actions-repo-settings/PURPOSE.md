@@ -40,3 +40,7 @@ and `evals/github-actions-repo-settings/onboarding`, the latter marked `draft`.
   PR #168, `feat/109-repo-settings-as-code`.
 - The first version of that work (PR #168) did not manage the Actions-permissions
   settings, and SKILL.md once described that as a gap to close.
+
+## Changes
+
+- Prompt-audit fix (adam-agentskills issue #56): SKILL.md no longer points at this file, narrates the fleet classification in the past tense, or says the trailing version-comment convention "was retired". That convention was retired by registry ADR 0004; SKILL.md now states only the current rule.

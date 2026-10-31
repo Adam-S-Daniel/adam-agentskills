@@ -28,7 +28,7 @@ Configure and enforce GitHub repository security settings. Two ways to use this:
    engine, schema, and fleet config that introspect, diff, and apply desired
    state for a single repo or a whole fleet. See sections 1-2.
 2. **Manual API recipes** -- one-off `gh api` calls for each setting, plus a UI
-   fallback. See sections 3-6.
+   fallback. See sections 4-8.
 
 ## Settings enforced
 
@@ -139,14 +139,14 @@ single owner, so it cannot administer repos across both `Adam-S-Daniel` and the
 installation token per owner, so each account is handled with its own
 least-privilege token and there is nothing to rotate.
 
-### How the fleet was classified
+### Classifying a repo
 
-Non-standard settings are sometimes deliberate, so the fleet was classified with
+Non-standard settings are sometimes deliberate, so classify each repo with
 an adversarial, per-repo workflow-safety audit before applying the ruleset. The
 one failure mode that matters for the PR-required ruleset: a workflow step where
 `github-actions[bot]` / `GITHUB_TOKEN` (a non-admin) pushes/force-pushes/deletes
 on the repo's **own default branch** -- that push is blocked and the job fails.
-Rules of thumb used:
+Rules of thumb:
 
 - **public, no workflow pushes to the default branch** -> full baseline;
 - **private** -> SHA pinning only (fork approval + ruleset unavailable);
@@ -154,7 +154,7 @@ Rules of thumb used:
 - **fork, or owned by another settings system** -> excluded (`manage: []`);
 - **a workflow pushes to its own default branch** -> hold the ruleset until the
   workflow is converted to open a PR (e.g. `peter-evans/create-pull-request`).
-  (Incident: see PURPOSE.md.) For a fleet-standard bot that must keep writing to every managed
+  For a fleet-standard bot that must keep writing to every managed
   default branch, the sanctioned alternative is a declared `bypass_actors`
   entry in the fleet config (see repo-settings' schema) -- the agents-md-sync App is the
   standing example (repo-settings ADR 0001).
@@ -166,8 +166,7 @@ Rules of thumb used:
 `cms-platform` and the sites that consume it (`adamdaniel.ai`,
 `jodidaniel.com`) manage their **own** settings-as-code from the platform: a
 `repo-settings.yml` manifest + `scripts/audit-repo-settings.js`, propagated to
-consumers when sites are scaffolded/re-synced, using **rulesets** (history:
-see PURPOSE.md).
+consumers when sites are scaffolded/re-synced, using **rulesets**.
 
 **These repos are excluded from the fan-out** (`manage: []`). Reason: the
 fan-out and the platform would otherwise be two independent sources of truth for
@@ -181,7 +180,7 @@ enforces** (`sha_pinning_required`, fork-PR `approval_policy`): its
 `repo-settings.yml` carries an `actions_permissions` block, and
 `audit-repo-settings.js` reads and writes `actions/permissions` and
 `.../fork-pr-contributor-approval`, skipping the fork endpoint on private repos
-(HTTP 422) (history: see PURPOSE.md). Do **not** let the fan-out manage these
+(HTTP 422). Do **not** let the fan-out manage these
 repos to cover for it.
 
 **Divergence to be aware of:** the platform's `main` ruleset uses
@@ -318,7 +317,6 @@ If API endpoints change: **Settings > Actions > General** for settings 1-2;
   lockfile workflow, the 7-day cooling-off before adopting a release,
   dereferencing annotated tags, and the `./local` / `docker://` refs that
   have nothing to pin. A legacy SHA stands alone: do NOT annotate it with a
-  trailing `# vX.Y.Z` version comment. That convention was retired -- see
-  ADR 0004 in the registry -- because nothing keeps such a comment honest and
-  a stale one is read and believed.
+  trailing `# vX.Y.Z` version comment. Nothing keeps such a comment honest,
+  and a stale one is read and believed.
 - **`workflow-path-audit`** -- ensure workflows only run on salient path changes.

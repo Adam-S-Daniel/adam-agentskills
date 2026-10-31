@@ -174,12 +174,10 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
   owner machine right away (a plain `bash setup.sh` only removes the skill
   links earlier versions made; it links none since
   [ADR 0017](docs/decisions/0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md)).
-  Before [ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md),
-  a stale global sync-skills pre-push hook kept pointing at the old plugin
-  path and failed every `git push` from every repo until re-registered;
-  `setup.sh --owner-machine` now only removes that retired hook's global
-  git-config sections, so a machine that ran an earlier version still needs
-  one `--owner-machine` run to stop failing pushes.
+  If every `git push` from every repo fails on a machine, run
+  `setup.sh --owner-machine` once: it removes the global git-config sections
+  of the retired sync-skills pre-push hook
+  ([ADR 0014](docs/decisions/0014-retire-the-account-zip-upload-channel.md)).
 - **`python3 scripts/test_<x>.py` cannot fail, so never verify with it.** This
   is the fleet guidance's "Prove the verifier can fail first" rule. Its
   worked example there is `test_foo.py` (this repo's own deleted example is in

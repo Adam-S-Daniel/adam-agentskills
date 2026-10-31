@@ -39,7 +39,7 @@ The most reliable ADR-worthiness test: would a reasonable contributor scan the d
 
 ### 2. Pick the next number
 
-Read `docs/decisions/README.md`'s index and pick `MAX(existing) + 1`. Zero-pad to 4 digits (`0001`, `0002`, …, `0011`, …). Files sort correctly past 9999 if and when we get there; we won't.
+Read `docs/decisions/README.md`'s index and pick `MAX(existing) + 1`. Zero-pad to 4 digits (`0001`, `0002`, …, `0011`, …).
 
 ### 3. Pick a title
 

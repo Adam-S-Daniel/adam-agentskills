@@ -41,3 +41,7 @@ exist only on another branch.
 ## Eval status
 
 No eval fixture exists for this skill in skills-evals.
+
+## Changes
+
+- Prompt-audit fix (adam-agentskills issue #56): the stale-runs-listing measurements (about 3 weeks old snapshot, 15/15 retries current) live in the section above, not in SKILL.md.

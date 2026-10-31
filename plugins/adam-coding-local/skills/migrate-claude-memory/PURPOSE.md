@@ -55,3 +55,14 @@ in-repo memory directory (`permissions.blockReadsOutsideWorkingDirectories`,
 (long paths before 2.1.224, `CLAUDE_CODE_PROJECT_DIR_NAME`). Neither
 was measured live; the inventory still reports a host-chosen name that starts
 with `-` as `ORPHANED`, so the human check on every orphan carries that case.
+
+## Changes
+
+- Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
+  Workflow 3 (copy a store into `<repo>/.claude/memory/`), the committed
+  `autoMemoryDirectory` section and `scripts/memory-migrate.sh` were removed per
+  STRATEGY.md's 2026-10-24 memory policy (no `autoMemoryDirectory` and no
+  `.claude/memory/` in a repo; cloud sessions ignore the setting). The
+  2.1.273 `blockReadsOutsideWorkingDirectories` note went with that section.
+  The skill is now inventory and orphan cleanup only; the description no
+  longer promises the copy into the repo, and "plugin" became "skill".

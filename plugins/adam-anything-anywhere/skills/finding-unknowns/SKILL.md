@@ -59,7 +59,13 @@ interrogation costs more than the task.
    mockup, a rubric, the actual function being ported. A mockup produces better
    results than a paragraph describing the mockup, because prose silently drops
    the details the code is forced to make explicit.
-5. **Then** write the plan — with the resolved answers in it, not the questions.
+5. **Before a batch of whole-object writes** (issue or PR bodies, generated
+   files published elsewhere, uploads), write down the complete output
+   contract: the fixed blocks every item carries, the metadata (timestamps,
+   links, footers), and what would force a rewrite later. Each later change
+   re-sends every item in full. Write one item, read it back from the
+   destination, and check it against the contract before sending the rest.
+6. **Then** write the plan — with the resolved answers in it, not the questions.
 
 ## During implementation
 

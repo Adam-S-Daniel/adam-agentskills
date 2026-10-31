@@ -105,10 +105,10 @@ If `gh` commands fail silently in CI:
 
 **Problem**: The per-workflow runs listing
 (`/actions/workflows/<id>/runs?event=schedule&per_page=20`) intermittently
-returned a snapshot about 3 weeks old, while the repo-wide listing
-(`/actions/runs?event=schedule&created>=…`), fetched seconds earlier, already
-held the recent runs. Not reproducible on retry (15/15 calls came back
-current) — an intermittent staleness, not a permanent API quirk. It caused
+returns a stale snapshot, while the repo-wide listing
+(`/actions/runs?event=schedule&created>=…`) already holds the recent runs. A
+retry usually comes back current — an intermittent staleness, not a permanent
+API quirk. It caused
 false "no recent success" alerts
 ([jodidaniel.com#264](https://github.com/jodidaniel/jodidaniel.com/issues/264),
 fixed in

@@ -54,6 +54,102 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-10-31 — adam-anything-anywhere/finding-unknowns — edit
+- Motivation: [adam-agentskills#21](https://github.com/Adam-S-Daniel/adam-agentskills/issues/21): a batch of 32 issue bodies was rewritten twice because the output contract changed after filing.
+- Change: new step under "Before implementation": fix the output contract before a batch of whole-object writes, then write one item and read it back before sending the rest; new PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261026T145523Z-6dc188`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge); the fixture exercises the blind-spot pass, not batch writes.
+- Outcome: pending
+
+## 2026-10-31 — adam-anything-anywhere/writing-adrs — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: removed a padding clause from the numbering rule; new PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261031T190211Z-c3e925`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (bootstrap: with 9/9, without 5/9).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/workflow-path-audit — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: `grep -qE` now reads a here-string instead of a pipe (pipe race under pipefail); required checks read from `rules/branches/main` (union of rulesets); checkout placeholder names the repo's pin form; new PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261031T185821Z-a37f6c`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (required-check-routing: with 8/8, without 8/8).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/github-actions-repo-settings — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: section reference fixed (4-8); removed three pointers to PURPOSE.md, which is never loaded; classification paragraph in the present tense; version-comment rule stated without the ADR 0004 history.
+- Eval: baseline on main before the edit: routine run `20261026T145520Z-e53d67`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (drift-diagnosis).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/ci-job-performance — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: undated "currently has no dated pwsh tags" replaced with a check to run.
+- Eval: baseline on main before the edit: routine run `20261026T211329Z-fdfe3e`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (browser-cache: with 6/7, without 6/7).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/debug-github-workflows — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: dropped measurement narrative ("about 3 weeks old", "15/15 calls") that PURPOSE.md already holds; instruction unchanged.
+- Eval: baseline on main before the edit: routine run `20261026T211328Z-470e6e`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (swallowed-failure: with 5/7, without 6/7).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/skills-doctor — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: `check_provenance.py --account-channel` invocation now uses `-I` and the file's path form; heading count fixed; account-store and retired-registry text stated as current rules; old-CLI (pre-2.1.280) trap moved to PURPOSE.md; removed three pointers to PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261026T144654Z-5dd589`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (bucketed-account-store).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-anywhere/disarm-inherited-reach — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing. (flagged item: the skill fired on the session's own pre-authorized worktree)
+- Change: "When to invoke" bullet scoped to a clone or worktree made as a scratch tree; the session's own working tree still triggers the skill before a negative control or destructive path. Description unchanged; new PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261031T044227Z-1d369e`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (with 9/9, without 8/9).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-local/windows-elevation-from-wsl — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: description trimmed to what and when (rules stay in the body); "Where the rule lives" history moved to PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261031T161419Z-a85866`; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge) (with 7/7, without 6/7).
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-local/migrate-claude-memory — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing. Conflicted with STRATEGY.md's 2026-10-24 memory policy (no `autoMemoryDirectory`, no `.claude/memory/` in a repo).
+- Change: removed the in-repo `autoMemoryDirectory` section, Workflow 3 and `scripts/memory-migrate.sh` (used only by Workflow 3); description no longer promises copying a store into a repo; "plugin" corrected to "skill".
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: description trimmed to what and when; merge rules stay in the body.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-coding-local/launch-top-level-claude-session — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: description trimmed to what and when; procedure stays in the body.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-non-coding-local/ocr-pdfs — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: intro states what the skill does instead of comparing it with a predecessor.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-non-coding-local/fastmail — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: description no longer claims adding From addresses (sibling skills do); removed three example workflows that repeated sections 2-4; new PURPOSE.md.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-non-coding-local/add-from-address — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: `pwsh trigger.ps1` now uses the skill-directory path so it works from any working directory.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
+## 2026-10-31 — adam-non-coding-local/add-received-from-addresses — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
+- Change: `pwsh trigger.ps1` now uses the skill-directory path so it works from any working directory.
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending
+
 ## 2026-10-29 — adam-coding-anywhere/skills-doctor — edit
 - Motivation: Adam-S-Daniel/_agent-guidance#348 (prompt audit) and its fleet dry run of a dated-phrasing check: migration-relative wording in always-loaded text goes stale.
 - Change: the heading "The account store is no longer a delivery channel" now says "is not", and the aside "That used to be a cloud/chat/mobile-only channel" is removed. No instruction changes; bundle `adam-coding-anywhere` 1.3.2 -> 1.3.3.

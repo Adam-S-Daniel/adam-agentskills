@@ -108,3 +108,15 @@ is `evals/skills-doctor/` in skills-evals.
   confident measured empty set rather than "unknown", so it reported the next
   run as replacing a directory that run deletes. Both now consult the project
   dir plus every accepted lock's own repo.
+- **Prompt-audit fixes (adam-agentskills issue #56).** Removed pointers to this
+  file from SKILL.md (never loaded at inference), dropped the section count and
+  the migration-relative wording about the retired account-drift mode, dropped
+  the retired-registry issue reference, and made the `--account-channel`
+  invocation match the file's `python3 -I scripts/...` form. History moved out
+  of the traps list: before Claude Code 2.1.280, a `manifest.json` in
+  `~/.claude/skills/` itself could trash hook installs (the CLI moved skills
+  that manifest listed to `~/.claude/skills/.trash/`; the bootstrap hook never
+  writes one, a flat manifest left by an older CLI that named a hook-installed
+  skill could); on such a CLI a locked skill that vanished and sits in `.trash/`
+  is the first thing to look for. The stripping of `!` commands and `@`
+  expansion in synced skill bodies began at 2.1.228.

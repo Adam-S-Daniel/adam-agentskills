@@ -128,8 +128,9 @@ multi-repo shape `$CLAUDE_PROJECT_DIR` is the parent — which has no
 ## The wiring (cloud only)
 
 Put this in the **cloud environment's setup script** — the *Setup script* field
-in the environment settings dialog at claude.ai/code. It writes a settings file
-at the project level, a link of the chain that is definitely read.
+in the environment settings dialog at claude.ai/code. It writes the user-scope
+settings file, `/root/.claude/settings.json`, the one link of the chain that
+every hosted session reads, project threads included.
 
 There is no laptop counterpart to this section and no laptop version of the
 script. A durable machine has no environment setup script, and would have
@@ -146,25 +147,37 @@ nothing for one to fix: see *First: which surface are you on* above.
 # wrong HERE. A setup script runs as root before Claude Code launches, and
 # measured in a hosted session: `CLAUDE_PROJECT_DIR` is UNSET — Claude Code sets
 # it when it invokes a hook, which this is not — and `HOME` is `/root`, not the
-# project dir's parent. So `${CLAUDE_PROJECT_DIR:-$PWD}` falls through to a
-# `$PWD` that is not the project dir, and writes the file somewhere nothing
-# reads. The near miss is the bad one: `/root/.claude/settings.json` is exactly
-# the user-scope file the four notes below decline to write.
+# project dir's parent.
+#
+# THE WIRING GOES IN USER SCOPE, `/root/.claude/settings.json`. Project threads
+# (claude.ai Projects) ignore `<project>/.claude/settings.json` but honor the
+# user-scope file, measured 2026-10-31 with a Stop hook in each: only the
+# user-scope one fired. The harness's own hooks in `launcher-settings.json`
+# kept firing beside it, so the two merge rather than displace each other.
 #
 # Getting it right the first time matters more than usual, because the setup
 # script runs ONCE. Anthropic snapshots the filesystem afterwards and later
 # sessions skip the script, so a wrong path is baked into the snapshot and
 # persists until the script changes or the cache expires (~7 days).
 #
-# Safe in a single-repo session too: there `cwd` IS the repo, so this file sits
-# above it, off the settings chain and inert, and the repo's own committed
-# `.claude/settings.json` fires as it does today.
+# Safe in a single-repo session too: every command looks only in the project
+# dir's CHILDREN, and there the project dir IS the repo, which has none, so the
+# commands do nothing and the repo's own committed `.claude/settings.json`
+# fires as it does today.
 project=/home/user
+user_claude=/root/.claude
 
 # NOT `set -eu`. A setup script that exits non-zero makes the SESSION FAIL TO
 # START, and skills not loading is by far the lesser failure — hence `|| true`
 # here and the unconditional `exit 0` at the end.
-mkdir -p "$project/.claude" || true
+mkdir -p "$user_claude" || true
+
+# An older copy of this script wired the project scope instead. Remove that
+# file, but only if it is ours, so a multi-repo session does not run each hook
+# twice.
+if grep -qs 'skills-bootstrap.sh' "$project/.claude/settings.json"; then
+  rm -f "$project/.claude/settings.json"
+fi
 
 # The eval harness (skills-evals' run_eval.py) runs every agent trial under
 # Claude Code's sandbox with failIfUnavailable, which needs bubblewrap and
@@ -173,7 +186,7 @@ mkdir -p "$project/.claude" || true
 apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/dev/null 2>&1 \
   || echo "wiring: bubblewrap/socat install failed; sandboxed evals will refuse to run"
 
-cat > "$project/.claude/settings.json" <<'JSON'
+cat > "$user_claude/settings.json" <<'JSON'
 {
   "hooks": {
     "SessionStart": [
@@ -182,7 +195,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/fleet-memory.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/fleet-memory.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done'",
+            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/fleet-memory.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 30
           }
         ]
@@ -192,7 +205,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/skills-bootstrap.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done'",
+            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 90
           }
         ]
@@ -204,7 +217,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/agent-checks-guard.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
+            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 10
           }
         ]
@@ -216,7 +229,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guidance-load-record.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/guidance-load-record.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
+            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/guidance-load-record.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 20
           }
         ]
@@ -225,7 +238,7 @@ cat > "$project/.claude/settings.json" <<'JSON'
   }
 }
 JSON
-echo "wiring: wrote $project/.claude/settings.json"
+echo "wiring: wrote $user_claude/settings.json"
 exit 0
 ```
 
@@ -264,7 +277,7 @@ session with 19 repos attached loaded 19 identical copies: 332.3k tokens across
 
 That makes this file load-bearing in a way it was not before. **A single-repo
 session fires the repo's own committed `settings.json` and is fine either way.
-A MULTI-repo session fires only this file** — the same ADR 0005 finding the
+A MULTI-repo session, or a project thread, fires only this file** — the same ADR 0005 finding the
 section above rests on — so without the `fleet-memory` group here, every
 multi-repo session runs on the stub alone and opens with
 `fleet-guidance: DEGRADED`. The stub carries the load-bearing rules inline, so
@@ -280,19 +293,23 @@ only one that ever ran.
 
 Four things about it are deliberate:
 
-- **It resolves the hook at session start, not at setup time.** The project
-  dir's own copy is tried first, so a single-repo session behaves exactly as it
-  does today; then each child repo's. If no attached repo ships the hook the
-  command exits 0 and nothing happens — there is nothing to deliver.
+- **It resolves the hook at session start, not at setup time, and only in the
+  project dir's children.** In a single-repo session the project dir is the
+  repo, which has no children carrying hooks, so these commands do nothing and
+  the repo's own committed wiring fires once, as it does today. If no attached
+  repo ships the hook the command exits 0 and nothing happens.
 - **`timeout: 90`.** The hook's own budget for fetching every source is 60
   seconds, so a shorter harness timeout kills it mid-fetch and loses the
   fail-soft verdict it exists to print.
-- **Project scope, not `$HOME/.claude/settings.json`.** The hosted container
-  ships its own `~/.claude/launcher-settings.json` carrying harness hooks. How a
-  user-scope `settings.json` interacts with it is undocumented, and getting it
-  wrong could displace the harness's own `SessionStart` hook. The project-level
-  file has no such interaction, and it also satisfies `skills-doctor`'s
-  `hook-not-wired` finding, which is the correct signal.
+- **User scope, not `<project>/.claude/settings.json`.** Until 2026-10-31
+  this wrote the project-scope file, out of caution that a user-scope file
+  might displace the harness's own hooks in `~/.claude/launcher-settings.json`.
+  Two measurements settled it in a project thread on Claude Code 2.1.312: the
+  project-scope file's `Stop` hook never fired while the user-scope one did,
+  and the harness's own `Stop` hooks fired beside it in the same turns. So the
+  project-scope file left project threads with no fleet guidance, no bundles,
+  no guard and no record, and the user-scope one costs nothing. `skills-doctor`
+  reads the user scope too, so it still sees the hook as wired.
 - **It is safe in a repo that never adopted delivery.** Since ADR 0007 the
   `$SELF_ROOT` fallback applies only when `CLAUDE_PROJECT_DIR` is unset, so a
   session whose project dir and children carry no lock installs nothing rather
@@ -408,15 +425,11 @@ this reason. Reach for it for a **site-owned** skill — which is what
 `embeddable-tool-pages` is — never for a bundle. The wiring above is what
 delivers a bundle.
 
-One further measurement from the same session, because it bears on why the
-snippet writes project scope rather than user scope: the hosted container ships
+One further measurement from the same session: the hosted container ships
 **no `~/.claude/settings.json` at all**. The harness's own hooks live in
-`~/.claude/launcher-settings.json` — a different filename, and so a different
-entry in the settings chain rather than the same file being overwritten. That
-does not make a user-scope `settings.json` safe, and the bullet above stands as
-written: whether two chain entries merge their `SessionStart` arrays or one
-wins is still unmeasured here. It narrows the risk to that question alone, and
-rules out the cruder reading — that the two would collide by filename.
+`~/.claude/launcher-settings.json`, a different file, and the 2026-10-31 test
+above showed the two merge. That is why the script can write the user-scope
+file outright rather than merging into an existing one.
 
 ## Checking it worked
 
@@ -481,7 +494,7 @@ With exactly one lock the line is unchanged from what it has always been.
 **Check the SECOND session too, not just the first.** The setup script runs only
 when no cached environment exists; afterwards the filesystem is snapshotted and
 later sessions skip it. Anthropic's documentation says a snapshot keeps what the
-script wrote to disk, which should carry `$project/.claude/settings.json`
+script wrote to disk, which should carry `/root/.claude/settings.json`
 forward — but the repos beneath it are re-cloned per session, and whether that
 leaves this file untouched is NOT established here. Skills present on the first
 session and absent on the second is that failure, and the remedy is to move the

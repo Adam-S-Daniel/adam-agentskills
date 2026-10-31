@@ -12462,11 +12462,12 @@ def test_committed_sessionstart_matcher_includes_fork():
     assert matching[0]["matcher"] == "startup|resume|fork"
 
 
-def _documented_setup_script(project: Path) -> str:
+def _documented_setup_script(project: Path, user_claude: Path) -> str:
     """The cloud setup script from docs/multi-repo-delivery.md, runnable.
 
-    It hardcodes `project=/home/user` on purpose (its comments say why), so
-    the only edit is pointing that one line at a temp dir.
+    It hardcodes `project=/home/user` and `user_claude=/root/.claude` on
+    purpose (its comments say why), so the only edits point those two lines
+    at temp dirs.
     """
     document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
         encoding="utf-8"
@@ -12475,13 +12476,18 @@ def _documented_setup_script(project: Path) -> str:
     scripts = [b for b in blocks if b.startswith("#!/bin/bash\n")
                and "wiring: wrote" in b]
     assert len(scripts) == 1, "expected exactly one documented setup script"
-    line = "\nproject=/home/user\n"
-    assert scripts[0].count(line) == 1
-    return scripts[0].replace(line, f"\nproject={project}\n")
+    script = scripts[0]
+    for line, value in (("\nproject=/home/user\n", f"\nproject={project}\n"),
+                        ("\nuser_claude=/root/.claude\n",
+                         f"\nuser_claude={user_claude}\n")):
+        assert script.count(line) == 1, line
+        script = script.replace(line, value)
+    return script
 
 
 def _run_setup_script(tmp_path: Path, apt_exit: int):
     project = tmp_path / "project"
+    user_claude = tmp_path / "root" / ".claude"
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     calls = tmp_path / "apt-calls"
@@ -12492,13 +12498,14 @@ def _run_setup_script(tmp_path: Path, apt_exit: int):
     )
     apt.chmod(0o755)
     script = tmp_path / "setup.sh"
-    script.write_text(_documented_setup_script(project), encoding="utf-8")
+    script.write_text(_documented_setup_script(project, user_claude),
+                      encoding="utf-8")
     env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
     proc = subprocess.run([BASH, str(script)], capture_output=True,
                           text=True, env=env, timeout=60)
     recorded = calls.read_text(encoding="utf-8").splitlines() \
         if calls.exists() else []
-    return proc, recorded, project / ".claude" / "settings.json"
+    return proc, recorded, user_claude / "settings.json"
 
 
 # The script runs only as a Linux cloud environment's setup script, as root,
@@ -12529,8 +12536,8 @@ def test_setup_script_sessionstart_matcher_includes_fork(script_name):
     document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
         encoding="utf-8"
     )
-    start = 'cat > "$project/.claude/settings.json" <<\'JSON\'\n'
-    end = "\nJSON\necho \"wiring: wrote $project/.claude/settings.json\""
+    start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
+    end = "\nJSON\necho \"wiring: wrote $user_claude/settings.json\""
     assert document.count(start) == 1
     json_text = document.split(start, 1)[1].split(end, 1)[0]
     settings = json.loads(json_text)
@@ -12542,3 +12549,71 @@ def test_setup_script_sessionstart_matcher_includes_fork(script_name):
     ]
     assert len(matching) == 1
     assert matching[0]["matcher"] == "startup|resume|fork"
+
+
+def _documented_settings() -> dict:
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
+    return json.loads(document.split(start, 1)[1].split("\nJSON\n", 1)[0])
+
+
+def _documented_commands():
+    for groups in _documented_settings()["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                yield hook["command"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+@pytest.mark.parametrize("command", list(_documented_commands()))
+def test_setup_script_hooks_run_only_child_repos(tmp_path, command):
+    # The wiring is user scope, so it fires in single-repo sessions too. There
+    # the project dir is the repo, whose own settings already run its hooks;
+    # looking only in children keeps each hook to one run per session.
+    name = re.search(r"/hooks/([\w-]+\.sh)", command).group(1)
+    project = tmp_path / "project"
+    marker = tmp_path / "ran"
+    for repo in (project, project / "child"):
+        hooks = repo / ".claude" / "hooks"
+        hooks.mkdir(parents=True)
+        (hooks / name).write_text(
+            f'echo "$(basename "$(dirname "$(dirname "$(dirname "$0")")")")" >> "{marker}"\n',
+            encoding="utf-8",
+        )
+    inner = re.fullmatch(r"bash -c '(.*)'", command, re.S).group(1)
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(project))
+    proc = subprocess.run([BASH, "-c", inner], env=env, capture_output=True,
+                          text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+    assert marker.read_text(encoding="utf-8").split() == ["child"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+@pytest.mark.parametrize("command", list(_documented_commands()))
+def test_setup_script_hooks_exit_zero_with_no_child_hook(tmp_path, command):
+    inner = re.fullmatch(r"bash -c '(.*)'", command, re.S).group(1)
+    env = dict(os.environ, CLAUDE_PROJECT_DIR=str(tmp_path))
+    proc = subprocess.run([BASH, "-c", inner], env=env, capture_output=True,
+                          text=True, timeout=30)
+    assert proc.returncode == 0, proc.stderr
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_removes_only_its_own_project_settings(tmp_path):
+    project = tmp_path / "project"
+    (project / ".claude").mkdir(parents=True)
+    old = project / ".claude" / "settings.json"
+    old.write_text('{"x": "skills-bootstrap.sh"}', encoding="utf-8")
+    proc, _, settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    assert not old.exists()
+    assert settings.exists()
+    other = tmp_path / "other"
+    (other / "project" / ".claude").mkdir(parents=True)
+    keep = other / "project" / ".claude" / "settings.json"
+    keep.write_text('{"model": "x"}', encoding="utf-8")
+    proc, _, _ = _run_setup_script(other, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    assert keep.read_text(encoding="utf-8") == '{"model": "x"}'

@@ -96,7 +96,7 @@ Optional sections for high-impact decisions:
 | [0004](0004-drop-the-version-comment-from-sha-pins.md) | Drop the version comment from SHA-pinned actions | Accepted |
 | [0005](0005-resolve-hooks-only-from-cwd-and-user-settings.md) | Resolve hooks only from the cwd and user settings chains | Accepted (open questions answered by 0007) |
 | [0006](0006-drive-the-account-store-drift-loop-from-one-published-artifact.md) | Drive the account-store drift loop from one published artifact, read by two repos on their own schedules | Superseded by 0014 |
-| [0007](0007-install-the-union-of-every-discovered-lock.md) | Install the union of every discovered lock in a multi-repo session | Accepted |
+| [0007](0007-install-the-union-of-every-discovered-lock.md) | Install the union of every discovered lock in a multi-repo session | Accepted (case (b) amended by 0022) |
 | [0008](0008-refuse-symlinks-in-a-skill-directory.md) | Refuse symlinks in a skill directory rather than digest them | Accepted |
 | [0009](0009-bump-bundle-versions-on-every-release.md) | Bump bundle versions on every release so `plugin update` can fire | Proposed (its `sync-skills` constraint retired by 0014) |
 | [0010](0010-let-pinned-channels-own-the-terminal.md) | Let pinned channels own the terminal and leave the account channel the surfaces with nothing else | Accepted (partially superseded by 0014) |
@@ -111,3 +111,4 @@ Optional sections for high-impact decisions:
 | [0019](0019-point-the-repo-settings-skill-at-repo-settings-instead-of-a-copy.md) | Point the repo-settings skill at repo-settings instead of shipping a copy of its engine | Accepted |
 | [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (pilot in this repo) |
 | [0021](0021-automated-skill-changes-merge-without-review.md) | Automated skill changes from the evals loop (removals, accepted improvements and new skills) merge without review | Accepted |
+| [0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md) | Install the newer pin when one lock descends from the other | Accepted |

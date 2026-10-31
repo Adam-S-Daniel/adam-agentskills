@@ -404,8 +404,14 @@ write is the delivery channel for ephemeral surfaces. What works where:
   In a session opened on several repos it reads **every** repo's lock and
   installs the union, so a repo in the same session is no longer "another
   repo" — its skills are this run's too. Two locks naming one skill directory
-  at the same digest collapse to one install; at different digests neither
-  installs and the verdict names the locks that disagree. See
+  at the same digest collapse to one install. At different digests neither
+  installs, and the verdict names the locks that disagree. The one exception:
+  when both locks pin the same registry, one pin descends from the other, and
+  the newer pin is on the registry's default branch with the same copy of the
+  skill the default branch has today, the newer pin installs, verified against
+  its own lock
+  ([ADR 0022](docs/decisions/0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md)).
+  See
   [ADR 0007](docs/decisions/0007-install-the-union-of-every-discovered-lock.md),
   and [`docs/multi-repo-delivery.md`](docs/multi-repo-delivery.md) for the
   wiring such a session needs before any of it runs.

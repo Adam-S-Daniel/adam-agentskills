@@ -14,6 +14,7 @@ Without it on the allowlist, job `auto-merge` failed on #89 (setup-python
 Run: python3 -m pytest scripts/test_dependabot_auto_merge.py -q
 """
 
+import os
 import re
 import shutil
 import subprocess
@@ -23,6 +24,16 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "dependabot-auto-merge.yml"
+
+# On Windows, `bash` on PATH can be WSL's launcher, which has no distro on the
+# runner; Git Bash is what this repo targets there (as test_agent_checks.py).
+if os.name == "nt":
+    _git_bash = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git" / "bin" / "bash.exe"
+    BASH = str(_git_bash) if _git_bash.exists() else None
+else:
+    BASH = shutil.which("bash")
+
+needs_bash = pytest.mark.skipif(BASH is None, reason="needs bash (Git Bash on Windows)")
 
 # Each copy opens with this line and ends at the matching `esac`.
 _CASE_RE = re.compile(r'^\s*case "\$f" in\n(.*?)^\s*esac\b', re.M | re.S)
@@ -57,7 +68,7 @@ def _allowed(patterns, path):
         "  %s) echo allow ;;" % arm for arm in patterns
     )
     out = subprocess.run(
-        ["bash", "-c", script, "bash", path],
+        [BASH, "-c", script, "bash", path],
         capture_output=True, text=True, check=True,
     ).stdout.strip()
     return out == "allow"
@@ -72,14 +83,14 @@ def test_copies_stay_in_lockstep():
     assert auto_merge == sweep
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@needs_bash
 @pytest.mark.parametrize("path", ALLOWED)
 def test_allowed_paths_pass_both_copies(path):
     for patterns in _patterns():
         assert _allowed(patterns, path), path
 
 
-@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@needs_bash
 @pytest.mark.parametrize("path", REJECTED)
 def test_other_paths_are_rejected_by_both_copies(path):
     for patterns in _patterns():

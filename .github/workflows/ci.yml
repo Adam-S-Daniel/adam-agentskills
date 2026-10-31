@@ -96,7 +96,7 @@ jobs:
           # Full history — required by the skills.lock check below, NOT an
           # oversight. See the comment on that step before shortening this.
           fetch-depth: 0
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -220,7 +220,7 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -367,7 +367,7 @@ jobs:
       # The runner rejects forged pins; this check gives early feedback.
       - name: Verify action lockfile
         uses: Adam-S-Daniel/verify-actions-lock@v1.1.0
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Install Python dependencies
@@ -499,7 +499,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Every changed file is inert documentation - reporting success without running the suites."
           fi
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - if: steps.salient.outputs.run == 'true'
@@ -638,7 +638,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v7.0.0
+      - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
       - name: Scan for denylisted personal details

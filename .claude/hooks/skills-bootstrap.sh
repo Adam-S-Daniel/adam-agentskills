@@ -2771,7 +2771,24 @@ matches_default_head () {
   [[ "$2" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
   mine="$(git "${GIT_VERBATIM[@]}" -C "$tmp/reg-$1" rev-parse --verify --quiet "${SRC_REF[$1]}:$2" 2>>"$LOG" </dev/null)" || return 1
   theirs="$(git "${GIT_VERBATIM[@]}" -C "$DEFAULT_DIR" rev-parse --verify --quiet "$DEFAULT_HEAD:$2" 2>>"$LOG" </dev/null)" || return 1
-  [[ "$mine" =~ ^[0-9a-f]{40}$ ]] && [ "$mine" = "$theirs" ]
+  [[ "$mine" =~ ^[0-9a-f]{40}$ ]] && [ "$mine" = "$theirs" ] || return 1
+  # THE SAME TREE IS NOT YET THE SAME BYTES. A `.gitattributes` at the root or
+  # in any parent directory of <relpath> (eol=crlf, working-tree-encoding,
+  # ident) changes what checkout writes, and the tree id above cannot see it --
+  # a merged-then-reverted root `.gitattributes` would otherwise install bytes
+  # today`s default branch does not produce. So each of those files must be the
+  # same blob on both sides, or absent on both. One inside <relpath> is part of
+  # its tree, so it is already covered.
+  local dir="" rest="$2" attr
+  while :; do
+    attr="${dir}.gitattributes"
+    mine="$(git "${GIT_VERBATIM[@]}" -C "$tmp/reg-$1" rev-parse --verify --quiet "${SRC_REF[$1]}:$attr" 2>>"$LOG" </dev/null)" || mine=""
+    theirs="$(git "${GIT_VERBATIM[@]}" -C "$DEFAULT_DIR" rev-parse --verify --quiet "$DEFAULT_HEAD:$attr" 2>>"$LOG" </dev/null)" || theirs=""
+    [ "$mine" = "$theirs" ] || return 1
+    case "$rest" in */*) ;; *) break ;; esac
+    dir="$dir${rest%%/*}/"
+    rest="${rest#*/}"
+  done
 }
 
 # resolve_contest <name> — record the winning row for <name> in WON_*, or fail.

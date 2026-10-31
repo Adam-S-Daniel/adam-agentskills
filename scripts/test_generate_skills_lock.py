@@ -10869,6 +10869,74 @@ def test_an_unmerged_pin_matching_the_default_branch_still_does_not_win(tmp_path
     assert "not on the registry's default branch" in _bootstrap_log(home)
 
 
+def test_a_newer_pin_whose_root_gitattributes_the_registry_reverted_does_not_win(tmp_path):
+    """Same tree, different bytes: the adversarial round's `.gitattributes` case.
+
+    The winner's alpha tree equals the default branch's, but the winner also
+    carries a root `.gitattributes` that re-encodes alpha on checkout, which
+    the registry later reverted. Its lock names the digest of those converted
+    bytes, so on the tree comparison alone it installed bytes today's default
+    branch would not produce. Every `.gitattributes` above the skill must match.
+    """
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    old_sha, old = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
+                              _PIN_EPOCH)
+    _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
+    _write(registry / ".gitattributes", "plugins/adam/skills/alpha/*.md text eol=crlf\n")
+    new_sha, _ = _commit_at(registry, {}, _PIN_EPOCH + 2000, "attributes")
+    # Re-check-out so the digest the newer lock names is the CONVERTED bytes'.
+    for path in (registry / "plugins").glob("*/skills/*/SKILL.md"):
+        path.unlink()
+    _git(registry, "checkout", "-q", "--", ".")
+    alpha_dir = registry / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
+    assert b"\r\n" in (alpha_dir / "SKILL.md").read_bytes()
+    new = {"adam/alpha": gsl.digest_skill_dir(alpha_dir), "adam/beta": old["adam/beta"]}
+    _git(registry, "rm", "-q", ".gitattributes")
+    # Back to the stored bytes first, so the revert changes ONLY the attributes
+    # file: alpha's tree at the tip must stay exactly the newer pin's.
+    _git(registry, "checkout", "-q", "--", "plugins")
+    _commit_at(registry, {}, _PIN_EPOCH + 3000, "revert attributes")
+    trees = subprocess.run(
+        ["git", "-C", str(registry), "rev-parse", f"{new_sha}:plugins/adam/skills/alpha",
+         "HEAD:plugins/adam/skills/alpha"], check=True, capture_output=True, text=True
+    ).stdout.split()
+    assert len(trees) == 2 and trees[0] == trees[1], trees
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "repo-a", registry, old_sha, old)
+    _pin_repo(parent, "repo-b", registry, new_sha, new)
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+    assert "differs from the default branch tip" in _bootstrap_log(home)
+
+
+def test_an_unchanged_root_gitattributes_does_not_stop_the_newer_pin(tmp_path):
+    """The attributes check compares, it does not forbid: a `.gitattributes`
+    both sides share leaves the ordinary lag case winning."""
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    _write(registry / ".gitattributes", "*.png binary\n")
+    old_sha, old = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
+                              _PIN_EPOCH)
+    new_sha, new = _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
+    _commit_at(registry, {"adam/gamma": SKILL_C}, _PIN_EPOCH + 2000, "unrelated")
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "repo-a", registry, old_sha, old)
+    _pin_repo(parent, "repo-b", registry, new_sha, new)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert verdict.startswith("skills: 2/2 "), verdict
+    assert "DEGRADED" not in verdict, verdict
+    assert "alpha from repo-b over repo-a" in verdict, verdict
+    assert _installed_body(home, "alpha") == _ALPHA_V2["SKILL.md"], verdict
+
+
 def test_a_project_with_its_own_lock_ignores_its_child_repos_locks(tmp_path):
     """Own lock wins, and the children are then not looked at at all.
 

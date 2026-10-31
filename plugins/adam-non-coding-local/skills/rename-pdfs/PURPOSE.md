@@ -25,5 +25,3 @@ ones that demonstrate the same naming patterns. Any future edit to these
 examples should keep using invented names, amounts, and organizations —
 never real ones, even the maintainer's own — and should not describe what
 the real ones were.
-
-- Prompt-audit fix (adam-agentskills issue #56): see docs/skill-impact.md.

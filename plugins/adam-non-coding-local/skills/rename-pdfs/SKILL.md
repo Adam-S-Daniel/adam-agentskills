@@ -29,7 +29,7 @@ Four hyphen-separated fields, in this exact order, **no spaces around the hyphen
 
    **Date range variant.** For documents that summarize a span of dates rather than a single moment — superbills, multi-month statements, range receipts — use `YYYYMMDD-YYYYMMDD` (earliest–latest). The internal hyphen is intentional; downstream parsing rules below handle it.
 
-2. **Document type** — a short noun for what the document _is_, in Title Case. Examples: `Statement`, `Invoice`, `Bill`, `Receipt`, `Letter`, `Contract`, `Form 1099`, `Form W2`, `Closing Disclosure`, `Lease`, `Policy`, `Report`, `Tax Return`, `Superbill`. Keep it canonical so similar documents sort together.
+2. **Document type** — a short noun for what the document _is_, in Title Case. Examples: `Statement`, `Invoice`, `Bill`, `Receipt`, `Letter`, `Contract`, `Form 1099`, `Form W-2`, `Closing Disclosure`, `Lease`, `Policy`, `Report`, `Tax Return`, `Superbill`. Keep it canonical so similar documents sort together.
 3. **Document issuer** — the organization or person who produced the document. Title Case. Examples: `Bank of America`, `Verizon Wireless`, `Acme Corp`, `Fidelity`, `IRS`, `Dr Patel`, `Morgan T Nguyen MD`. Use a recognizable short form (`BofA` is fine if that's what the user calls it; ask if unsure). Keep credential suffixes uppercase (`MD`, `DDS`, `CPA`, `LLC`).
 4. **Document title / specifier** — a concise identifier that distinguishes this doc from other same-type/same-issuer docs. Examples: `Checking Account`, `Account 555 1234`, `Year End Summary`, `Invoice 4471`, `Alex Rivera`, `Sam Rivera Rx $58.30`. Use a space (not a hyphen) between words.
 
@@ -132,10 +132,10 @@ Use the helper:
 python3 scripts/extract_pdf_context.py "/path/to/file.pdf" --pages 3
 ```
 
-It outputs JSON with `text`, `dates_in_text`, `dates_in_filename`, and `mtime`. If `pypdf` is missing (if pip refuses with `externally-managed-environment`, create a venv, install `pypdf` there, and run the script with that venv's `python3`):
+It outputs JSON with `text`, `dates_in_text`, `dates_in_filename`, and `mtime`. If `pypdf` is missing:
 
 ```bash
-pip install --user pypdf
+pip install pypdf --break-system-packages
 ```
 
 For folders with mostly long PDFs, `--pages 2` is faster and usually enough.

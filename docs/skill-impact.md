@@ -112,18 +112,6 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: exempt (skills-evals `evals/non-coverage.yml`)
 - Outcome: pending
 
-## 2026-10-31 — adam-non-coding-local/rename-pdfs — edit
-- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
-- Change: example `Form W-2` is now `Form W2` (the file forbids hyphens in name parts); pip advice no longer uses `--break-system-packages`.
-- Eval: post-merge routine run to follow in a correcting entry; no ingested run of `evals/rename-pdfs` on main yet.
-- Outcome: pending
-
-## 2026-10-31 — adam-non-coding-local/pdf-ocr-audit — edit
-- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
-- Change: fixed a contradiction about scanner-named files; dropped all-caps; pip advice no longer uses `--break-system-packages`; new PURPOSE.md.
-- Eval: post-merge routine run to follow in a correcting entry; no ingested run of `evals/pdf-ocr-audit` on main yet.
-- Outcome: pending
-
 ## 2026-10-31 — adam-non-coding-local/ocr-pdfs — edit
 - Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56) (2026-10-08, 10-27, 10-28), each checked against the current file before editing.
 - Change: intro states what the skill does instead of comparing it with a predecessor.

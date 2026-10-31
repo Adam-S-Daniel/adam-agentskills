@@ -2007,7 +2007,9 @@ for lock_index, lock_path in enumerate(lock_paths):
 # regresses, because today a multi-repo session delivers nothing at all.
 #
 # (b') AMENDS THAT "NEITHER" FOR ONE SHAPE ONLY (ADR 0022). When every row for
-# the name has the same `<bundle>/<skill>` key, comes from the same normalized
+# the name has the same `<bundle>/<skill>` key AND the same path inside the
+# registry (a lock`s own `layout` decides that path, so one key can name two
+# directories), comes from the same normalized
 # registry URL, and pins at least two DIFFERENT 40-hex commits of it, the
 # disagreement is usually one lock lagging the other: the registry re-pins its
 # own lock the moment a skill changes, and consumer locks catch up only when a
@@ -2016,8 +2018,9 @@ for lock_index, lock_path in enumerate(lock_paths):
 # a tiebreak nobody invented. This reader cannot see that history -- nothing is
 # fetched yet -- so it does not decide: it emits every row with status
 # `contest`, exactly the rows (b) would have emitted as `dup`, and bash decides
-# after the fetch. If the descendant is unique, provable, and on the
-# registry`s default branch, its row installs
+# after the fetch. If the descendant is unique, provable, on the registry`s
+# default branch, and holds the default branch`s current copy of the skill, its
+# row installs
 # and is verified against ITS OWN lock`s digest; anything else (diverged,
 # undeterminable, two newest) turns the rows back into `dup` and the outcome is
 # (b) to the byte. A different registry, a different key, a non-sha ref, or a
@@ -2042,6 +2045,7 @@ for name in sorted(by_name):
         # to reconcile.
         contest = (not intra
                    and len({row[1] for row in group}) == 1
+                   and len({row[4] for row in group}) == 1
                    and len({sources[row[3]]["url"] for row in group}) == 1
                    and len({row[3] for row in group}) > 1
                    and all(FULL_SHA.fullmatch(sources[row[3]]["ref"]) for row in group))
@@ -2627,6 +2631,10 @@ fi
 # pull-request commits by SHA through the upstream URL, so an unmerged commit
 # whose parent is the honest pin would otherwise descend from it and win.
 #
+# NOR DOES BEING MERGED. The winner's tree at the skill's path must be the very
+# tree the default branch's tip has there now (see `matches_default_head`), so a
+# merged change the registry later reverted cannot win with withdrawn bytes.
+#
 # Every ref handed to git here is re-validated as 40 lowercase hex first, so no
 # lock-supplied string can be read as an option. The reads (`log`, `merge-base`)
 # are local and touch no network, so they call git directly; the one network
@@ -2640,6 +2648,7 @@ CONTEST_MARGIN=86400
 CONTEST_WINDOW=$(( 90 * 86400 ))
 CT_NAME=()
 CT_KEY=()
+CT_RELPATH=()
 CT_DIGEST=()
 CT_INDEX=()
 if [ -f "$tmp/skills.nul" ]; then
@@ -2649,7 +2658,8 @@ if [ -f "$tmp/skills.nul" ]; then
      && IFS= read -r -d '' relpath \
      && IFS= read -r -d '' status; do
     if [ "$status" = "contest" ]; then
-      CT_NAME+=("${key##*/}"); CT_KEY+=("$key"); CT_DIGEST+=("$want"); CT_INDEX+=("$index")
+      CT_NAME+=("${key##*/}"); CT_KEY+=("$key"); CT_RELPATH+=("$relpath")
+      CT_DIGEST+=("$want"); CT_INDEX+=("$index")
     fi
   done < "$tmp/skills.nul"
 fi
@@ -2666,6 +2676,8 @@ WON_OK=()
 # contested name between the same two pins costs no second fetch.
 DEEP_INDEX=()
 DEEP_CUT=()
+DEFAULT_DIR=""
+DEFAULT_HEAD=""
 # The registry's DEFAULT BRANCH, fetched per registry URL into its own scratch
 # repository: the URL, the directory, and the cutoff it was fetched to.
 DEF_URL=()
@@ -2677,7 +2689,8 @@ DEF_CUT=()
 commit_time () {
   local out
   out="$(git "${GIT_VERBATIM[@]}" -C "$tmp/reg-$1" log -1 --format=%ct "${SRC_REF[$1]}" -- 2>>"$LOG" </dev/null)" || return 1
-  [[ "$out" =~ ^[0-9]+$ ]] || return 1
+  # 1-12 digits: a commit time, not an arbitrarily long number for $(( )).
+  [[ "$out" =~ ^[0-9]{1,12}$ ]] || return 1
   printf '%s' "$out"
 }
 
@@ -2737,13 +2750,33 @@ on_default_branch () {
   fi
   head="$(git "${GIT_VERBATIM[@]}" -C "$dir" rev-parse --verify --quiet FETCH_HEAD 2>>"$LOG" </dev/null)" || return 1
   [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  DEFAULT_DIR="$dir"; DEFAULT_HEAD="$head"
   git "${GIT_VERBATIM[@]}" -C "$dir" merge-base --is-ancestor "${SRC_REF[$src]}" "$head" \
     >>"$LOG" 2>&1 </dev/null
 }
 
+# matches_default_head <source index> <relpath> — does that source's pinned
+# commit hold the SAME tree at <relpath> as the default branch's tip, fetched by
+# the `on_default_branch` call just before this one?
+#
+# Being merged is not being current. A newer commit that the registry later
+# REVERTED descends from the honest pin and sits on the default branch, and would
+# otherwise win with exactly the bytes the registry withdrew. So the winner wins
+# only if its copy of the skill is what the registry ships TODAY: the tree object
+# id at <relpath> must be identical in both. Missing on either side, or a path
+# that is not a plain relative one, fails closed.
+matches_default_head () {
+  local mine theirs
+  case "/$2/" in */../*|*/./*|*//*) return 1 ;; esac
+  [[ "$2" =~ ^[A-Za-z0-9._/-]+$ ]] || return 1
+  mine="$(git "${GIT_VERBATIM[@]}" -C "$tmp/reg-$1" rev-parse --verify --quiet "${SRC_REF[$1]}:$2" 2>>"$LOG" </dev/null)" || return 1
+  theirs="$(git "${GIT_VERBATIM[@]}" -C "$DEFAULT_DIR" rev-parse --verify --quiet "$DEFAULT_HEAD:$2" 2>>"$LOG" </dev/null)" || return 1
+  [[ "$mine" =~ ^[0-9a-f]{40}$ ]] && [ "$mine" = "$theirs" ]
+}
+
 # resolve_contest <name> — record the winning row for <name> in WON_*, or fail.
 resolve_contest () {
-  local subject="$1" at=0 idx url="" key0="" d seen i ids=() digs=() times=() t
+  local subject="$1" at=0 idx url="" key0="" rel0="" d seen i ids=() digs=() times=() t
   local cand best best_t oldest other ok tried=()
   while [ "$at" -lt "${#CT_NAME[@]}" ]; do
     if [ "${CT_NAME[$at]}" = "$subject" ]; then
@@ -2757,6 +2790,10 @@ resolve_contest () {
       # skill name from two bundles is two different skills, not two pins.
       if [ -z "$key0" ]; then key0="${CT_KEY[$at]}"; fi
       [ "${CT_KEY[$at]}" = "$key0" ] || return 1
+      # One path inside the registry, as the reader already required: a lock`s
+      # own `layout` can route the same key to a different directory.
+      if [ -z "$rel0" ]; then rel0="${CT_RELPATH[$at]}"; fi
+      [ "${CT_RELPATH[$at]}" = "$rel0" ] || return 1
       seen=0
       i=0
       while [ "$i" -lt "${#ids[@]}" ]; do
@@ -2798,6 +2835,12 @@ resolve_contest () {
       fi
       i=$((i + 1))
     done
+    # Dates must run forward: a candidate older than another pin cannot be its
+    # descendant in any history this hook is willing to believe.
+    if [ "$best_t" -lt "$oldest" ]; then
+      echo "contest: $subject candidate source[${ids[$best]}] is dated before another pin" >>"$LOG"
+      continue
+    fi
     if [ $(( best_t - oldest )) -gt "$CONTEST_WINDOW" ]; then
       echo "contest: $subject spans more than the $CONTEST_WINDOW-second window from source[${ids[$best]}]" >>"$LOG"
       continue
@@ -2820,6 +2863,10 @@ resolve_contest () {
     done
     if [ "$ok" -eq 1 ] && ! on_default_branch "${ids[$best]}" $(( best_t - CONTEST_MARGIN )); then
       echo "contest: $subject pin at source[${ids[$best]}] is not on the registry's default branch" >>"$LOG"
+      ok=0
+    fi
+    if [ "$ok" -eq 1 ] && ! matches_default_head "${ids[$best]}" "$rel0"; then
+      echo "contest: $subject pin at source[${ids[$best]}] differs from the default branch tip at $rel0" >>"$LOG"
       ok=0
     fi
     if [ "$ok" -eq 1 ]; then

@@ -37,10 +37,13 @@ the other: the older pin is an ancestor of the newer one.
 ## Decision
 
 When every row that names a destination comes from the same registry (the same
-normalized URL), for the same `<bundle>/<skill>` key, at two or more different
+normalized URL), for the same `<bundle>/<skill>` key at the same path inside
+that registry, at two or more different
 full 40-hex commits, and no lock contributes two rows for that name, the hook
 installs the row from the lock whose ref descends from every other contesting
-ref, provided that ref is also reachable from the registry's default branch.
+ref. It must also pass two more checks. Its ref must be reachable from the
+registry's default branch. Its copy of the skill (the git tree at that path)
+must be identical to the default branch's copy today.
 The winning bytes are verified against the winning lock's own digest by
 the ordinary install path. No digest from a losing lock is used for the name.
 
@@ -53,6 +56,15 @@ process-group kill as every other fetch. Then
 ref. Candidates are tried newest-first by committer time, and at most one can
 pass. If the candidate's commit time is more than 90 days after the oldest
 other pin's, the hook does not fetch across that gap and the candidate fails.
+A candidate dated before another pin also fails: dates must run forward.
+
+**The rows must agree on the path.** A lock's own source `layout` decides where
+a key lives in the registry. Fetches are deduplicated only by URL and ref. So a
+lock could pin a newer, merged commit of the honest registry, route `adam`
+through `layout: tests/fixtures`, and name the digest of an unrelated
+`tests/fixtures/alpha`. Every other check would pass, and a different directory
+would install as `alpha`. A contest therefore requires one path as well as one
+key.
 
 **The winner must also be on the registry's default branch.** Descending from
 the other pins is not enough on its own. GitHub serves every object in a
@@ -67,19 +79,31 @@ Only objects reachable from that HEAD arrive in that repository, so a winner
 that is missing there is not on the default branch, and the contest fails
 closed.
 
+**The winner's copy must match the default branch today.** Being merged is not
+being current. If the registry merged a change and later reverted it, a lock
+pinning the merged commit descends from the honest pin and is on the default
+branch, but its bytes are ones the registry withdrew. So the hook compares
+`git rev-parse <winner>:<path>` with the same path at the fetched default-branch
+tip. Equal tree object ids mean byte-identical directories. If they differ, or
+either is missing, the outcome is a conflict. Unrelated commits after the
+winner do not matter. Only that skill's directory is compared.
+
 Everything else stays case (b), with the same notice, verdict text, `dup`
 handling and removal as before:
 
 - the rows come from different registries, or have different keys;
 - a ref is not a full commit SHA;
 - one source pins two digests for the name;
+- the rows name different paths inside the registry;
 - the newest pin is not reachable from the registry's default branch (an
   unmerged pull-request or fork commit, or a default-branch fetch that fails);
+- the newest pin's copy of the skill differs from the default branch's copy
+  today (for example, the registry later reverted it);
 - the refs have diverged;
 - more than one ref is "newest";
 - ancestry cannot be established: a fetch fails, the budget is spent, the
   older commit is not within the bounded history, or the pins are more than 90
-  days apart by committer time;
+  days apart by committer time, or a candidate is dated before another pin;
 - any lock contributes two rows for the name (case (c)).
 
 A resolved name counts once in `N/M`, as case (a) does. It is reported in a
@@ -95,12 +119,15 @@ note on an `— OK` verdict, not as a problem:
 - **This tiebreak is not invented.** ADR 0005 refused tiebreaks such as sort
   order, scan order and "the project's own repo wins", because nothing in the
   input makes them true. The registry's merged history orders the two pins. The
-  hook proves both that the newer pin descends from the older one and that the
-  registry's default branch contains the newer pin, before using either fact.
+  hook proves three things before using any of them. The newer pin descends
+  from the older one. The registry's default branch contains the newer pin.
+  The default branch still ships exactly the newer pin's copy of the skill.
+  So the winning bytes are the bytes the registry serves today.
   Descent alone would not do. Objects served by the registry's URL include
   unmerged fork and pull-request commits, so "the registry served this commit"
-  does not mean "the registry merged it". When the hook cannot prove both, it
-  does not use either.
+  does not mean "the registry merged it". Being merged once does not mean it
+  is still current either. When the hook cannot prove all three, it uses none
+  of them.
 - **Integrity is unchanged.** The tiebreak picks a row, not a trust level. The
   winning row is checked against its own lock's digest, so a tampered newer
   lock installs nothing for that name. It does not fall back to the older
@@ -116,7 +143,13 @@ note on an `— OK` verdict, not as a problem:
     (`test_three_locks_with_two_incomparable_newest_pins_install_neither`).
   - A newer pin the registry never merged: it descends from the honest pin
     but is not on the default branch
-    (`test_a_pull_request_commit_descending_from_the_honest_pin_does_not_win`).
+    (`test_a_pull_request_commit_descending_from_the_honest_pin_does_not_win`,
+    and `test_an_unmerged_pin_matching_the_default_branch_still_does_not_win`
+    for an unmerged commit whose bytes happen to match).
+  - A newer pin the registry merged and then reverted
+    (`test_a_newer_pin_the_registry_later_reverted_does_not_win`).
+  - One key routed to a different directory by a lock's own layout
+    (`test_a_lock_routing_a_skill_through_another_layout_does_not_win`).
   - Ancestry the hook cannot establish
     (`test_ancestry_the_bounded_fetch_cannot_reach_installs_neither`):
     "not shown to be an ancestor" must never become "pick the other one".

@@ -10377,13 +10377,21 @@ def _pin_repo(parent: Path, name: str, registry: Path, sha: str, digests: dict) 
 
 
 def _linear_registry(root: Path) -> list:
-    """Three commits on main, alpha changing in each: [(sha, digests)] * 3."""
+    """Three commits on main, alpha changing in each: [(sha, digests)] * 3.
+
+    A FOURTH, unpinned commit then adds an unrelated skill, so the default
+    branch has moved on past every pin while its alpha is still the third's --
+    the shape a lagging pair of locks meets in practice. The newest pin's alpha
+    is therefore what the registry ships today; the second's is not.
+    """
     _init_history_registry(root)
-    return [
+    pins = [
         _commit_at(root, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B}, _PIN_EPOCH),
         _commit_at(root, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000),
         _commit_at(root, {"adam/alpha": _ALPHA_V3}, _PIN_EPOCH + 2000),
     ]
+    _commit_at(root, {"adam/gamma": SKILL_C}, _PIN_EPOCH + 3000, "unrelated")
+    return pins
 
 
 def _diverged_registry(root: Path) -> tuple:
@@ -10412,7 +10420,7 @@ def test_a_lock_behind_another_on_one_registry_installs_the_newer_pin(tmp_path, 
     not a problem, and it is named in a note rather than hidden.
     """
     registry = tmp_path / "registry"
-    (old_sha, old), (new_sha, new), _ = _linear_registry(registry)
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
     parent = tmp_path / "repos"
     behind, newer = ("repo-a", "repo-b") if behind_first else ("repo-b", "repo-a")
     _pin_repo(parent, behind, registry, old_sha, old)
@@ -10427,7 +10435,7 @@ def test_a_lock_behind_another_on_one_registry_installs_the_newer_pin(tmp_path, 
     assert "different digests" not in verdict, verdict
     assert (f"installed the newer pin of 1 skill where one lock is behind another "
             f"on the same registry (alpha from {newer} over {behind})") in verdict, verdict
-    assert _installed_body(home, "alpha") == _ALPHA_V2["SKILL.md"], verdict
+    assert _installed_body(home, "alpha") == _ALPHA_V3["SKILL.md"], verdict
     assert (home / ".claude" / "skills" / "beta" / "SKILL.md").is_file(), verdict
     recorded = {entry["name"]: entry["digest"] for entry in _record(home)["installed"]}
     assert recorded["alpha"] == new["adam/alpha"], recorded
@@ -10500,7 +10508,7 @@ def test_pins_of_two_registries_with_one_history_still_install_neither(tmp_path)
     it must not be consulted. A clone is the sharpest form of "a different
     registry", because every other part of the shape matches."""
     registry = tmp_path / "registry"
-    (old_sha, old), (new_sha, new), _ = _linear_registry(registry)
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
     mirror = tmp_path / "mirror"
     subprocess.run(["git", "clone", "-q", str(registry), str(mirror)], check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -10566,7 +10574,7 @@ def test_the_winning_pin_is_still_verified_against_its_own_lock(tmp_path):
     WOULD verify against the older lock, must not be installed in their place.
     """
     registry = tmp_path / "registry"
-    (old_sha, old), (new_sha, new), _ = _linear_registry(registry)
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
     parent = tmp_path / "repos"
     _pin_repo(parent, "repo-a", registry, old_sha, old)
     _pin_repo(parent, "repo-b", registry, new_sha, dict(new, **{"adam/alpha": "0" * 64}))
@@ -10642,7 +10650,7 @@ def test_one_pin_naming_two_digests_for_a_contested_name_installs_neither(tmp_pa
     and taking whichever sorted first would be the invented tiebreak again.
     """
     registry = tmp_path / "registry"
-    (old_sha, old), (new_sha, new), _ = _linear_registry(registry)
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
     parent = tmp_path / "repos"
     _pin_repo(parent, "repo-a", registry, new_sha, new)
     _pin_repo(parent, "repo-b", registry, new_sha, dict(new, **{"adam/alpha": "0" * 64}))
@@ -10657,7 +10665,7 @@ def test_one_pin_naming_two_digests_for_a_contested_name_installs_neither(tmp_pa
 def test_two_locks_at_the_newest_pin_install_it_once(tmp_path):
     """Agreeing winners are one install, as case (a) is: 2/2, not 3/3."""
     registry = tmp_path / "registry"
-    (old_sha, old), (new_sha, new), _ = _linear_registry(registry)
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
     parent = tmp_path / "repos"
     _pin_repo(parent, "repo-a", registry, new_sha, new)
     _pin_repo(parent, "repo-b", registry, new_sha, new)
@@ -10670,7 +10678,7 @@ def test_two_locks_at_the_newest_pin_install_it_once(tmp_path):
     assert verdict.startswith("skills: 2/2 "), verdict
     assert "DEGRADED" not in verdict, verdict
     assert "alpha from repo-a, repo-b over repo-c" in verdict, verdict
-    assert _installed_body(home, "alpha") == _ALPHA_V2["SKILL.md"], verdict
+    assert _installed_body(home, "alpha") == _ALPHA_V3["SKILL.md"], verdict
 
 
 def test_a_lock_listing_a_contested_name_twice_is_a_dup_as_before(tmp_path):
@@ -10724,6 +10732,141 @@ def test_a_contest_wider_than_the_window_installs_neither(tmp_path):
     proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
     _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
     assert "window" in _bootstrap_log(home)
+
+
+def _routed_lock(parent: Path, name: str, registry: Path, sha: str, key: str,
+                 layout: str, digest: str) -> Path:
+    """A lock that routes `key`'s bundle through a `sources[]` entry with its own
+    `layout`, at the same registry and ref as its primary."""
+    repo = parent / name
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / ".git").mkdir(exist_ok=True)
+    uri = registry.resolve().as_uri()
+    (repo / "skills.lock").write_text(json.dumps({
+        "registry": uri, "ref": sha, "bundles": ["zz"],
+        "sources": [{"registry": uri, "ref": sha, "bundles": [key.split("/", 1)[0]],
+                     "layout": layout}],
+        "skills": {key: gsl.LOCK_DIGEST_PREFIX + digest},
+    }, indent=2) + "\n", encoding="utf-8")
+    return repo
+
+
+def test_a_lock_routing_a_skill_through_another_layout_does_not_win(tmp_path):
+    """One key, two directories: the adversarial round's layout redirect.
+
+    A lock's own `layout` decides where a key lives, and fetch dedupe is only
+    (url, ref). So a lock can pin a newer, merged commit of the honest registry,
+    route `adam` through `layout: tests/fixtures`, and name the digest of an
+    unrelated `tests/fixtures/alpha`. It descends, it is on the default branch,
+    and on those checks alone it installed a different directory as `alpha`
+    under an OK verdict. The rows must also agree on the path.
+    """
+    evil = {"SKILL.md": "---\nname: alpha\n---\nfixture body, not the skill\n"}
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    old_sha, old = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
+                              _PIN_EPOCH)
+    for relpath, contents in evil.items():
+        _write(registry / "tests" / "fixtures" / "alpha" / relpath, contents)
+    new_sha, _new = _commit_at(registry, {}, _PIN_EPOCH + 1000)
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "honest", registry, old_sha, old)
+    _routed_lock(parent, "redirect", registry, new_sha, "adam/alpha", "tests/fixtures",
+                 gsl.digest_skill_dir(registry / "tests" / "fixtures" / "alpha"))
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+
+
+def test_another_bundle_routed_onto_the_same_path_still_conflicts(tmp_path):
+    """Same directory, different key: still two skills to this hook.
+
+    `other/alpha` routed through `layout: plugins/adam/skills` names the very
+    path `adam/alpha` does, so only the key check keeps it out of a contest.
+    """
+    registry = tmp_path / "registry"
+    _, (old_sha, old), (new_sha, new) = _linear_registry(registry)
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "repo-a", registry, old_sha, old)
+    _routed_lock(parent, "repo-b", registry, new_sha, "other/alpha",
+                 "plugins/adam/skills", new["adam/alpha"])
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+
+
+def test_a_newer_pin_the_registry_later_reverted_does_not_win(tmp_path):
+    """Merged is not current: the newer pin must match the default branch NOW.
+
+    A is honest, B changed alpha, C reverted that change and is the default
+    branch's tip. B descends from A and is on the default branch, but its alpha
+    is bytes the registry withdrew, so the outcome is case (b).
+    """
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    a_sha, a = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
+                          _PIN_EPOCH)
+    b_sha, b = _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
+    _commit_at(registry, {"adam/alpha": _ALPHA_V1}, _PIN_EPOCH + 2000, "revert")
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "repo-a", registry, a_sha, a)
+    _pin_repo(parent, "repo-b", registry, b_sha, b)
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+    assert "differs from the default branch tip" in _bootstrap_log(home)
+
+
+def test_a_descendant_dated_before_its_ancestor_does_not_win(tmp_path):
+    """Dates must run forward; a pin dated before another is not believed newer."""
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    old_sha, old = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
+                              _PIN_EPOCH + 5000)
+    new_sha, new = _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "repo-a", registry, old_sha, old)
+    _pin_repo(parent, "repo-b", registry, new_sha, new)
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+    assert "dated before another pin" in _bootstrap_log(home)
+
+
+def test_an_unmerged_pin_matching_the_default_branch_still_does_not_win(tmp_path):
+    """Reachability is a rule of its own, not a shadow of the content check.
+
+    The pull-request commit's alpha is byte-for-byte what the default branch
+    later merged by another route, so the tree comparison alone would pass it.
+    It is still not a commit the registry merged, so it does not win.
+    """
+    registry = tmp_path / "registry"
+    _init_history_registry(registry)
+    honest_sha, honest = _commit_at(
+        registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B}, _PIN_EPOCH)
+    _git(registry, "checkout", "-q", "-b", "contrib")
+    pr_sha, pr = _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
+    _git(registry, "checkout", "-q", "main")
+    _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 2000, "same change, merged")
+    _git(registry, "update-ref", "refs/pull/1/head", pr_sha)
+    _git(registry, "branch", "-q", "-D", "contrib")
+    parent = tmp_path / "repos"
+    _pin_repo(parent, "honest", registry, honest_sha, honest)
+    _pin_repo(parent, "zcontrib", registry, pr_sha, pr)
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+
+    proc = _run_hook(home, parent, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    _assert_alpha_conflicts_as_before(proc, home, stale, total=3)
+    assert "not on the registry's default branch" in _bootstrap_log(home)
 
 
 def test_a_project_with_its_own_lock_ignores_its_child_repos_locks(tmp_path):

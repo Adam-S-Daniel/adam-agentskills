@@ -1,8 +1,13 @@
 # 0007. Install the union of every discovered lock in a multi-repo session
 
-- **Status:** Accepted
+- **Status:** Accepted (case (b) amended by [0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md))
 - **Date:** 2026-08-24
 - **Deciders:** Adam Daniel
+
+> **Amended by [ADR 0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md).**
+> When the disagreeing rows pin one registry and one pin descends from every
+> other, the descendant's row installs, verified against its own lock. Every
+> other case (b) shape still installs neither, as written below.
 
 ## Context
 

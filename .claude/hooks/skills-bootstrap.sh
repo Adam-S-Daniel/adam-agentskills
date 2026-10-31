@@ -2779,6 +2779,11 @@ matches_default_head () {
   # today`s default branch does not produce. So each of those files must be the
   # same blob on both sides, or absent on both. One inside <relpath> is part of
   # its tree, so it is already covered.
+  # The root `.lfsconfig` the same way: it can point a checkout at different
+  # LFS content without touching the tree either.
+  mine="$(git "${GIT_VERBATIM[@]}" -C "$tmp/reg-$1" rev-parse --verify --quiet "${SRC_REF[$1]}:.lfsconfig" 2>>"$LOG" </dev/null)" || mine=""
+  theirs="$(git "${GIT_VERBATIM[@]}" -C "$DEFAULT_DIR" rev-parse --verify --quiet "$DEFAULT_HEAD:.lfsconfig" 2>>"$LOG" </dev/null)" || theirs=""
+  [ "$mine" = "$theirs" ] || return 1
   local dir="" rest="$2" attr
   while :; do
     attr="${dir}.gitattributes"

@@ -10869,8 +10869,17 @@ def test_an_unmerged_pin_matching_the_default_branch_still_does_not_win(tmp_path
     assert "not on the registry's default branch" in _bootstrap_log(home)
 
 
-def test_a_newer_pin_whose_root_gitattributes_the_registry_reverted_does_not_win(tmp_path):
+@pytest.mark.parametrize("attributes, rule", [
+    (".gitattributes", "plugins/adam/skills/alpha/*.md text eol=crlf\n"),
+    ("plugins/adam/skills/.gitattributes", "alpha/*.md text eol=crlf\n"),
+], ids=["root", "parent-directory"])
+def test_a_newer_pin_whose_gitattributes_the_registry_reverted_does_not_win(
+        tmp_path, attributes, rule):
     """Same tree, different bytes: the adversarial round's `.gitattributes` case.
+
+    Both places a `.gitattributes` above the skill can sit -- the root, and a
+    parent directory partway down -- so the walk over parents is exercised past
+    its first step, not only at the root.
 
     The winner's alpha tree equals the default branch's, but the winner also
     carries a root `.gitattributes` that re-encodes alpha on checkout, which
@@ -10883,7 +10892,7 @@ def test_a_newer_pin_whose_root_gitattributes_the_registry_reverted_does_not_win
     old_sha, old = _commit_at(registry, {"adam/alpha": _ALPHA_V1, "adam/beta": SKILL_B},
                               _PIN_EPOCH)
     _commit_at(registry, {"adam/alpha": _ALPHA_V2}, _PIN_EPOCH + 1000)
-    _write(registry / ".gitattributes", "plugins/adam/skills/alpha/*.md text eol=crlf\n")
+    _write(registry / attributes, rule)
     new_sha, _ = _commit_at(registry, {}, _PIN_EPOCH + 2000, "attributes")
     # Re-check-out so the digest the newer lock names is the CONVERTED bytes'.
     for path in (registry / "plugins").glob("*/skills/*/SKILL.md"):
@@ -10892,7 +10901,7 @@ def test_a_newer_pin_whose_root_gitattributes_the_registry_reverted_does_not_win
     alpha_dir = registry / gsl.layout_dir(gsl.DEFAULT_LAYOUT, "adam") / "alpha"
     assert b"\r\n" in (alpha_dir / "SKILL.md").read_bytes()
     new = {"adam/alpha": gsl.digest_skill_dir(alpha_dir), "adam/beta": old["adam/beta"]}
-    _git(registry, "rm", "-q", ".gitattributes")
+    _git(registry, "rm", "-q", attributes)
     # Back to the stored bytes first, so the revert changes ONLY the attributes
     # file: alpha's tree at the tip must stay exactly the newer pin's.
     _git(registry, "checkout", "-q", "--", "plugins")

@@ -89,7 +89,8 @@ either is missing, the outcome is a conflict. Unrelated commits after the
 winner do not matter. Only that skill's directory is compared, plus every
 `.gitattributes` at the root and in each parent directory of it, which must be
 the same blob on both sides or absent on both, because those files change the
-bytes checkout writes without changing the tree.
+bytes checkout writes without changing the tree. The root `.lfsconfig` is
+compared the same way.
 
 Everything else stays case (b), with the same notice, verdict text, `dup`
 handling and removal as before:

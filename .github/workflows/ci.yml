@@ -381,6 +381,29 @@ jobs:
         # they pass with no global identity available (measured with
         # GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null).
         run: python3 -m pip install -r requirements-dev.txt
+      # AGENTS.md's graduation and touch gates ("Skill changes get recorded,
+      # and evals gate them"): a created, edited or removed SKILL.md needs a
+      # new docs/skill-impact.md entry, a PURPOSE.md and an Eval line in an
+      # accepted form; the impact file stays append-only. The accepted forms
+      # are in scripts/check_skill_gates.py's docstring.
+      #
+      # In THIS job because `pytest` is a required check: `consistency` is
+      # not, so a failure there would not block the merge, and `agent-checks`
+      # installs no Python dependencies (this script needs markdown-it-py).
+      # Gated on `salient` like the steps around it, which is safe: a
+      # docs-only PR changes no SKILL.md, so the gate has nothing to judge.
+      # It diffs from `git merge-base` of the two shas, so this checkout's
+      # `fetch-depth: 0` is required.
+      #
+      # The shas travel through `env:` and are read back as shell variables,
+      # never interpolated into `run:` (the rendered command is echoed to a
+      # public log). No `concurrency` group: this job is a required check.
+      - name: Check skill graduation and touch gates
+        if: github.event_name == 'pull_request' && steps.salient.outputs.run == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_skill_gates.py --base "$BASE_SHA" --head "$HEAD_SHA"
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
       # test_check_agent_plugins.py — 157 tests) once existed while this job ran

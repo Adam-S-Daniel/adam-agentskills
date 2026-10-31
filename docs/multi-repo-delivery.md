@@ -209,6 +209,18 @@ cat > "$project/.claude/settings.json" <<'JSON'
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash -c 'for h in \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/guidance-load-record.sh \"$CLAUDE_PROJECT_DIR\"/*/.claude/hooks/guidance-load-record.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
+            "timeout": 20
+          }
+        ]
+      }
     ]
   }
 }
@@ -362,6 +374,15 @@ done
   A repo's own registration of the guard does not fire in a multi-repo session
   for the same reason its `SessionStart` hooks do not, so the wiring runs the
   first attached copy. With none attached it does nothing.
+- **The `Stop` group records which guidance the session loaded**
+  (`.claude/hooks/guidance-load-record.sh`, delivered by the same sync). Once
+  per session it reads its own transcript and writes one line: the full
+  guidance, only the repo stub, neither, or unknown. With
+  `USAGE_WRITER_APP_CLIENT_ID` and `USAGE_WRITER_APP_PEM` in the environment's
+  secrets it also uploads that line to the private repository's
+  `persistent/usage-events` branch, because a cloud container's files do not
+  outlive it. Without them it records locally only. With no copy attached it
+  does nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

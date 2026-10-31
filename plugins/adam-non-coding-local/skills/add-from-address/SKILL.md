@@ -52,17 +52,18 @@ Because the user is giving explicit addresses (explicit intent), this skill
 ## Run
 
 Preferred — the bundled helper dispatches, waits, and reports run success (the
-detailed report is emailed, not printed):
+detailed report is emailed, not printed). `<skill-dir>` is this skill's
+directory, so the command works from any working directory:
 
 ```
 # apply (default)
-pwsh trigger.ps1 -Address new-alias@example.com,another@example.com
+pwsh "<skill-dir>/trigger.ps1" -Address new-alias@example.com,another@example.com
 
 # preview only
-pwsh trigger.ps1 -Address new-alias@example.com -WhatIf
+pwsh "<skill-dir>/trigger.ps1" -Address new-alias@example.com -WhatIf
 
 # custom display name
-pwsh trigger.ps1 -Address new-alias@example.com -Name "Full Name"
+pwsh "<skill-dir>/trigger.ps1" -Address new-alias@example.com -Name "Full Name"
 ```
 
 Or drive `gh` directly:

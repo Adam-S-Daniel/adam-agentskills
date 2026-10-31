@@ -48,3 +48,12 @@ the edited script and the final reply.
 Checked against gitleaks' `generic-api-key` keyword list (`access auth api
 credential creds key passwd password secret token`) before committing — it
 contains none of them, so its `skills.lock` line cannot false-positive.
+
+## Changes
+
+- Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
+  the "Where the rule lives" history section left SKILL.md. It said this file
+  is the procedure and that the repo where it was learned (`wsl-automation`)
+  keeps only what is specific to its scheduled tasks in its own `AGENTS.md`.
+  The description now states what and when only; the filtered-token
+  explanation and the list of fixes that fail are in the body.

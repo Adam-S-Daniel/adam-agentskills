@@ -22,3 +22,5 @@ The registry census checks bare script filenames in runnable Markdown code
 blocks so an absent helper cannot hide merely because its reference omits
 `scripts/`. Prose examples, external paths, and document artifacts remain
 outside that payload check.
+
+- Prompt-audit fix (adam-agentskills issue #56): see docs/skill-impact.md.

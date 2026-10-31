@@ -7,14 +7,7 @@ description: >-
   New-Service), an LSA rights grant such as "Log on as a batch job"
   (SeBatchLogonRight, secedit, ntrights), an HKLM registry write, or any other
   change to Windows state from a WSL session. Use it BEFORE attempting such a
-  write from WSL and the moment one is denied. PowerShell run from WSL inherits
-  the elevation of the session that launched WSL, and an agent's session is
-  not elevated: reads succeed (Get-ScheduledTask, Get-Service,
-  the registry) so the surface looks available, writes that need elevation
-  fail, and no flag, retry, Start-Process -Verb RunAs, schtasks, sudo, SYSTEM
-  principal or downgraded RunLevel fixes it. Compose the command from WSL,
-  export what it will overwrite (Export-ScheduledTask), then hand the operator
-  the exact line for an elevated Windows prompt and say it needs elevation.
+  write from WSL and the moment one is denied.
 license: MIT
 compatibility: >-
   A WSL session on a Windows host that drives Windows through powershell.exe /
@@ -134,9 +127,3 @@ One sentence is enough: *PowerShell launched from WSL runs with a filtered
 token and cannot prompt for elevation, so anything that needs administrator
 rights has to be run from an elevated Windows prompt; everything read-only
 works from here.*
-
-## Where the rule lives
-
-This file is the procedure. The repo where it was learned
-(`wsl-automation`) keeps only what is specific to its scheduled tasks in its
-own `AGENTS.md`.

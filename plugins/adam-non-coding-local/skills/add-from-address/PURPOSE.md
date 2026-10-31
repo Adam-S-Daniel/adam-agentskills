@@ -14,3 +14,5 @@ is unchanged.
 
 Eval: deferred with the Fastmail bundle in skills-evals' `DESIGN.md` deliberate
 non-coverage table (credentialed live service).
+
+- Prompt-audit fix (adam-agentskills issue #56): see docs/skill-impact.md.

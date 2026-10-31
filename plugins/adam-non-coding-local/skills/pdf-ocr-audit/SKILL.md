@@ -38,8 +38,10 @@ The primary method is to read each page's text layer using `pypdf`. If a page yi
 
 ## Using the script
 
+If pip refuses with `externally-managed-environment`, create a venv, install `pypdf` there, and run the script with that venv's `python`.
+
 ```bash
-pip install pypdf --break-system-packages -q
+pip install --user pypdf -q
 python scripts/check_ocr.py /path/to/folder
 # or for specific files:
 python scripts/check_ocr.py file1.pdf file2.pdf
@@ -56,7 +58,7 @@ python scripts/check_ocr.py /path/to/folder > /tmp/ocr_audit.csv
 
 If a folder has >500 PDFs, warn the user that a full run may take a while and offer:
 - Run only a representative sample (e.g., one per subfolder)
-- Categorize by filename pattern first (files named "Scan", "scan_", "QuickScan", iOS scanner naming like `YYYYMMDD_*_iOS.pdf`, etc. are almost always already-OCR'd or image scans)
+- Categorize by filename pattern first (files named "Scan", "scan_", "QuickScan", iOS scanner naming like `YYYYMMDD_*_iOS.pdf`, etc. are usually raw scans that need OCR, while iOS-named files usually already have text; confirm either with the text layer check)
 - Run the full audit as a background job
 
 ## Filename heuristics (supplemental, not definitive)
@@ -75,7 +77,7 @@ These are heuristics only — always verify with the text layer check.
 
 ## Output format
 
-ALWAYS use this exact table structure:
+Use this table structure:
 
 ```
 | Full Path | OCR Needed? | Rationale |

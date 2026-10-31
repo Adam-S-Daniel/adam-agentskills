@@ -22,7 +22,7 @@ production.
 
 - You made a copy of a repository: `cp -a`, `cp -r`, `rsync`, untarring, a `/tmp` scratch
   tree, a second checkout "just to try something".
-- You ran `git clone`, or `git worktree add`.
+- You ran `git clone` or `git worktree add` to get a scratch or throwaway tree. The one worktree or clone a session works and pushes from on purpose is not a scratch tree; this skill applies to it only when you are about to run a negative control or destructive path in it.
 - You are about to run a negative control: neutering a guard, a gate, a dry-run flag, a
   confirmation prompt, or a required check so you can watch it fail. Proving the verifier can
   fail. A mutation test. A deliberately broken tree.

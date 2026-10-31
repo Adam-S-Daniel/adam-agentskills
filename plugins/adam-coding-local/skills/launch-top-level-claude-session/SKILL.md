@@ -7,12 +7,7 @@ description: >-
   file. Use this WHENEVER the user asks to start / open / launch / spawn a new
   (top-level, separate, fresh, detached, background) Claude Code session, hand
   off to a fresh session, or launch Claude in a new terminal, tab or window, on
-  Windows or in WSL, even if they don't name every detail. It clears the
-  nested-session marker a launch from Claude's own shell tool would inherit (so
-  the session is saved and shows in --resume), resolves claude's full path, and
-  handles the quirks that silently break naive attempts: ConPTY via Windows
-  Terminal, wt.exe's ';' splitting, prompt quoting, session-id vs initial-prompt
-  openers, and the workspace-trust gate.
+  Windows or in WSL, even if they don't name every detail.
 compatibility: >-
   Requires a Windows PC with Windows Terminal (and WSL for the WSL launchers). Works
   whether Claude runs on the Windows host (Windows PowerShell 5.1 or PowerShell 7) or inside the WSL distro

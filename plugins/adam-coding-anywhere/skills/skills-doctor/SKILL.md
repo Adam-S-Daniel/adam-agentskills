@@ -182,8 +182,7 @@ the `skills.lock` of every child GIT REPOSITORY one level below and reports per
 lock — a plain subdirectory carrying a lock is not one, because the hook does
 not read it either (ADR 0007). That second case is
 the multi-repo session, where a bare default that resolved to nothing would
-report the absence of a lock as the absence of a problem (incident: see
-PURPOSE.md). Naming a lock explicitly is still honoured exactly, and never widened
+report the absence of a lock as the absence of a problem. Naming a lock explicitly is still honoured exactly, and never widened
 into a scan. Several locks judging one store names **no winner** among them;
 every finding says which lock declared it, and identical findings from several
 locks are folded into one that names them all.
@@ -281,7 +280,7 @@ the install, and a hook-installed skill an editor has touched since falls out
 of the cluster — and neither failure announces itself. That is the whole reason
 the record exists; never prefer the cluster to it.
 
-## 5. The five things that fail silently
+## 5. The things that fail silently
 
 ### Shadowing
 
@@ -336,10 +335,9 @@ session as it stands, not about the directory.
 
 [ADR 0014](../../../../docs/decisions/0014-retire-the-account-zip-upload-channel.md)
 retired the ZIP uploads: every surface takes this registry's skills from the
-marketplace plugins, and the owner emptied the account store of them. There is
-therefore no drift audit to run (the old `--account-drift` mode is gone), and a
-registry-named skill still found in `synced/` is a stale leftover from before the
-retirement. It surfaces as a shadow note or finding below; the fix is to remove it
+marketplace plugins, and the account store holds none of them. There is
+therefore no drift audit to run (this skill has no account-drift mode), and a
+registry-named skill still found in `synced/` is a stale leftover. It surfaces as a shadow note or finding below; the fix is to remove it
 from the claude.ai account, not to re-upload. Anthropic's own skills (docx, pdf, …)
 still arrive through `synced/` and are none of this registry's business.
 
@@ -358,7 +356,7 @@ sets on purpose. Report which one you are on before concluding anything about
 why a skill does or does not trigger:
 
 ```bash
-python3 "$SKILL_DIR/scripts/check_provenance.py" --account-channel
+python3 -I scripts/check_provenance.py --account-channel
 ```
 
 It reports three things and repairs none of them:
@@ -382,9 +380,7 @@ Precedence between managed, user and local settings is deliberately **not**
 modelled: only `false` is honoured and it is honoured from any of them, so
 "does some file in the chain say false" is the whole question.
 
-`syncClaudeAiPlugins` is reported but no decision has been made about it —
-old-registry issue 160 (E6) is the
-experiment that would.
+`syncClaudeAiPlugins` is reported but no decision has been made about it.
 
 ### Missing payloads
 
@@ -404,7 +400,7 @@ inverts it.** The rule that matters is `PROSE_ONLY_RULE` in that script: only a
 path inside a *fenced code block* gates, because a skill legitimately names
 paths belonging to OTHER repos in prose and in backticks. The hand version is
 not a weaker check, it is a wrong one, and confident false positives will
-bury the real finding if there ever is one (measurement: see PURPOSE.md).
+bury the real finding if there ever is one.
 
 If the script cannot run, say the check is **unavailable** rather than
 substituting the grep. It exits **2** — distinct from 1, which is findings —
@@ -467,15 +463,9 @@ exact inversion. No remediation is performed — recommend, do not do.
   skills. So `anthropic-skills:foo` in a listing is a synced skill, not
   something this registry or a hook install delivered — this registry ships
   nothing under either name.
-- **Before 2.1.280, a `manifest.json` in `~/.claude/skills/` itself could trash
-  hook installs.** The CLI moved skills there to `~/.claude/skills/.trash/` when
-  such a manifest listed their names. The bootstrap hook never writes a
-  `manifest.json` (its record is `.skills-bootstrap-installed.json`), so it does
-  not cause this; a flat manifest left by an older CLI that names a hook-installed
-  skill could. On a CLI older than 2.1.280, a locked skill that vanished and sits
-  in `.trash/` is the first thing to look for. 2.1.228+ also strips `!` commands
-  and `@` file expansion from synced skill bodies on a machine, so a synced copy
-  may not behave like its registry original.
+- **Synced skill bodies are stripped on a machine.** Claude Code strips `!`
+  commands and `@` file expansion from synced skill bodies, so a synced copy may
+  not behave like its registry original.
 - **`~/.claude/skills/synced/` cannot be seeded or simulated.** It is
   manifest-gated: writing a directory there does nothing at all. You can only
   observe it, so never "test" a hypothesis about the account channel by
@@ -494,7 +484,7 @@ exact inversion. No remediation is performed — recommend, do not do.
   — under a union, one repo's project-owned skill now suppresses delivery of a
   locked skill the other repos asked for. Still worth doing the shadowing
   comparison by hand against each workspace root, per the `comm` recipe above,
-  when the answer matters. (History: see PURPOSE.md.)
+  when the answer matters.
 - **Absence from the listing is not absence from disk.** Deduplication and the
   listing budget both drop entries. Check disk *and* listing; a mismatch
   between them is itself a finding.

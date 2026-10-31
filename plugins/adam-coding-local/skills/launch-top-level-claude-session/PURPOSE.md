@@ -61,3 +61,9 @@ in a hosted session. It is a machine-bound coding skill;
   Typographic dashes in `launch-wsl-claude.ps1` were read as Windows-1252.
   PowerShell payloads now use ASCII, and the registry has a byte-level gate
   for non-ASCII `.ps1` content without a UTF-8 BOM.
+
+## Changes
+
+- Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
+  the frontmatter description was trimmed to what the skill does and when to
+  use it; merge rules and launch quirks it repeated are stated in the body.

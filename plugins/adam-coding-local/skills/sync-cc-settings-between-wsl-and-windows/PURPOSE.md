@@ -42,3 +42,9 @@ for the merge engine.
   normalization replaced typographic dashes in the script with ASCII equivalents
   after another BOM-less launcher failed to parse under the ANSI codepage.
   This changes comments and status punctuation, preserving merge behavior.
+
+## Changes
+
+- Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
+  the frontmatter description was trimmed to what the skill does and when to
+  use it; merge rules and launch quirks it repeated are stated in the body.

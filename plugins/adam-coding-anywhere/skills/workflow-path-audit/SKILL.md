@@ -29,7 +29,7 @@ For each `.yml` / `.yaml` file, read it end-to-end and note:
 
 - **Trigger** (`on:` block): `pull_request`, `push`, `schedule`, `workflow_dispatch`, event types like `issue_comment`, etc.
 - **Filter present?** Look for `on.<event>.paths`, `on.<event>.paths-ignore`, or `on.<event>.branches` filters.
-- **Required-check status?** Check the repo's branch-protection ruleset (`gh api repos/<owner>/<repo>/rulesets` → look at the `main` ruleset's `required_status_checks` rule) — the job names in there are required checks and need always-fire semantics.
+- **Required-check status?** Read the rules in force on the default branch (`gh api repos/<owner>/<repo>/rules/branches/main` → the `required_status_checks` rules; several rulesets can apply, and this endpoint reports their union) — the job names in there are required checks and need always-fire semantics.
 
 Workflows triggered ONLY by `schedule` or by event types like `issue_comment`/`issues` don't need path filters — paths only meaningfully apply to `pull_request` and `push` events.
 
@@ -74,7 +74,7 @@ jobs:
   the-job:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@<sha>
+      - uses: actions/checkout@<the repo's pin form: a locked exact tag, or a full SHA in a legacy repo>
         with:
           fetch-depth: 0  # need history to diff base..head
 
@@ -92,7 +92,7 @@ jobs:
           fi
           changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
           echo "Changed files:"; echo "$changed" | sed 's/^/  /'
-          if printf '%s\n' "$changed" | grep -qE '^(<salient regex here>)'; then
+          if grep -qE '^(<salient regex here>)' <<<"$changed"; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

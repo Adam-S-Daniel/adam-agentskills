@@ -55,3 +55,7 @@ old-registry PR 180, which never merged; ported here 2026-10-26.
 Checked against gitleaks' `generic-api-key` keyword list (`access auth api
 credential creds key passwd password secret token`) before committing — it
 contains none of them.
+
+## Changes
+
+- Prompt-audit fix (adam-agentskills issue #56): replaced the undated "currently has no dated `pwsh` tags" on ghcr.io with an instruction to check the tag list.

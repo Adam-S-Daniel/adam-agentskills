@@ -1,17 +1,14 @@
 ---
 name: migrate-claude-memory
 description: >
-  Inventory, clean up, and migrate Claude Code auto-memory stores under
+  Inventory and clean up Claude Code auto-memory stores under
   ~/.claude/projects/<munged-path>/memory/ on this machine. List decoded paths,
   file counts, sizes, and freshness; identify ORPHANED stores for human review;
   keep undecodable or ambiguous stores UNRESOLVED and never delete on that
-  basis; and copy a chosen store into git-tracked .claude/memory/ so memory
-  travels across machines and reaches hosted/cloud sessions. Trigger on
-  "clean up claude memory", "migrate claude memory", "inventory memory stores",
-  "orphaned memory", "sync memory across machines", "make memory portable",
-  or mentions of `~/.claude/projects` or `autoMemoryDirectory`. LOCAL-ONLY:
-  requires this machine's ~/.claude directory; do not invoke in a hosted/cloud
-  session without it.
+  basis. Trigger on "clean up claude memory", "migrate claude memory",
+  "inventory memory stores", "orphaned memory", or mentions of
+  `~/.claude/projects`. LOCAL-ONLY: requires this machine's ~/.claude
+  directory; do not invoke in a hosted/cloud session without it.
 compatibility: Inventory requires native POSIX paths with Bash and GNU tools (including find, stat, and du), such as Linux or WSL; native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported. Requires read/write access to ~/.claude/projects on the local machine; local execution only — memory stores are machine-local and this skill cannot run in a hosted/cloud session without that directory present.
 ---
 
@@ -34,45 +31,18 @@ anymore. And because it's all under this machine's `~/.claude`, auto-memory is
 **invisible to hosted/cloud Claude sessions**, which don't share your local
 filesystem.
 
-This plugin does three things:
+This skill does two things:
 
 1. **Inventory** every memory store (`memory-inventory.sh`) — read-only.
 2. **Help a human clean up orphans** — the script only *points at* candidates;
    it never deletes anything. You review the `ORPHANED` entries yourself and
    run `rm -rf` on the ones you're sure about. `UNRESOLVED` means the path
    could not be determined safely; never delete a store on that basis.
-3. **Migrate a chosen store into the portable in-repo pattern**
-   (`memory-migrate.sh`) — copy its files into `<repo>/.claude/memory/`
-   (git-tracked) so the memory travels with the repo via git, reaching other
-   machines and hosted/cloud sessions too.
 
-## `autoMemoryDirectory`
-
-Claude Code reads `autoMemoryDirectory` from settings.json to decide where to
-read/write a project's memory instead of the default per-machine
-`~/.claude/projects/...` location:
-
-- Accepts an **absolute path** or a `~/`-relative path — NOT a bare relative
-  path like `.claude/memory`.
-- When set in a project's own `<repo>/.claude/settings.json`, it is
-  **workspace-trust gated**: it's only honored once that folder has been
-  trusted in Claude Code.
-- Because auto-memory is otherwise entirely machine-local, putting it in-repo
-  and committing it to git is the only channel that carries it to other
-  machines and to hosted/cloud sessions.
-- With `permissions.blockReadsOutsideWorkingDirectories` enabled, Claude Code
-  2.1.273 and later no longer loads a memory directory chosen by repository
-  settings. The release note says: "a memory directory chosen by a repository's
-  settings is no longer loaded into the prompt, recalled, indexed, or used by
-  memory extraction"
-  ([v2.1.273](https://github.com/anthropics/claude-code/releases/tag/v2.1.273)).
-  A committed in-repo `autoMemoryDirectory` is such a directory. The note does
-  not say whether a directory inside the working directory is exempt, and this
-  has not been measured, so if memory stops appearing in a session that enables
-  that setting, check it before blaming the store.
-
-This skill never edits `settings.json` for you — it prints the exact JSON
-snippet to add, and you (or another edit) apply it.
+Repos keep no memory store and set no `autoMemoryDirectory` (cloud sessions
+ignore it and it would publish notes on public repos). To keep a fact from a
+store, read it and move it to the repo's `AGENTS.md` below
+`## Repo-specific additions`, per STRATEGY.md's "Memory" policy.
 
 ## Workflow 1: Inventory
 
@@ -130,28 +100,6 @@ rm -rf ~/.claude/projects/<munged-name>
 This skill never runs `rm` for you — cleanup is a manual, human-reviewed step.
 `UNRESOLVED` is a reason to investigate the original workspace path, never a
 reason to delete the store. Do not treat a guessed path as deletion evidence.
-
-## Workflow 3: Migrate to in-repo portable memory
-
-```
-bash scripts/memory-migrate.sh [--force] <store-dir> <repo-dir>
-```
-
-`--force`, if given, must appear **before** the two positional arguments.
-This copies every file from `<store-dir>` into `<repo-dir>/.claude/memory/`
-(creating it if needed, preserving mtimes), refusing to overwrite existing
-files unless `--force` is passed. It never deletes the source store and never
-touches `<repo-dir>/.claude/settings.json` — it only prints the JSON snippet
-for you to add, e.g.:
-
-```
-Add this to <repo>/.claude/settings.json:
-{"autoMemoryDirectory": "~/repos/myrepo/.claude/memory"}
-```
-
-**If the repo is public**, review the copied files for secrets, PII,
-credentials, or internal-only details before committing — once memory is
-migrated in-repo, it becomes as visible as the rest of the repo.
 
 ## Known limitations: lossy path decoding
 

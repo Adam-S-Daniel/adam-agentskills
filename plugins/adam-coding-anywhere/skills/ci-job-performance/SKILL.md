@@ -164,7 +164,7 @@ runner images:
 - Pin runner images by `tag@digest`, using a **dated** tag at least 7 days
   old. `catthehacker` publishes dated tags — `act-latest-20260815`,
   `pwsh-latest-20260815` — on Docker Hub; `ghcr.io` carries the same digests
-  but currently has no dated `pwsh` tags. Resolve a digest from
+  but may lack dated `pwsh` tags; check its tag list before relying on it. Resolve a digest from
   `https://hub.docker.com/v2/repositories/catthehacker/ubuntu/tags/<tag>`.
 - **Never use a `-latest` tag.** These images' build scripts fetch "latest"
   upstream releases (e.g. PowerShell via its `releases/latest` API) at *build*

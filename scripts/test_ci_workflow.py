@@ -602,3 +602,27 @@ def test_every_ci_action_is_locked_to_a_full_sha():
             assert key in listed, f"{uses} is not listed for ci.yml in actions.lock"
             checked += 1
     assert checked, "expected at least one third-party action to check"
+
+
+SKILL_GATES_STEP = "Check skill graduation and touch gates"
+
+
+def test_the_pytest_job_runs_the_skill_gates_on_pull_requests():
+    """AGENTS.md's graduation and touch gates are enforced only if the step
+    sits in a REQUIRED job, runs after the dependencies it imports are
+    installed, and reads the shas from env rather than interpolating them."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    names = [s.get("name") for s in steps]
+    matches = [s for s in steps if s.get("name") == SKILL_GATES_STEP]
+    assert len(matches) == 1, f"job `pytest` must carry exactly one `{SKILL_GATES_STEP}` step"
+    step = matches[0]
+    assert names.index("Install Python dependencies") < names.index(SKILL_GATES_STEP) \
+        < names.index("Run every test suite in the repo")
+    assert step["if"] == ("github.event_name == 'pull_request' && "
+                          "steps.salient.outputs.run == 'true'")
+    assert step["env"] == {"BASE_SHA": "${{ github.event.pull_request.base.sha }}",
+                           "HEAD_SHA": "${{ github.event.pull_request.head.sha }}"}
+    assert shlex.split(step["run"]) == ["python3", "scripts/check_skill_gates.py",
+                                        "--base", "$BASE_SHA", "--head", "$HEAD_SHA"]
+    assert "${{" not in step["run"]
+    assert "continue-on-error" not in step

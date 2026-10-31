@@ -54,17 +54,18 @@ which it emails what was already present and what was **newly added**.
 ## Run
 
 Preferred — the bundled helper dispatches, waits, and reports run success (the
-detailed report is emailed to `FASTMAIL_REPORT_TO`, not printed):
+detailed report is emailed to `FASTMAIL_REPORT_TO`, not printed). `<skill-dir>` is this skill's
+directory, so the command works from any working directory:
 
 ```
 # preview (default)
-pwsh trigger.ps1
+pwsh "<skill-dir>/trigger.ps1"
 
 # apply after confirming
-pwsh trigger.ps1 -Apply
+pwsh "<skill-dir>/trigger.ps1" -Apply
 
 # quick sample of the newest N messages
-pwsh trigger.ps1 -Max 2000
+pwsh "<skill-dir>/trigger.ps1" -Max 2000
 ```
 
 Or drive `gh` directly:

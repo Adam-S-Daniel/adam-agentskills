@@ -11,8 +11,8 @@ metadata:
 
 Use [OCRmyPDF](https://ocrmypdf.readthedocs.io/en/latest/cookbook.html)
 (backed by Tesseract) to add searchable text to scanned PDFs. This skill
-uses the installed CLI directly; it does not ship a batch runner or a
-Windows review application.
+runs the installed `ocrmypdf` CLI directly, one command per input, and
+reviews the results with the checks below.
 
 ## Choose the inputs
 
@@ -77,7 +77,7 @@ text layer alone does not prove its accuracy.
 If the inputs already use the `name.pdf` / `name-needsocr.pdf` pairing
 convention, the sibling [compare-pdfpairs skill](../compare-pdfpairs/SKILL.md) can additionally compare
 rendered pages and extracted text. Follow that skill's own instructions
-and prerequisites; it is not a WPF reviewer supplied by this skill.
+and prerequisites.
 
 Report successful, failed, and unreviewed items separately. Keep the
 originals until the user has reviewed the proposed replacements or

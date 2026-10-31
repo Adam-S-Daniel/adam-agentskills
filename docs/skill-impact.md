@@ -34,6 +34,20 @@ Rules:
 - **Append-only.** A wrong entry gets a correcting entry, not an edit.
 - **This repo is public and scanned.** Nothing sensitive in an entry, ever;
   a sensitive rejection is recorded by PR link alone.
+- **CI enforces the gates.** `scripts/check_skill_gates.py`, run in the
+  required `pytest` check, reads each new entry's `- Eval:` line and fails a
+  PR whose skill change is not covered. A removed SKILL.md needs a `remove`
+  entry. A new skill needs a `create` entry, a PURPOSE.md and a green arm:
+  `with_skill objective X/Y, without_skill A/B` (X > 0, X/Y >= A/B) with the
+  routine run id or results link; a skill in `adam-coding-local` or
+  `adam-non-coding-local` may write `exempt` instead. An edited SKILL.md
+  needs an entry (any kind but `rejected`) and a PURPOSE.md, and its Eval
+  line depends on skills-evals' coverage census: a covered skill shows a run
+  (counts such as `21/21`, or a run id such as `20261026T211234Z-1b7681`),
+  a deliberately skipped one a run or `exempt`, a gap a run or its first
+  fixture (a `skills-evals/pull/N` link or `evals/<skill>/`). When the
+  census cannot decide, the check warns instead of failing. It also fails
+  any change to an entry already on main.
 
 Entries before 2026-08-25 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.

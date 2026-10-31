@@ -308,6 +308,11 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   never loaded at inference. Do **not** mass-backfill `PURPOSE.md` across
   untouched skills: every added file moves that skill's digest, which stales
   `skills.lock` in every consumer until re-pinned. On-touch only.
+- **CI enforces the above.** `scripts/check_skill_gates.py`, run in the
+  required `pytest` check, fails a PR whose created, edited or removed
+  SKILL.md lacks a new impact entry, a PURPOSE.md or an Eval line in an
+  accepted form, and keeps `docs/skill-impact.md` append-only. The accepted
+  forms are under "Rules" in that file and in the script's docstring.
 
 ### Action pins
 

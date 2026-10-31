@@ -394,12 +394,13 @@ done
 - **The `Stop` group records which guidance the session loaded**
   (`.claude/hooks/guidance-load-record.sh`, delivered by the same sync). Once
   per session it reads its own transcript and writes one line: the full
-  guidance, only the repo stub, neither, or unknown. With
-  `USAGE_WRITER_APP_CLIENT_ID` and `USAGE_WRITER_APP_PEM` in the environment's
-  secrets it also uploads that line to the private repository's
-  `persistent/usage-events` branch, because a cloud container's files do not
-  outlive it. Without them it records locally only. With no copy attached it
-  does nothing.
+  guidance, only the repo stub, neither, or unknown. It also uploads that line
+  to the private repository's `persistent/usage-events` branch, because a
+  cloud container's files do not outlive it. The upload uses the session's own
+  GitHub access, so it works only when the private repository is attached:
+  the cloud proxy replaces any other token sent to GitHub, which is why the
+  `USAGE_WRITER_APP_*` App credentials are only a fallback for hosts without
+  that proxy. With no copy of the hook attached it does nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

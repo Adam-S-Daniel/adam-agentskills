@@ -40,7 +40,8 @@ When every row that names a destination comes from the same registry (the same
 normalized URL), for the same `<bundle>/<skill>` key, at two or more different
 full 40-hex commits, and no lock contributes two rows for that name, the hook
 installs the row from the lock whose ref descends from every other contesting
-ref. The winning bytes are verified against the winning lock's own digest by
+ref, provided that ref is also reachable from the registry's default branch.
+The winning bytes are verified against the winning lock's own digest by
 the ordinary install path. No digest from a losing lock is used for the name.
 
 Ancestry is decided after the fetch. Sources are `--depth 1`, so for a
@@ -50,7 +51,21 @@ The deepen goes through `run_git`, under the same 60-second fetch budget and
 process-group kill as every other fetch. Then
 `git merge-base --is-ancestor <older> <candidate>` must succeed for every other
 ref. Candidates are tried newest-first by committer time, and at most one can
-pass.
+pass. If the candidate's commit time is more than 90 days after the oldest
+other pin's, the hook does not fetch across that gap and the candidate fails.
+
+**The winner must also be on the registry's default branch.** Descending from
+the other pins is not enough on its own. GitHub serves every object in a
+repository's fork network by SHA through the upstream URL. So a lock can pin an
+unmerged pull-request or fork commit whose parent is the honest pin: it
+fetches, it descends from the honest pin, and on descent alone it would win.
+The hook therefore fetches the remote's `HEAD` (asked for by name, not a
+hardcoded `main`) into a separate scratch repository, bounded by
+`--shallow-since` at the winner's commit time minus one day, under the same
+budget. It then requires `git merge-base --is-ancestor <winner> <that HEAD>`.
+Only objects reachable from that HEAD arrive in that repository, so a winner
+that is missing there is not on the default branch, and the contest fails
+closed.
 
 Everything else stays case (b), with the same notice, verdict text, `dup`
 handling and removal as before:
@@ -58,10 +73,13 @@ handling and removal as before:
 - the rows come from different registries, or have different keys;
 - a ref is not a full commit SHA;
 - one source pins two digests for the name;
+- the newest pin is not reachable from the registry's default branch (an
+  unmerged pull-request or fork commit, or a default-branch fetch that fails);
 - the refs have diverged;
 - more than one ref is "newest";
-- ancestry cannot be established: a fetch fails, the budget is spent, or the
-  older commit is not within the bounded history;
+- ancestry cannot be established: a fetch fails, the budget is spent, the
+  older commit is not within the bounded history, or the pins are more than 90
+  days apart by committer time;
 - any lock contributes two rows for the name (case (c)).
 
 A resolved name counts once in `N/M`, as case (a) does. It is reported in a
@@ -76,9 +94,13 @@ note on an `— OK` verdict, not as a problem:
   they already unioned per name.
 - **This tiebreak is not invented.** ADR 0005 refused tiebreaks such as sort
   order, scan order and "the project's own repo wins", because nothing in the
-  input makes them true. Ancestry is a fact recorded in the registry both locks
-  name, and the hook proves it from that registry's own objects before using
-  it. When it cannot prove it, it does not use it.
+  input makes them true. The registry's merged history orders the two pins. The
+  hook proves both that the newer pin descends from the older one and that the
+  registry's default branch contains the newer pin, before using either fact.
+  Descent alone would not do. Objects served by the registry's URL include
+  unmerged fork and pull-request commits, so "the registry served this commit"
+  does not mean "the registry merged it". When the hook cannot prove both, it
+  does not use either.
 - **Integrity is unchanged.** The tiebreak picks a row, not a trust level. The
   winning row is checked against its own lock's digest, so a tampered newer
   lock installs nothing for that name. It does not fall back to the older
@@ -92,11 +114,19 @@ note on an `— OK` verdict, not as a problem:
     (`test_diverged_pins_of_one_registry_still_install_neither`).
   - Several incomparable newest pins: no single descendant exists
     (`test_three_locks_with_two_incomparable_newest_pins_install_neither`).
+  - A newer pin the registry never merged: it descends from the honest pin
+    but is not on the default branch
+    (`test_a_pull_request_commit_descending_from_the_honest_pin_does_not_win`).
   - Ancestry the hook cannot establish
     (`test_ancestry_the_bounded_fetch_cannot_reach_installs_neither`):
     "not shown to be an ancestor" must never become "pick the other one".
-- **Session start does more network work in this one case.** The extra fetch
-  covers the history between the two pins plus a day, and only for a contested
+  - Pins more than 90 days apart
+    (`test_a_contest_wider_than_the_window_installs_neither`): committer dates
+    are whatever the author wrote, so a forged ancient date on the older pin
+    must not buy a full-history fetch.
+- **Session start does more network work in this one case.** The extra
+  fetches cover the history between the two pins plus a day, and the
+  default branch back to a day before the winner, and only for a contested
   name. The existing budget bounds it. If the budget is spent, the hook falls
   back to case (b) and does not delay the session further.
 - **A heuristic sets the window, never the outcome.** The one-day margin

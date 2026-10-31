@@ -2016,7 +2016,8 @@ for lock_index, lock_path in enumerate(lock_paths):
 # a tiebreak nobody invented. This reader cannot see that history -- nothing is
 # fetched yet -- so it does not decide: it emits every row with status
 # `contest`, exactly the rows (b) would have emitted as `dup`, and bash decides
-# after the fetch. If the descendant is unique and provable, its row installs
+# after the fetch. If the descendant is unique, provable, and on the
+# registry`s default branch, its row installs
 # and is verified against ITS OWN lock`s digest; anything else (diverged,
 # undeterminable, two newest) turns the rows back into `dup` and the outcome is
 # (b) to the byte. A different registry, a different key, a non-sha ref, or a
@@ -2618,14 +2619,27 @@ fi
 # the path dated before the cutoff -- is simply absent, `merge-base` exits 128,
 # and the contest fails closed. The margin absorbs ordinary clock skew between
 # committers; it is not a correctness bound, and getting it wrong can only cost
-# an install, never choose the wrong one.
+# an install, never choose the wrong one. A gap wider than $CONTEST_WINDOW
+# between the candidate and the oldest other pin is not fetched across at all.
+#
+# DESCENT ALONE DOES NOT WIN. The winner must also be reachable from the
+# registry's DEFAULT BRANCH (see `on_default_branch`): GitHub serves fork and
+# pull-request commits by SHA through the upstream URL, so an unmerged commit
+# whose parent is the honest pin would otherwise descend from it and win.
 #
 # Every ref handed to git here is re-validated as 40 lowercase hex first, so no
 # lock-supplied string can be read as an option. The reads (`log`, `merge-base`)
 # are local and touch no network, so they call git directly; the one network
 # call, the deepen, goes through `run_git`.
 CONTEST_MARGIN=86400
+# The widest gap, in seconds, between the newest candidate's commit time and the
+# oldest other pin that this run will fetch history across. Committer dates are
+# whatever the author wrote, so an older pin carrying a forged ancient date would
+# otherwise turn the deepen into a full-history fetch; past this window the
+# contest fails closed instead. Ninety days is far beyond any real bumper lag.
+CONTEST_WINDOW=$(( 90 * 86400 ))
 CT_NAME=()
+CT_KEY=()
 CT_DIGEST=()
 CT_INDEX=()
 if [ -f "$tmp/skills.nul" ]; then
@@ -2635,7 +2649,7 @@ if [ -f "$tmp/skills.nul" ]; then
      && IFS= read -r -d '' relpath \
      && IFS= read -r -d '' status; do
     if [ "$status" = "contest" ]; then
-      CT_NAME+=("${key##*/}"); CT_DIGEST+=("$want"); CT_INDEX+=("$index")
+      CT_NAME+=("${key##*/}"); CT_KEY+=("$key"); CT_DIGEST+=("$want"); CT_INDEX+=("$index")
     fi
   done < "$tmp/skills.nul"
 fi
@@ -2652,6 +2666,11 @@ WON_OK=()
 # contested name between the same two pins costs no second fetch.
 DEEP_INDEX=()
 DEEP_CUT=()
+# The registry's DEFAULT BRANCH, fetched per registry URL into its own scratch
+# repository: the URL, the directory, and the cutoff it was fetched to.
+DEF_URL=()
+DEF_DIR=()
+DEF_CUT=()
 
 # commit_time <source index> — the committer time of that source's pinned
 # commit, as digits, or nothing.
@@ -2679,9 +2698,52 @@ deepen_to () {
   DEEP_INDEX+=("$1"); DEEP_CUT+=("$2")
 }
 
+# on_default_branch <source index> <epoch> — is that source's pinned commit
+# reachable from its registry's DEFAULT BRANCH (the remote's HEAD)?
+#
+# Descending from the honest pin is not enough on its own. GitHub serves every
+# object in a repository's fork network by SHA through the upstream URL, so a
+# lock pinning an unmerged pull-request or fork commit whose parent is the
+# honest pin fetches cleanly, descends from it, and would otherwise WIN. A
+# commit the registry has actually merged is reachable from its default branch;
+# an unmerged one is not. So the remote's `HEAD` -- asked for by name, never a
+# hardcoded `main` -- is fetched into a SEPARATE scratch repository, bounded by
+# `--shallow-since` at the winner's commit time minus the margin, and the
+# winner must be an ancestor of what came back. A separate repository, because
+# only objects reachable from that HEAD arrive there: the winner being present
+# at all is what reachability means, and an absent winner makes `merge-base`
+# exit 128, which fails closed like every other undetermined case.
+on_default_branch () {
+  local src="$1" cut="$2" url="${SRC_URL[$1]}" at=0 dir="" fetched_cut="" head
+  if [ "$cut" -lt 1 ]; then cut=1; fi
+  while [ "$at" -lt "${#DEF_URL[@]}" ]; do
+    if [ "${DEF_URL[$at]}" = "$url" ]; then dir="${DEF_DIR[$at]}"; fetched_cut="${DEF_CUT[$at]}"; break; fi
+    at=$((at + 1))
+  done
+  if [ -z "$dir" ]; then
+    dir="$tmp/default-${#DEF_URL[@]}"
+    { run_git init -q "$dir" && run_git -C "$dir" remote add origin "$url"; } \
+      >>"$LOG" 2>&1 </dev/null || return 1
+    DEF_URL+=("$url"); DEF_DIR+=("$dir"); DEF_CUT+=("")
+  fi
+  if [ -z "$fetched_cut" ] || [ "$fetched_cut" -gt "$cut" ]; then
+    if [ $(( fetch_deadline - SECONDS )) -lt 1 ]; then
+      echo "contest: fetch budget spent before fetching the default branch of source[$src]" >>"$LOG"
+      return 1
+    fi
+    run_git -C "$dir" fetch -q --shallow-since="@$cut" origin HEAD \
+      >>"$LOG" 2>&1 </dev/null || return 1
+    DEF_CUT[at]="$cut"
+  fi
+  head="$(git "${GIT_VERBATIM[@]}" -C "$dir" rev-parse --verify --quiet FETCH_HEAD 2>>"$LOG" </dev/null)" || return 1
+  [[ "$head" =~ ^[0-9a-f]{40}$ ]] || return 1
+  git "${GIT_VERBATIM[@]}" -C "$dir" merge-base --is-ancestor "${SRC_REF[$src]}" "$head" \
+    >>"$LOG" 2>&1 </dev/null
+}
+
 # resolve_contest <name> — record the winning row for <name> in WON_*, or fail.
 resolve_contest () {
-  local subject="$1" at=0 idx url="" d seen i ids=() digs=() times=() t
+  local subject="$1" at=0 idx url="" key0="" d seen i ids=() digs=() times=() t
   local cand best best_t oldest other ok tried=()
   while [ "$at" -lt "${#CT_NAME[@]}" ]; do
     if [ "${CT_NAME[$at]}" = "$subject" ]; then
@@ -2691,6 +2753,10 @@ resolve_contest () {
       [[ "${SRC_REF[$idx]}" =~ ^[0-9a-f]{40}$ ]] || return 1
       if [ -z "$url" ]; then url="${SRC_URL[$idx]}"; fi
       [ "${SRC_URL[$idx]}" = "$url" ] || return 1
+      # One `<bundle>/<skill>` key, as the reader already required: the same
+      # skill name from two bundles is two different skills, not two pins.
+      if [ -z "$key0" ]; then key0="${CT_KEY[$at]}"; fi
+      [ "${CT_KEY[$at]}" = "$key0" ] || return 1
       seen=0
       i=0
       while [ "$i" -lt "${#ids[@]}" ]; do
@@ -2732,6 +2798,10 @@ resolve_contest () {
       fi
       i=$((i + 1))
     done
+    if [ $(( best_t - oldest )) -gt "$CONTEST_WINDOW" ]; then
+      echo "contest: $subject spans more than the $CONTEST_WINDOW-second window from source[${ids[$best]}]" >>"$LOG"
+      continue
+    fi
     oldest=$(( oldest - CONTEST_MARGIN ))
     if [ "$oldest" -lt 1 ]; then oldest=1; fi
     deepen_to "${ids[$best]}" "$oldest" || continue
@@ -2748,6 +2818,10 @@ resolve_contest () {
       fi
       i=$((i + 1))
     done
+    if [ "$ok" -eq 1 ] && ! on_default_branch "${ids[$best]}" $(( best_t - CONTEST_MARGIN )); then
+      echo "contest: $subject pin at source[${ids[$best]}] is not on the registry's default branch" >>"$LOG"
+      ok=0
+    fi
     if [ "$ok" -eq 1 ]; then
       WON_NAME+=("$subject"); WON_INDEX+=("${ids[$best]}")
       WON_DIGEST+=("${digs[$best]}"); WON_SEEN+=(0); WON_OK+=(0)

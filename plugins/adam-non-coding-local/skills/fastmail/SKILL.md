@@ -96,7 +96,7 @@ For **spreadsheet attachments** (.xlsx / .csv):
    and source, then wait for "yes" / "confirmed".
 3. Once approved, click the **Download** link for the attachment.
 4. After download, use the `xlsx` or `pdf` skill (as appropriate) to parse and
-   summarise the contents.
+   summarize the contents.
 
 For **PDF attachments**, use the `pdf` skill after downloading.
 

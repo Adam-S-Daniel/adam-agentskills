@@ -103,24 +103,72 @@ and prints the verdict line, plus one source line when it falls back.
 
    ```
    git init -q --bare --template= "$tmp/g"
-   git --git-dir="$tmp/g" -c credential.helper= -c core.hooksPath=/dev/null \
+   git --git-dir="$tmp/g" \
+     -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
+     -c protocol.allow=never -c protocol.https.allow=always \
      -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 \
      fetch -q --no-tags --depth=1 --filter=tree:0 \
      https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main
-   git --git-dir="$tmp/g" log -1 --format='%H %ct' FETCH_HEAD
+   git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD
    ```
 
-   The fetch runs with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, and
-   under `timeout 15` where `timeout` exists (macOS has none; the hook's own 30
-   second limit still caps it there). It uses `--git-dir` and never `-C`, so an
-   inherited `GIT_DIR` cannot redirect it. The user's other git config is kept,
-   because a cloud session's proxy authentication may live there. Measured, the
-   fetch transfers one object, the commit, in under a second. The hook strips
-   carriage returns from the `log` output, because a Windows git can end the
-   line with `\r\n`, and checks it in bash: the sha is 40 lowercase hex digits
-   and the epoch is one to ten digits with no leading zero, which is the range
-   the script accepts. A failed fetch or `log`, or output that fails the check,
-   falls back with the reason `the commit lookup failed`.
+   All three commands run under `env -u GIT_DIR -u GIT_WORK_TREE -u
+   GIT_COMMON_DIR -u GIT_INDEX_FILE -u GIT_OBJECT_DIRECTORY -u
+   GIT_ALTERNATE_OBJECT_DIRECTORIES -u GIT_SHALLOW_FILE -u GIT_NAMESPACE -u
+   GIT_GRAFT_FILE GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=`.
+
+   - **Repository location.** It uses `--git-dir` and never `-C`, and drops every
+     variable that names a repository. An inherited `GIT_OBJECT_DIRECTORY` would
+     write the fetch's pack into another repository, and an inherited
+     `GIT_WORK_TREE`, `GIT_COMMON_DIR` or `GIT_SHALLOW_FILE` makes the fetch
+     fail. `GIT_CONFIG_*` is kept, because a cloud session's settings can live
+     there.
+   - **No prompt of any kind.** `GIT_TERMINAL_PROMPT=0` and `credential.helper=`
+     do not stop `GIT_ASKPASS` or `SSH_ASKPASS`, which VS Code terminals and
+     Linux desktops set, so a 401 (the repository going private, say) would raise
+     a dialog. An empty `GIT_ASKPASS` ends git's askpass chain, `SSH_ASKPASS` and
+     `core.askPass` included, and `-c core.askPass=` repeats it.
+   - **https only.** `protocol.allow=never` with `protocol.https.allow=always`
+     means a user's `url."git@github.com:".insteadOf https://github.com/` cannot
+     send the fetch over ssh with their key; the fetch fails and the hook falls
+     back. A user who exports `GIT_ALLOW_PROTOCOL` chooses their own protocols:
+     it takes precedence over these settings and the hook leaves it alone.
+   - **Signatures.** `--no-show-signature` keeps a user's `log.showSignature=true`
+     from putting gpg's report ahead of the `%H %ct` line, which would make every
+     session fall back.
+   - **The user's other git config is kept**, because a cloud session's proxy
+     authentication may live there.
+
+   **The fetch runs under a watchdog, on every platform.** git has no connect
+   timeout (`http.lowSpeedLimit` and `http.lowSpeedTime` apply only once data
+   flows), macOS has no `timeout`, and bash defers a trap while a foreground
+   child runs, so a blackholed proxy would hold the hook until git gave up and a
+   SIGTERM would have no effect until then. The hook starts git in the background
+   and a watcher beside it (`sleep "$limit"`, then `kill -TERM` on git, with its
+   stdio detached so a leftover sleep cannot hold the hook's stdout open, and a
+   TERM trap that stops and reaps its own sleep), and waits for git with the `wait` builtin, which lets the HUP, INT and TERM trap
+   fire at once. When git ends the hook stops the watcher. When the limit passes
+   first, git is stopped and the hook falls back. Every pid is checked as an
+   integer above 1 before any `kill`, and a stop also reaches the stopped
+   process's direct children where `pgrep` exists, because `git fetch` hands the
+   transfer to a `git remote-https` child that otherwise outlives it. The EXIT
+   trap stops any job running in the background, then removes the temp
+   directory.
+
+   **The limit is 15 seconds, or `FLEET_GUIDANCE_FETCH_TIMEOUT` when that is an
+   integer from 1 to 60.** Any other value means 15. Raise it for a slow link,
+   but the hook's own `timeout` is 30 seconds and the download can take 5 of
+   them, so a value above 25 can outlast the hook and leave no verdict. The
+   tests set it to 1 and put a `git` first on `PATH` whose `fetch` hangs for 30
+   seconds, so they exercise the watchdog without waiting out the default; a
+   second case sends SIGTERM to the hook while that fetch hangs.
+
+   Measured, the fetch transfers one object, the commit, in under a second. The
+   hook strips carriage returns from the `log` output, because a Windows git can
+   end the line with `\r\n`, and checks it in bash: the sha is 40 lowercase hex
+   digits and the epoch is one to ten digits with no leading zero, which is the
+   range the script accepts. A failed or stopped fetch, a failed `log`, or output
+   that fails the check, falls back with the reason `the commit lookup failed`.
 
    **Why git and not the REST API.** In claude.ai cloud sessions the egress
    proxy answers `api.github.com` with HTTP 403 ("GitHub access to this
@@ -161,8 +209,10 @@ the merge, so a delivery stamped from it could lose to an older copy.
 '=https' --connect-timeout 3 --max-time 5 --max-filesize 1048576`. `-q` is the
 first argument so curl ignores `~/.curlrc`: a `write-out` there would print into
 the session's context and `location` would turn redirects back on. There is no
-`-L`, so no redirect is followed, and no token or auth header of any kind is
-sent, by curl or by git.
+`-L`, so no redirect is followed, and curl is given no token or auth header of
+any kind. The git step adds no credentials, disables credential helpers and
+prompts, and allows only https, but git applies the user's own config, such as
+`url.<base>.insteadOf` between https URLs or `http.extraHeader`.
 
 `adam-anything-anywhere` moves from 1.0.1 to 1.1.0 (ADR 0009). The hook and the
 three files above are runtime changes, so the pull request waits on the
@@ -172,11 +222,10 @@ three files above are runtime changes, so the pull request waits on the
 
 - Every session with the plugin enabled makes a commit-only git fetch and one
   raw download at start, about 25 kB of `base.md` and one git object. The worst
-  case is bounded at about 20 seconds (15 for the fetch where `timeout` exists,
-  `--max-time 5` for the download), inside the hook's 30-second `timeout`. Where
-  `timeout` does not exist, git's low-speed limits end a stalled transfer after
-  5 seconds and the hook's own limit caps the rest. A failure is bounded the
-  same way. No GitHub API call is made.
+  case is bounded at about 20 seconds (the watchdog's 15 for the fetch, set by
+  `FLEET_GUIDANCE_FETCH_TIMEOUT`, and `--max-time 5` for the download), inside
+  the hook's 30-second `timeout`, on every platform. A failure is bounded the
+  same way, and a SIGTERM ends the hook at once. No GitHub API call is made.
 - In a fleet repo session both this hook and the repo's own `fleet-memory`
   hook run, and the higher stamp wins. The repo's hook stamps its checkout's
   copy with that checkout's git time; this hook stamps `main`'s copy with

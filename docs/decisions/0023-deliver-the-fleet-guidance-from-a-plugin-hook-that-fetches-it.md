@@ -36,7 +36,8 @@ bump so `plugin update` can fire ([ADR 0009](0009-bump-bundle-versions-on-every-
 **`fleet-memory.sh` orders writes to the shared block by a stamp**: the
 payload's git commit time, or 0 outside git. A block with a higher stamp is
 kept. A payload downloaded to a temp file sits in no checkout, so it would
-stamp 0 and lose every contest. The companion `_agent-guidance` change adds
+stamp 0 and lose every contest. The companion `_agent-guidance` change
+([#392](https://github.com/Adam-S-Daniel/_agent-guidance/pull/392)) adds
 `FLEET_GUIDANCE_PAYLOAD_STAMP`: set to decimal epoch seconds together with
 `FLEET_GUIDANCE_PAYLOAD`, it is the payload's stamp. The script ignores a
 stamp with more than ten digits or more than a day in the future, because an
@@ -80,7 +81,7 @@ bundled and gated; only the guidance text is fetched. A bundled copy of
   moot at the cost of one extra process.
 
 **What the hook does, in order.** It never reads stdin, never exits non-zero,
-and prints one verdict line.
+and prints the verdict line, plus one source line when it falls back.
 
 1. A nonempty `FLEET_GUIDANCE_PAYLOAD` in the environment means another
    delivery owns the session (an eval harness, for example): print nothing and

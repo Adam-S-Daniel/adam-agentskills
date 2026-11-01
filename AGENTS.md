@@ -138,6 +138,8 @@ it means to answer both harnesses. Claude-only hooks go in a file the
 
 The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
 
+The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: it installs the session's own checkout's `.claude/hooks/fleet-guidance.md` when `CLAUDE_PROJECT_DIR` carries one, and otherwise fetches `_agent-guidance`'s `base.md` at session start, through the bundled `fleet-memory.sh` either way. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a reviewed pull request and never edited here.
+
 ### Operational gotchas
 
 - **The ADR 0013 layout is data, not test source.** Which skills each plugin

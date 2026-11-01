@@ -283,6 +283,13 @@ multi-repo session runs on the stub alone and opens with
 `fleet-guidance: DEGRADED`. The stub carries the load-bearing rules inline, so
 such a session is diminished rather than blind; it is still not what you want.
 
+The `adam-anything-anywhere` plugin also delivers the guidance
+([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
+its own SessionStart hook fetches `base.md` from GitHub and installs it, so a
+session that has the plugin enabled is not left on the stub alone when this
+wiring finds no repo. The wiring still matters for a repo's own pinned bundles
+and for a session without the plugin.
+
 They are two GROUPS, not two commands in one, for the reason the registrar in
 `_agent-guidance` gives: a group carries one `matcher` and one `timeout`, and
 these two need different ones. `fleet-memory` copies a local file and wants 30

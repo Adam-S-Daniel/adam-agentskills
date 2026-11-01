@@ -13,6 +13,7 @@
         "ci-job-performance",
         "debug-github-workflows",
         "disarm-inherited-reach",
+        "fan-out-triage",
         "github-actions-repo-settings",
         "review-bash-ci-reliability",
         "skills-doctor",

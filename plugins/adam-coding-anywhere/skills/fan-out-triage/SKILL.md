@@ -21,7 +21,7 @@ versions. Use Explore agents or grep. Write `triage/inventory.md`, one line
 per dependency, each with a real `path:line` reference:
 
 ```
-acme publish --registry   scripts/deploy.sh:4
+acme publish --registry   ci/release.sh:4
 ```
 
 Re-open every cited line before you save; a made-up reference is worse than a

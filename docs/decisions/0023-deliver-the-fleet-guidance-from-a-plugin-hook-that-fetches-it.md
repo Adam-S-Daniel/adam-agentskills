@@ -38,7 +38,11 @@ payload's git commit time, or 0 outside git. A block with a higher stamp is
 kept. A payload downloaded to a temp file sits in no checkout, so it would
 stamp 0 and lose every contest. The companion `_agent-guidance` change adds
 `FLEET_GUIDANCE_PAYLOAD_STAMP`: set to decimal epoch seconds together with
-`FLEET_GUIDANCE_PAYLOAD`, it is the payload's stamp.
+`FLEET_GUIDANCE_PAYLOAD`, it is the payload's stamp. The script ignores a
+stamp with more than ten digits or more than a day in the future, because an
+installed stamp never decreases and one implausible value (a millisecond epoch,
+a date written `YYYYMMDDhhmmss`) would keep every later delivery out. A rejected
+stamp behaves as an unset one.
 
 ## Decision
 
@@ -102,7 +106,8 @@ and prints one verdict line.
    `YYYY-MM-DDTHH:MM:SSZ`, and the epoch must be positive. Python on Windows
    ends a line with `\r\n`, so the hook strips carriage returns from the
    parser's output and checks it again in bash: the sha as above and the epoch
-   as one to ten digits with no leading zero.
+   as one to ten digits with no leading zero, which is the range the script
+   accepts.
 6. Download `agents-md/base.md` **at that commit's sha**, so the bytes are the
    ones the stamp describes and not whatever `main` has moved to.
 7. Accept the download only if it is nonempty, at most 1 MiB, and starts with
@@ -197,7 +202,7 @@ three files above are runtime changes, so the pull request waits on the
 - `_agent-guidance`'s
   [ADR 0016, the freshest delivery wins the shared global block](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
 - The `fleet-memory.sh` copied here:
-  [`_agent-guidance` commit a4ecc5a](https://github.com/Adam-S-Daniel/_agent-guidance/commit/a4ecc5acb63190a7cb746d2680ca7c6d0c7ddad8)
-  (adds `FLEET_GUIDANCE_PAYLOAD_STAMP`)
+  [`_agent-guidance` commit 9181ba0](https://github.com/Adam-S-Daniel/_agent-guidance/commit/9181ba072726e6f25f85aea01aa670778a376cb4)
+  (adds `FLEET_GUIDANCE_PAYLOAD_STAMP` and bounds it)
 - `plugins/adam-anything-anywhere/hooks/`,
   `scripts/test_fleet_guidance_hook.py`, `docs/multi-repo-delivery.md`

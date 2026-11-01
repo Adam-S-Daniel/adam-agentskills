@@ -423,7 +423,7 @@ def test_the_checkout_wins_even_when_fetching_is_off(world):
 def test_the_checkout_does_not_outrank_a_later_delivery(world):
     # fleet-memory.sh orders by stamp, so a checkout older than the block
     # already installed leaves it alone.
-    world.preinstall("NEWER CANARY", 1800000000)
+    world.preinstall("NEWER CANARY", 1750000000)
     before = world.claude_md.read_bytes()
     repo = world.checkout(payload("CHECKOUT CANARY"), CHECKOUT_STAMP)
     proc = world.run(CLAUDE_PROJECT_DIR=str(repo))
@@ -526,6 +526,22 @@ def test_an_answer_that_is_not_a_commit_falls_back(world, answer):
     proc = world.run()
     assert_bundled_fallback(world, proc, "the GitHub API answer was not a commit")
     assert world.urls() == [API_URL]
+
+
+@posix_only
+def test_a_commit_date_far_in_the_future_is_not_installed_as_the_stamp(world):
+    # 4070908800 is 2099-01-01. It is ten digits, so the hook passes it on, and
+    # the bundled fleet-memory.sh ignores a stamp later than a day from now (an
+    # installed stamp never decreases, so it would lock every later delivery
+    # out). The block is still installed.
+    world.set_api(api_answer(date="2099-01-01T00:00:00Z"))
+    proc = world.run()
+    assert proc.stdout.startswith("fleet-guidance: installed"), proc.stdout
+    assert verdict_version(proc.stdout) == sha8(world.fetched)
+    text = world.claude_md.read_text(encoding="utf-8")
+    assert "FETCHED CANARY" in text
+    assert "fleet-guidance-delivered: 4070908800" not in text
+    assert world.urls() == [API_URL, RAW_URL]
 
 
 @posix_only
@@ -648,7 +664,7 @@ def test_a_payload_override_means_another_delivery_owns_the_session(world, tmp_p
 
 @posix_only
 def test_a_block_delivered_later_than_the_fetched_commit_is_kept(world):
-    world.preinstall("NEWER CANARY", 1800000000)
+    world.preinstall("NEWER CANARY", 1750000000)
     before = world.claude_md.read_bytes()
     proc = world.run()
     assert "kept newer" in proc.stdout, proc.stdout

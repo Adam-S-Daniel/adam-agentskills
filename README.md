@@ -79,7 +79,7 @@ plugin contains a symlink.
 
 | Plugin | Default | For | Surfaces |
 | --- | --- | --- | --- |
-| `adam-anything-anywhere` | enabled | general thinking and writing skills | claude.ai web, iOS, Chrome, Desktop, and Claude Code |
+| `adam-anything-anywhere` | enabled | general thinking and writing skills, plus a startup hook that installs the fleet guidance | claude.ai web, iOS, Chrome, Desktop, and Claude Code |
 | `adam-coding-anywhere` | enabled | CI, GitHub and skill-delivery skills | Claude Code terminals and cloud sessions |
 | `adam-coding-local` | opt-in | machine-bound coding skills (WSL/Windows homes, a signed-in browser) | Claude Code on the owner's machines |
 | `adam-non-coding-local` | opt-in; on in Windows, off in WSL/Linux on the owner's machines ([below](#which-bundles-on-which-os)) | PDF and Fastmail skills | the Claude Desktop app's local Cowork |

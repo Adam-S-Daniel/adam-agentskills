@@ -112,3 +112,4 @@ Optional sections for high-impact decisions:
 | [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (pilot in this repo) |
 | [0021](0021-automated-skill-changes-merge-without-review.md) | Automated skill changes from the evals loop (removals, accepted improvements and new skills) merge without review | Accepted |
 | [0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md) | Install the newer pin when one lock descends from the other | Accepted |
+| [0023](0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md) | Deliver the fleet guidance from a plugin hook that fetches it | Accepted |

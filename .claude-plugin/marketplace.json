@@ -6,7 +6,7 @@
     {
       "name": "adam-anything-anywhere",
       "source": "./plugins/adam-anything-anywhere",
-      "description": "Adam's skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. Writing ADRs and resolving task ambiguity.",
+      "description": "Adam's skills for any Claude surface, coding or not: the claude.ai web and iOS apps, Claude in Chrome, the Claude Desktop app, and Claude Code. Writing ADRs and resolving task ambiguity. It also installs the fleet guidance into Claude Code's user memory at session start.",
       "category": "productivity",
       "keywords": ["adr", "documentation", "requirements", "ambiguity", "planning"],
       "defaultEnabled": true

@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-01 — adam-coding-anywhere/fan-out-triage — create
+
+- Motivation: a `new-skill` lesson mined from agent sessions (redacted, 1 pieces of evidence) that the draft loop's triage could not check mechanically.
+- Change: new skill `plugins/adam-coding-anywhere/skills/fan-out-triage/`, drafted by the skills-evals draft loop with skill-creator at `2a40fd2e7c52`; bundle `adam-coding-anywhere` 1.3.4 -> 1.3.5 (PR pending).
+- Eval: draft-loop measurement, skills-evals routine run `20261101T134413Z-2962c7`, 1 trials per arm over 4 new fixtures: with_skill objective 23/25, without_skill 4/25. Not badge input; the fixtures land in a companion skills-evals PR.
+- Outcome: pending review.
+
 ## 2026-10-31 — adam-anything-anywhere/finding-unknowns — edit
 - Motivation: [adam-agentskills#21](https://github.com/Adam-S-Daniel/adam-agentskills/issues/21): a batch of 32 issue bodies was rewritten twice because the output contract changed after filing.
 - Change: new step under "Before implementation": fix the output contract before a batch of whole-object writes, then write one item and read it back before sending the rest; new PURPOSE.md.

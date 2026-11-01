@@ -153,7 +153,10 @@ and prints the verdict line, plus one source line when it falls back.
    process's direct children where `pgrep` exists, because `git fetch` hands the
    transfer to a `git remote-https` child that otherwise outlives it. The EXIT
    trap stops any job running in the background, then removes the temp
-   directory.
+   directory. The watcher signals git only while the hook's own shell is still
+   alive, so a hook killed outright (SIGKILL runs no trap) cannot leave it
+   signalling a pid that has since been reused, and the cleanup ignores further
+   HUP, INT and TERM once it starts, so a second signal cannot cut it short.
 
    **The limit is 15 seconds, or `FLEET_GUIDANCE_FETCH_TIMEOUT` when that is an
    integer from 1 to 60.** Any other value means 15. Raise it for a slow link,

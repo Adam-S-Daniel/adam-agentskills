@@ -109,9 +109,12 @@ stop_jobs() {
 }
 
 # Runs on every exit, a signal included: stops the fetch and its watcher if they
-# are still running, then removes the temp dir.
+# are still running, then removes the temp dir. It ignores HUP, INT and TERM from
+# its first line, so a second signal cannot cut it short half-way (the `exit 0`
+# trap below would end the shell with the jobs still running and the dir left).
 # shellcheck disable=SC2329  # invoked by the EXIT trap below
 cleanup() {
+  trap '' HUP INT TERM
   stop_jobs
   rm -rf -- "$tmp"
 }
@@ -162,7 +165,12 @@ bare="$tmp/g"
 # blackholed proxy would hold the hook until git gave up and a SIGTERM would sit
 # unhandled. `wait` is a builtin, so the trap above fires at once. The watcher's
 # stdio is detached so a sleep it leaves behind can never hold the hook's stdout
-# open, and its TERM trap stops that sleep and waits for it.
+# open, and its TERM trap stops that sleep and waits for it. A hook killed
+# outright (SIGKILL, or two TERMs landing inside the cleanup) runs no cleanup and
+# leaves the watcher to wake at the limit, when git's pid may belong to an
+# unrelated process; so the watcher signals git only while the hook's own shell
+# is still alive. In a ( ) subshell `$$` is that shell's pid (`$BASHPID`, which
+# bash 3.2 lacks, would be the subshell's own), and `kill -0` sends no signal.
 "${git_env[@]}" git --git-dir="$bare" \
     -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
     -c protocol.allow=never -c protocol.https.allow=always \
@@ -174,8 +182,10 @@ gpid=$!
   trap 'stop_jobs; exit 0' HUP TERM
   sleep "$limit" &
   # Only a sleep that ran its full length stops git: a sleep stopped by the hook
-  # (git ended first) must not signal a pid that has been reaped.
-  { wait "$!"; } 2>/dev/null && stop_pid "$gpid"
+  # (git ended first) must not signal a pid that has been reaped. And only while
+  # the hook's own shell is alive: if it is gone, nothing reaps or waits for git,
+  # and its pid may have been reused.
+  { wait "$!"; } 2>/dev/null && kill -0 "$$" 2>/dev/null && stop_pid "$gpid"
 ) </dev/null >/dev/null 2>&1 &
 wpid=$!
 { wait "$gpid"; } 2>/dev/null

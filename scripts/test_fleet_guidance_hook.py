@@ -26,9 +26,12 @@ Hermetic and deterministic:
     it, or unsets it to test the hook's own protocol settings;
   - a recording `sleep` first on PATH logs the pid of every sleep the hook
     starts, and every run checks that none is left alive;
-  - the commit and the base.md bytes are invented. No sleeps and no wall clock.
-    The timeouts are deadline guards on a subprocess, and the stalled-fetch
-    cases poll a log file only up to a monotonic deadline.
+  - the commit and the base.md bytes are invented. No fixed sleeps and no wall
+    clock. The timeouts are deadline guards on a subprocess, and the stalled-fetch
+    cases poll a log file or a pid only up to a monotonic deadline. The case that
+    kills the hook outright gates the watchdog's own sleep on a fifo, so no limit
+    has to elapse; the one timing case measures a good run against a limit three
+    times longer than it may take.
 
 The shell-driven tests are POSIX-only; the shape tests also run on Windows.
 
@@ -124,11 +127,44 @@ printf '%s %s\n' "$$" "$*" >> "$FAKE_SLEEP_LOG"
 exec REAL_SLEEP "$@"
 """
 
+# A sleep for the watchdog that does not count down: `sleep GATED_ARG` logs like
+# any other, then ends with status 0, as if the full time had passed, the moment
+# one byte arrives on the fifo GATE_FIFO. It keeps the name `sleep`, so the
+# leftover check still sees it. Any other `sleep` is the real one.
+GATED_SLEEP = r"""#!/usr/bin/env bash
+printf '%s %s\n' "$$" "$*" >> "$FAKE_SLEEP_LOG"
+if [ "$1" = GATED_ARG ]; then
+  exec -a sleep head -c 1 GATE_FIFO
+fi
+exec REAL_SLEEP "$@"
+"""
+
+# A pgrep that records its argv and runs the real one. The hook's stop_pid calls
+# it before it signals anything, so a log line means a stop was attempted.
+FAKE_PGREP = r"""#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_PGREP_LOG"
+exec REAL_PGREP "$@"
+"""
+
+# A pgrep whose FIRST call logs and then holds until one byte arrives on the fifo
+# HOLD_FIFO, so a test can keep the hook inside its cleanup (stop_pid calls pgrep)
+# while it sends a second signal. Later calls, and the held one once released, run
+# the real pgrep.
+HELD_PGREP = r"""#!/usr/bin/env bash
+if [ ! -e HOLD_MARK ]; then
+  : > HOLD_MARK
+  printf '%s\n' "$*" >> "$FAKE_PGREP_LOG"
+  head -c 1 HOLD_FIFO > /dev/null
+fi
+exec REAL_PGREP "$@"
+"""
+
 # A git that stalls: the real one for every subcommand but `fetch`, where it logs
 # its pid and hangs for 30 s, the way a fetch to a blackholed proxy does.
 # HANG_COMMAND is `exec sleep 30` (git itself hangs), or `sleep 30 & wait` (git
 # hands the transfer to a child, as it does to git remote-https, and hangs
-# waiting for it).
+# waiting for it), or the same with a TERM trap that records the signal in
+# $FAKE_TERM_LOG, so a test can see that something stopped it.
 STALLED_GIT = r"""#!/usr/bin/env bash
 for arg in "$@"; do
   if [ "$arg" = fetch ]; then
@@ -138,7 +174,11 @@ for arg in "$@"; do
 done
 exec REAL_GIT "$@"
 """
-STALLS = {"git-hangs": "exec sleep 30", "child-hangs": "sleep 30 & wait"}
+STALLS = {
+    "git-hangs": "exec sleep 30",
+    "child-hangs": "sleep 30 & wait",
+    "term-recorded": "trap 'echo TERM >> \"$FAKE_TERM_LOG\"; exit 143' TERM; sleep 30 & wait",
+}
 
 # A git whose fetch waits until the hook's watchdog has started its sleep (the
 # sleep log has a line), so a test can read the watchdog's limit without racing a
@@ -233,6 +273,31 @@ def live_sleeps(pids):
     return found
 
 
+def parent_pid(pid: int) -> int:
+    proc = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True)
+    assert proc.returncode == 0 and proc.stdout.strip().isdigit(), (pid, proc)
+    return int(proc.stdout.strip())
+
+
+def kill_if_ours(pid, marker: str):
+    """SIGKILL `pid` if it is a live process whose command line holds `marker`.
+    A pid of 1 or less is never looked at, let alone signalled."""
+    if not isinstance(pid, int) or pid <= 1:
+        return
+    args = process_args(pid)
+    if args and marker in args:
+        os.kill(pid, signal.SIGKILL)
+
+
+def wait_until(condition, what: str, timeout: float = 60):
+    """Poll `condition` until it holds. The monotonic deadline is only the guard
+    against a case that hangs; nothing here waits a fixed time."""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, f"timed out waiting for {what}"
+        time.sleep(0.01)
+
+
 def snapshot(directory: Path) -> dict:
     """Every path under `directory` with its bytes, to prove nothing was written."""
     return {str(p.relative_to(directory)): (p.read_bytes() if p.is_file() else None)
@@ -260,6 +325,8 @@ class World:
         curl.write_text(FAKE_CURL, encoding="utf-8")
         curl.chmod(0o755)
         self.sleep_log = tmp_path / "sleep.log"
+        self.pgrep_log = tmp_path / "pgrep.log"
+        self.term_log = tmp_path / "term.log"
         real_sleep = shutil.which("sleep", path=clean_path())
         assert real_sleep is not None
         self.install(self.bin / "sleep",
@@ -367,6 +434,42 @@ class World:
                      .replace("HANG_COMMAND", STALLS[how]).replace("REAL_GIT", shlex.quote(real)))
         return stalls
 
+    def gate_sleep(self, limit: int) -> Path:
+        """Put a sleep first on PATH whose `sleep <limit>` (the watchdog's) does not
+        count down: it ends, status 0, when one byte is written to the returned
+        fifo. The caller opens the fifo O_RDWR first, so the sleep's own open of it
+        never blocks."""
+        gate = self.tmp / "sleep.gate"
+        os.mkfifo(gate)
+        real_sleep = shutil.which("sleep", path=clean_path())
+        assert real_sleep is not None
+        self.install(self.bin / "sleep",
+                     GATED_SLEEP.replace("GATED_ARG", str(limit))
+                     .replace("GATE_FIFO", shlex.quote(str(gate)))
+                     .replace("REAL_SLEEP", shlex.quote(real_sleep)))
+        return gate
+
+    def record_pgrep(self) -> Path:
+        """Put a recording pgrep first on PATH. Returns the file it logs to."""
+        real = shutil.which("pgrep", path=clean_path())
+        assert real is not None
+        self.install(self.bin / "pgrep", FAKE_PGREP.replace("REAL_PGREP", shlex.quote(real)))
+        return self.pgrep_log
+
+    def hold_pgrep(self) -> Path:
+        """Put a pgrep first on PATH whose first call logs to pgrep_log and then
+        holds until one byte is written to the returned fifo (the caller opens it
+        O_RDWR first)."""
+        real = shutil.which("pgrep", path=clean_path())
+        assert real is not None
+        hold = self.tmp / "pgrep.hold"
+        os.mkfifo(hold)
+        self.install(self.bin / "pgrep",
+                     HELD_PGREP.replace("HOLD_MARK", shlex.quote(str(self.tmp / "pgrep.held")))
+                     .replace("HOLD_FIFO", shlex.quote(str(hold)))
+                     .replace("REAL_PGREP", shlex.quote(real)))
+        return hold
+
     def git_calls(self):
         text = self.git_log.read_text(encoding="utf-8") if self.git_log.exists() else ""
         return [line.rstrip("\t").split("\t") for line in text.splitlines()]
@@ -394,6 +497,8 @@ class World:
             "FAKE_CURL_LOG": str(self.log),
             "FAKE_RAW_BODY": str(self.raw_body),
             "FAKE_SLEEP_LOG": str(self.sleep_log),
+            "FAKE_PGREP_LOG": str(self.pgrep_log),
+            "FAKE_TERM_LOG": str(self.term_log),
             # The hook allows only https. The local bare repo that stands in for
             # GitHub is a file URL, so the fixture lets that through.
             "GIT_ALLOW_PROTOCOL": "file",
@@ -861,6 +966,143 @@ def test_a_sigterm_while_the_fetch_is_stalled_ends_the_hook_and_cleans_up(world,
     assert list(world.tmpdir.iterdir()) == []
     stalled = [int(line) for line in stalls.read_text(encoding="utf-8").split()]
     assert len(stalled) == 1 and live_sleeps(stalled) == []
+
+
+@posix_only
+@needs_pgrep
+@pytest.mark.parametrize("how", HANG_KINDS)
+def test_a_second_signal_cannot_cut_the_cleanup_short(world, how):
+    # Two TERMs a few ms apart: the first starts the cleanup, the second lands in
+    # the middle of it. Left to the `exit 0` trap it would end the shell there,
+    # with the fetch and the watcher still running and the temp dir still on disk.
+    # The first pgrep the cleanup runs is held, so "in the middle" is a state the
+    # test waits for and not a moment it hopes to hit.
+    stalls = world.stall_git(how)
+    pgrep_log = world.pgrep_log
+    hold = world.hold_pgrep()
+    release = os.open(str(hold), os.O_RDWR)
+    hook = subprocess.Popen([BASH, str(ON_SESSION_START)], env=world.env(),
+                            cwd=str(world.cwd), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+    stalled = []
+    try:
+        def armed():
+            assert hook.poll() is None, "the hook ended before the watchdog was armed"
+            started = stalls.read_text(encoding="utf-8").split() if stalls.exists() else []
+            return len(started) == 1 and ["15"] in [argv for _pid, argv in world.sleeps()]
+
+        wait_until(armed, "the fetch to stall with the watchdog armed")
+        stalled = [int(line) for line in stalls.read_text(encoding="utf-8").split()]
+        hook.send_signal(signal.SIGTERM)
+        wait_until(lambda: pgrep_log.exists() and pgrep_log.read_text(encoding="utf-8") != "",
+                   "the cleanup to reach its first pgrep")
+        assert hook.poll() is None  # held there, mid-cleanup
+        hook.send_signal(signal.SIGTERM)
+        os.write(release, b"x")
+        out, err = hook.communicate(timeout=10)
+        assert hook.returncode == 0, (hook.returncode, out, err)
+        assert out == "" and err == "", (out, err)
+        assert list(world.tmpdir.iterdir()) == [], "the temp dir was left behind"
+        survivors = live_sleeps(world.sleeper_pids())
+        assert survivors == [], survivors
+        assert all(process_args(pid) is None for pid in stalled), "the fetch was left running"
+    finally:
+        os.close(release)
+        if hook.poll() is None:
+            hook.kill()
+            hook.communicate()
+        world.reap_sleeps()
+        for pid in stalled:
+            kill_if_ours(pid, str(world.bin / "git"))
+
+
+@posix_only
+def test_a_successful_fetch_does_not_wait_out_the_watchdog_limit(world):
+    # A hook that never stops its watcher passes every other case here, because
+    # the watcher's sleep still ends on its own; it just makes every good start
+    # wait the whole limit. With the limit at 60 s a good run must end in well
+    # under a third of it. The subprocess timeout is the guard, not the check.
+    world.hold_git()  # the fetch waits until the watchdog's sleep has started
+    start = time.monotonic()
+    try:
+        proc = world.run(FLEET_GUIDANCE_FETCH_TIMEOUT="60", timeout=45)
+    except subprocess.TimeoutExpired:
+        pytest.fail("a successful fetch was still waiting on the watchdog's 60 s limit")
+    elapsed = time.monotonic() - start
+    assert elapsed < 20, f"a successful fetch took {elapsed:.1f} s with a 60 s limit"
+    assert proc.stdout.startswith("fleet-guidance: installed"), proc.stdout
+    assert "fleet-guidance-source:" not in proc.stdout
+    assert verdict_version(proc.stdout) == sha8(world.fetched)
+    # The watchdog really was armed with the long limit, and run() has already
+    # checked that none of the sleeps the hook started was left alive.
+    assert [argv for _pid, argv in world.sleeps()] == [["60"]]
+    assert live_sleeps(world.sleeper_pids()) == []
+
+
+@posix_only
+@needs_pgrep
+def test_a_watcher_left_behind_by_a_killed_hook_signals_nothing(world):
+    # SIGKILL runs no trap, so the watcher outlives the hook and wakes at the limit.
+    # By then git's pid may belong to an unrelated process (nothing waits for git
+    # any more), so the watcher must not signal it. The hook's own shell is the
+    # witness: the watcher signals only while that is alive.
+    #
+    # The watchdog's sleep is gated on a fifo instead of counting down, so the
+    # "limit passes" moment is the test's to choose and nothing races a clock.
+    # Git's stand-in traps TERM and records it; the pgrep log is the deterministic
+    # witness (the hook's stop_pid runs pgrep before it signals anything, and the
+    # watcher is gone only after that).
+    stalls = world.stall_git("term-recorded")
+    pgrep_log = world.record_pgrep()
+    gate = world.gate_sleep(2)
+    release = os.open(str(gate), os.O_RDWR)  # holds the fifo open: the sleep's open never blocks
+    hook = subprocess.Popen([BASH, str(ON_SESSION_START)],
+                            env=world.env(FLEET_GUIDANCE_FETCH_TIMEOUT="2"),
+                            cwd=str(world.cwd), stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+    stalled = []
+    try:
+        def armed():
+            assert hook.poll() is None, "the hook ended before the watchdog was armed"
+            started = stalls.read_text(encoding="utf-8").split() if stalls.exists() else []
+            sleeping = [argv for _pid, argv in world.sleeps()]
+            return len(started) == 1 and ["2"] in sleeping and ["30"] in sleeping
+
+        wait_until(armed, "the fetch to stall with the watchdog armed")
+        stalled = [int(line) for line in stalls.read_text(encoding="utf-8").split()]
+        (limit_sleep,) = [pid for pid, argv in world.sleeps() if argv == ["2"]]
+        watcher = parent_pid(limit_sleep)
+        assert watcher > 1 and watcher != hook.pid, (watcher, hook.pid)
+
+        # Kill the hook outright, and reap it: a zombie still answers `kill -0`.
+        hook.kill()
+        hook.communicate(timeout=10)
+        assert hook.returncode == -signal.SIGKILL, hook.returncode
+        # What it started outlives it: the watcher and the stalled fetch.
+        assert process_args(watcher) is not None
+        assert process_args(stalled[0]) is not None
+
+        # The limit passes. The watcher wakes, decides, and ends.
+        os.write(release, b"x")
+        wait_until(lambda: process_args(watcher) is None, "the watcher to finish")
+
+        assert (pgrep_log.read_text(encoding="utf-8") if pgrep_log.exists() else "") == "", \
+            "the watcher tried to stop git although the hook was gone"
+        assert (world.term_log.read_text(encoding="utf-8")
+                if world.term_log.exists() else "") == "", "something sent TERM to the fetch"
+        assert process_args(stalled[0]) is not None, "the fetch was stopped"
+    finally:
+        os.close(release)
+        if hook.poll() is None:
+            hook.kill()
+            hook.communicate()
+        # Leave nothing behind: the sleeps (the gated one and the fetch's own) and
+        # the stalled fetch, which only a kill from here ends.
+        world.reap_sleeps()
+        for pid in stalled:
+            kill_if_ours(pid, str(world.bin / "git"))
+    wait_until(lambda: live_sleeps(world.sleeper_pids()) == [] and
+               all(process_args(pid) is None for pid in stalled), "the test's processes to end")
 
 
 # =================================================================================

@@ -170,11 +170,13 @@ note on an `— OK` verdict, not as a problem:
   allows for clock skew between committers. A history with older dates on the
   path between the pins, such as a rebase or a skewed clock, can push the older
   pin outside the window. The outcome is then case (b), never a wrong pick.
-- **`skills-doctor` does not model this yet.** Its `read_union` in
-  `check_provenance.py` copies the hook's original case (b) and reports a
-  resolved name as `deleted-by-the-cross-lock-conflict`. Teaching it requires
-  ancestry it cannot compute offline. That change is a skill-content change
-  with its own impact entry and eval, so it is left to a follow-up.
+- **`skills-doctor` reads the hook's result instead of redoing it.** It
+  cannot compute ancestry offline, so `check_provenance.py` reports a
+  contested name as `resolved-by-newer-pin` only when the hook's install
+  record, newer than every contesting lock, names the bytes on disk at one
+  contesting lock's digest. Any other contest stays
+  `deleted-by-the-cross-lock-conflict`. Added 2026-11-01, after this ADR
+  first shipped saying the doctor did not model the rule.
 
 ## Alternatives considered
 

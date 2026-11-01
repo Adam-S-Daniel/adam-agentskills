@@ -191,8 +191,13 @@ locks are folded into one that names them all.
 (`docs/decisions/0007`), and that changes which questions are per-lock. Rows from
 different locks that agree on a name AND a digest collapse to one install — the
 ordinary fleet shape, where fourteen repos declare the same `adam` bundle. Rows
-that disagree about the digest install **neither**, and the doctor reports that
-as `deleted-by-the-cross-lock-conflict`, naming the locks to reconcile. So
+that disagree about the digest install **neither**, unless the hook proves one is
+the newer pin of the same registry (`docs/decisions/0022`). The doctor cannot
+redo that proof offline, so it reads the hook's install record: a name recorded
+at one contesting lock's digest, with matching bytes and a record newer than
+every contesting lock, is `resolved-by-newer-pin` (a note naming the winning
+lock). Anything else is `deleted-by-the-cross-lock-conflict`, worded as contested
+and naming the locks to reconcile. So
 "has this skill left the lock", "is its bundle still in scope" and "is its
 destination contested" are judged against **every discovered lock at once**: a
 skill dropped from one repo's lock that a sibling repo still declares is not
@@ -548,7 +553,9 @@ exact inversion. No remediation is performed — recommend, do not do.
   folding onto one destination name (`deleted-by-the-dup-guard`, a finding —
   neither row installs), TWO locks naming one destination at different digests
   (`deleted-by-the-cross-lock-conflict`, a finding — the hook installs neither
-  and there is no invented tiebreak; the finding names the locks to reconcile),
+  unless it proves ADR 0022's newer pin, which the doctor reports as the note
+  `resolved-by-newer-pin` only when the install record shows it did; the
+  finding names the locks to reconcile),
   and a repo in the session shipping a `.claude/skills/<name>` of
   its own (`deleted-by-the-collision-guard`, a note — repo-owned is supposed to
   win). The first two share one `dup` arm in the hook and are reported apart

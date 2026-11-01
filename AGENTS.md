@@ -312,6 +312,19 @@ The method (instrument classes, fixture mining, harness rules) is skills-evals'
   accepted form, and keeps `docs/skill-impact.md` append-only. The accepted
   forms are under "Rules" in that file and in the script's docstring.
 
+### Eval-protected skills take correctness fixes only
+
+The required `pytest` job ends with `_agent-guidance`'s `scripts/eval-protected.js`
+([ADR 0034](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0034-the-eval-protection-gate-runs-in-required-ci.md)),
+checked out at a pinned commit. A PR that edits a skill directory whose skill the
+public explorer shows as `keep`, or as having runs on its current text, fails
+unless its body has `Correctness fix: <skill> — <class>: <what was wrong>`
+(class `wrong-command`, `broken-path`, `contradiction` or `safety-gap`). Any edit
+restarts that skill's eval evidence; a wording change goes through skills-evals'
+improve lane instead, whose bot-opened `eval-improve/`, `retire-skill/` and
+`draft-skill/` PRs are exempt. After adding the line, re-run the check: it reads
+the body from the API.
+
 ### Action pins
 
 Workflows name third-party actions by release tag; [`.github/workflows/actions.lock`](.github/workflows/actions.lock) locks each tag to an exact commit, and the runner runs the locked commit even when it disagrees with the tag. The `pytest` job's "Verify action lockfile" step is the shared action [`Adam-S-Daniel/verify-actions-lock`](https://github.com/Adam-S-Daniel/verify-actions-lock); it runs only when a PR touches workflow dependencies and fails on any `--verify` finding except `cooldown-config-ignored` (dependabot.yml's cooldown `exclude`, which the tool ignores). It is not the only guard: the runner rejects forged pins, and GitHub's Require lockfile policy is on. Write the exact tag by hand, regenerate with `gh actions-lock --no-narrow`, and commit both files; review an `actions.lock` diff as you would a SHA pin. A stale or moved pin is fixed with `gh actions-lock --accept-moved`; review the diff. A `reachability-unknown` failure means the GitHub API was unreachable: re-run. Cross-repo reusable workflows (`jobs.<id>.uses`) are not locked, so they take a full commit SHA (`Adam-S-Daniel/cms-platform` refs excepted); a test enforces it. Fleet rule: [ADR 0024](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0024-actions-pin-through-lockfiles.md).

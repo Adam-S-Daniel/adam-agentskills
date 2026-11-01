@@ -225,6 +225,25 @@ def sha8(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()[:8]
 
 
+END_MARK = "<!-- END FLEET GUIDANCE -->"
+CHECK_PREFIX = "fleet-guidance check value: "
+
+
+def check_value(data: bytes) -> str:
+    """The value fleet-memory.sh writes into the block: the LAST 8 hex of the
+    payload's sha256. The verdict's version id is the FIRST 8."""
+    return hashlib.sha256(data).hexdigest()[56:]
+
+
+def assert_check_line_before_end_marker(text: str, data: bytes):
+    """The installed block ends with the check line for `data`, on the line just
+    above the END marker, and the marker appears once."""
+    lines = text.split("\n")
+    assert lines.count(END_MARK) == 1, lines.count(END_MARK)
+    end = lines.index(END_MARK)
+    assert lines[end - 1] == CHECK_PREFIX + check_value(data), lines[max(end - 3, 0):end + 1]
+
+
 def payload(canary: str, size: int = 0) -> bytes:
     """A body that passes the hook's validation, padded to `size` bytes if given."""
     body = HEADER + BODY_TAIL + canary.encode() + b"\n"
@@ -589,7 +608,10 @@ def assert_bundled_fallback(world: World, proc, reason: str):
     assert verdict_version(proc.stdout) == sha8(BUNDLED_PAYLOAD.read_bytes())
     assert lines[1] == SOURCE_LINE.format(reason=reason)
     assert world.claude_md.is_file()
-    assert "FETCHED CANARY" not in world.claude_md.read_text(encoding="utf-8")
+    text = world.claude_md.read_text(encoding="utf-8")
+    assert "FETCHED CANARY" not in text
+    # The block carries the check value of the bundled copy, not of a fetched one.
+    assert_check_line_before_end_marker(text, BUNDLED_PAYLOAD.read_bytes())
     assert_temp_dir_gone(world)
 
 
@@ -609,6 +631,10 @@ def test_a_successful_fetch_installs_the_current_base_md(world):
     text = world.claude_md.read_text(encoding="utf-8")
     assert "FETCHED CANARY" in text
     assert f"fleet-guidance-delivered: {EPOCH}" in text
+    # The check value (the LAST 8 hex of the fetched body's sha256) is the line
+    # just above the END marker, and the hook never prints it.
+    assert_check_line_before_end_marker(text, world.fetched)
+    assert check_value(world.fetched) not in proc.stdout
 
     # Exactly one request: the raw file at the sha git reported. No API call.
     assert world.urls() == [world.raw_url]

@@ -296,7 +296,11 @@ three files above are runtime changes, so the pull request waits on the
 - `_agent-guidance`'s
   [ADR 0016, the freshest delivery wins the shared global block](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
 - The `fleet-memory.sh` copied here:
-  [`_agent-guidance` commit 9181ba0](https://github.com/Adam-S-Daniel/_agent-guidance/commit/9181ba072726e6f25f85aea01aa670778a376cb4)
-  (adds `FLEET_GUIDANCE_PAYLOAD_STAMP` and bounds it)
+  [`_agent-guidance` main bf85a32](https://github.com/Adam-S-Daniel/_agent-guidance/commit/bf85a32ed141fd9e089a168a4f9578d0a7a4a88e)
+  (keeps `FLEET_GUIDANCE_PAYLOAD_STAMP` and its bound, and adds the check
+  value: the installed block ends with a plain-text line
+  `fleet-guidance check value: <last 8 hex of the payload's sha256>`, which
+  the fleet stub asks sessions to quote;
+  [`_agent-guidance` ADR 0035](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0035-sessions-prove-the-guidance-loaded-with-a-check-value.md))
 - `plugins/adam-anything-anywhere/hooks/`,
   `scripts/test_fleet_guidance_hook.py`, `docs/multi-repo-delivery.md`

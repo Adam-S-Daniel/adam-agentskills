@@ -8,16 +8,21 @@
 # fleet repo attached runs no such hook and gets no guidance. This plugin's
 # hook closes that gap.
 #
-# HOW: when the session's own checkout carries .claude/hooks/fleet-guidance.md
-# (CLAUDE_PROJECT_DIR), it installs that file, with no network: the repo's own
-# hook delivers the same bytes with the same git stamp, so the two agree.
-# Otherwise it fetches the CURRENT base.md from GitHub (one commits request, one
-# raw download, both bounded) and installs it through the bundled
-# fleet-memory.sh, stamped with the commit time of main's HEAD so deliveries
-# order correctly against any other. Only the guidance text is fetched; the code
-# that writes it is bundled and gated. When the fetch is off or fails, the
-# bundled fleet-guidance.md beside it is installed instead and one extra line
-# says so.
+# HOW: it asks git for the HEAD commit of main (a commit-only shallow fetch into
+# a private temp bare repo), downloads agents-md/base.md at that commit from
+# raw.githubusercontent.com (both bounded), and installs it through the bundled
+# fleet-memory.sh, stamped with the commit's committer time so deliveries order
+# correctly against any other. Only the guidance text is fetched; the code that
+# writes it is bundled and gated. When the fetch is off or fails, the bundled
+# fleet-guidance.md beside it is installed instead and one extra line says so.
+#
+# Why git and not the REST API: in claude.ai cloud sessions the egress proxy
+# answers api.github.com with HTTP 403 for any repo not attached to the session,
+# public ones included, while git smart-HTTP and raw.githubusercontent.com pass.
+#
+# It never reads anything from the session's project directory. A repo the user
+# opens can carry any data file, and this hook writes the GLOBAL user memory, so
+# a file found there must not be able to reach it.
 #
 # fleet-memory.sh and fleet-guidance.md next to this file are verbatim copies
 # from _agent-guidance, refreshed only by a reviewed pull request. Never edit
@@ -51,18 +56,6 @@ case "${FLEET_GUIDANCE_SKIP:-}" in
     ;;
 esac
 
-# Prefer the session's own checkout. In a fleet repo session the repo's own hook
-# delivers this same file with its git stamp; fetching main instead would race
-# it with a different version, and in a branch checkout of _agent-guidance would
-# replace the branch's guidance with main's. No network.
-checkout_payload="${CLAUDE_PROJECT_DIR:-}/.claude/hooks/fleet-guidance.md"
-if [ -n "${CLAUDE_PROJECT_DIR:-}" ] && [ -f "$checkout_payload" ] \
-    && [ -r "$checkout_payload" ] && [ -s "$checkout_payload" ]; then
-  env -u FLEET_GUIDANCE_PAYLOAD_STAMP FLEET_GUIDANCE_PAYLOAD="$checkout_payload" \
-    "$BASH" "$HERE/fleet-memory.sh"
-  exit 0
-fi
-
 # Install the bundled copy, say so, and stop.
 fall_back() {
   env -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP "$BASH" "$HERE/fleet-memory.sh"
@@ -70,28 +63,11 @@ fall_back() {
   exit 0
 }
 
-# hook_python - print the first interpreter that really runs Python 3.6+.
-# Copied from adam-coding-local's hooks/lib/harness.sh. Chosen by RUNNING it,
-# not by `command -v`: on Windows, python3 can be the Microsoft Store stub,
-# which resolves, prints "Python was not found" and exits 49.
-hook_python() {
-  local candidate
-  for candidate in python3 python; do
-    command -v "$candidate" >/dev/null 2>&1 || continue
-    if "$candidate" -c 'import sys; sys.exit(sys.version_info < (3, 6))' \
-        </dev/null >/dev/null 2>&1; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done
-  return 1
-}
-
 case "$(printf '%s' "${FLEET_GUIDANCE_FETCH:-}" | tr '[:upper:]' '[:lower:]')" in
   0|false|no|off) fall_back "fetching is off (FLEET_GUIDANCE_FETCH)" ;;
 esac
 command -v curl >/dev/null 2>&1 || fall_back "curl is not installed"
-py="$(hook_python)" || fall_back "no working Python"
+command -v git >/dev/null 2>&1 || fall_back "git is not installed"
 
 # umask 077 in a subshell, so it never reaches the fleet-memory.sh run below.
 tmp="$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fleet-guidance.XXXXXX" 2>/dev/null)" \
@@ -99,47 +75,45 @@ tmp="$(umask 077 && mktemp -d "${TMPDIR:-/tmp}/fleet-guidance.XXXXXX" 2>/dev/nul
 trap 'rm -rf -- "$tmp"' EXIT
 trap 'exit 0' HUP INT TERM
 
+# git without any prompt, capped at 15 s where `timeout` exists (macOS has none;
+# the hook's own 30 s limit still caps it there).
+run_git() {
+  if command -v timeout >/dev/null 2>&1; then
+    GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never timeout 15 git "$@"
+  else
+    GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never git "$@"
+  fi
+}
+
 # The commit at the HEAD of main, not the last one touching base.md: its
 # committer date is never earlier than the merge that delivered the current
 # base.md, which a path-filtered history would get wrong for a merged branch.
-# No -L, and no token or auth header of any kind.
-curl -fsS --proto '=https' --proto-redir '=https' --connect-timeout 3 --max-time 5 \
-    --max-filesize 1048576 \
-    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
-    -o "$tmp/commit.json" \
-    'https://api.github.com/repos/Adam-S-Daniel/_agent-guidance/commits?sha=main&per_page=1' \
-  || fall_back "the GitHub API request failed"
-
-# One line out, "<sha> <epoch>". Any failure or exception prints nothing.
-# (Python on Windows ends the line with \r\n, and $(...) keeps the \r.)
-parsed="$("$py" -c '
-import calendar, json, re, sys, time
-try:
-    with open(sys.argv[1], "rb") as handle:
-        data = json.loads(handle.read().decode("utf-8"))
-    if not isinstance(data, list) or not data:
-        raise ValueError("not a non-empty list")
-    sha = data[0]["sha"]
-    date = data[0]["commit"]["committer"]["date"]
-    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise ValueError("bad sha")
-    if not isinstance(date, str) or not re.fullmatch(
-            r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", date):
-        raise ValueError("bad date")
-    epoch = calendar.timegm(time.strptime(date, "%Y-%m-%dT%H:%M:%SZ"))
-    if epoch <= 0:
-        raise ValueError("bad epoch")
-    sys.stdout.write("%s %d\n" % (sha, epoch))
-except Exception:
-    sys.exit(1)
-' "$tmp/commit.json" 2>/dev/null)" || parsed=""
-parsed="${parsed//$'\r'/}"
-sha="${parsed%% *}"
-epoch="${parsed#* }"
+# A commit-only fetch (depth 1, no trees, no blobs, no tags) into a bare repo
+# only this run can see. --git-dir and never -C, so an inherited GIT_DIR cannot
+# redirect it; no credential helper, no hooks. The user's other git config stays
+# (a cloud session's proxy authentication may live there). No token of any kind.
+bare="$tmp/g"
+git init -q --bare --template= "$bare" >/dev/null 2>&1 \
+  || fall_back "the commit lookup failed"
+run_git --git-dir="$bare" \
+    -c credential.helper= -c core.hooksPath=/dev/null \
+    -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 \
+    fetch -q --no-tags --depth=1 --filter=tree:0 \
+    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main >/dev/null 2>&1 \
+  || fall_back "the commit lookup failed"
+commit="$(git --git-dir="$bare" log -1 --format='%H %ct' FETCH_HEAD 2>/dev/null)" \
+  || fall_back "the commit lookup failed"
+# A Windows git can end the line with \r\n, and $(...) keeps the \r.
+commit="${commit//$'\r'/}"
+sha="${commit%% *}"
+epoch="${commit#* }"
 [[ "$sha" =~ ^[0-9a-f]{40}$ && "$epoch" =~ ^[1-9][0-9]{0,9}$ ]] \
-  || fall_back "the GitHub API answer was not a commit"
+  || fall_back "the commit lookup failed"
 
-curl -fsS --proto '=https' --proto-redir '=https' --connect-timeout 3 --max-time 5 \
+# -q first, so curl ignores ~/.curlrc: a write-out there would print into the
+# session, and a location line would turn redirects back on. No -L, and no token
+# or auth header of any kind.
+curl -q -fsS --proto '=https' --proto-redir '=https' --connect-timeout 3 --max-time 5 \
     --max-filesize 1048576 \
     -o "$tmp/base.md" \
     "https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance/$sha/agents-md/base.md" \

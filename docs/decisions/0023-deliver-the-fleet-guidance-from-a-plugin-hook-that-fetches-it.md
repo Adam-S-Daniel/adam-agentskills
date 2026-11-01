@@ -76,9 +76,14 @@ bundled and gated; only the guidance text is fetched. A bundled copy of
   `/usr/bin/env` resolves Git Bash's own `bash` and not WSL's launcher.
 - Naming the interpreter means the script's execute bit is not needed. The hook
   also runs the bundled `fleet-memory.sh` as `"$BASH" "$HERE/fleet-memory.sh"`
-  for the same reason. **Whether claude.ai's sync of a plugin copy drops file
-  modes is UNVERIFIED.** It was not measured; this spelling makes the question
-  moot at the cost of one extra process.
+  for the same reason. **Measured:** the claude.ai-synced copy of this plugin
+  (version 1.0.1, which predates the hook) holds every file at mode 0644 with
+  1980 dates, so a synced copy has no execute bits. That supports `/usr/bin/env bash`, at the
+  cost of one extra process.
+- **UNVERIFIED:** whether claude.ai's sync carries `hooks/` and the manifest's
+  `hooks` key into cloud sessions, and runs them. The synced copy that was
+  measured has no hook, so the question stays open until a hooked version has
+  synced.
 
 **What the hook does, in order.** It never reads stdin, never exits non-zero,
 and prints the verdict line, plus one source line when it falls back.
@@ -90,41 +95,61 @@ and prints the verdict line, plus one source line when it falls back.
    (it treats `""`, `0`, `false`, `no` and `off`, in any case, as off): run the
    bundled script with no payload override, which removes any installed block
    and prints the skipped verdict. No network.
-3. **The session's own checkout wins.** If `CLAUDE_PROJECT_DIR` is nonempty and
-   `$CLAUDE_PROJECT_DIR/.claude/hooks/fleet-guidance.md` is a regular, readable,
-   nonempty file, install that file through the bundled script with no network
-   and no stamp override, so `fleet-memory.sh` stamps it from the checkout's
-   git history. In a fleet repo session the repo's own hook delivers that same
-   payload with its git stamp. Fetching `main` instead would race it with a
-   different version, and in a branch checkout of `_agent-guidance` would
-   replace the branch's guidance with `main`'s. With this step both hooks
-   deliver identical bytes and an identical stamp.
-4. `FLEET_GUIDANCE_FETCH` set to `0`, `false`, `no` or `off`, a missing `curl`,
-   no working Python 3, or no temp directory: fall back.
-5. Ask the GitHub API for the commit at the HEAD of `main`
-   (`commits?sha=main&per_page=1`). Parse it with Python's `json`: the sha must
-   be 40 lowercase hex digits, the committer date must have the exact shape
-   `YYYY-MM-DDTHH:MM:SSZ`, and the epoch must be positive. Python on Windows
-   ends a line with `\r\n`, so the hook strips carriage returns from the
-   parser's output and checks it again in bash: the sha as above and the epoch
-   as one to ten digits with no leading zero, which is the range the script
-   accepts.
-6. Download `agents-md/base.md` **at that commit's sha**, so the bytes are the
+3. `FLEET_GUIDANCE_FETCH` set to `0`, `false`, `no` or `off`, a missing `curl`,
+   a missing `git`, or no temp directory: fall back.
+4. Ask git for the commit at the HEAD of `main`: a commit-only shallow fetch
+   into a bare repository that exists only inside the run's private temp
+   directory, then read the commit's sha and committer time.
+
+   ```
+   git init -q --bare --template= "$tmp/g"
+   git --git-dir="$tmp/g" -c credential.helper= -c core.hooksPath=/dev/null \
+     -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=5 \
+     fetch -q --no-tags --depth=1 --filter=tree:0 \
+     https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main
+   git --git-dir="$tmp/g" log -1 --format='%H %ct' FETCH_HEAD
+   ```
+
+   The fetch runs with `GIT_TERMINAL_PROMPT=0` and `GCM_INTERACTIVE=never`, and
+   under `timeout 15` where `timeout` exists (macOS has none; the hook's own 30
+   second limit still caps it there). It uses `--git-dir` and never `-C`, so an
+   inherited `GIT_DIR` cannot redirect it. The user's other git config is kept,
+   because a cloud session's proxy authentication may live there. Measured, the
+   fetch transfers one object, the commit, in under a second. The hook strips
+   carriage returns from the `log` output, because a Windows git can end the
+   line with `\r\n`, and checks it in bash: the sha is 40 lowercase hex digits
+   and the epoch is one to ten digits with no leading zero, which is the range
+   the script accepts. A failed fetch or `log`, or output that fails the check,
+   falls back with the reason `the commit lookup failed`.
+
+   **Why git and not the REST API.** In claude.ai cloud sessions the egress
+   proxy answers `api.github.com` with HTTP 403 ("GitHub access to this
+   repository is not enabled for this session") for any repo not attached to the
+   session, public ones included. `raw.githubusercontent.com` and git
+   smart-HTTP pass.
+5. Download `agents-md/base.md` **at that commit's sha**, so the bytes are the
    ones the stamp describes and not whatever `main` has moved to.
-7. Accept the download only if it is nonempty, at most 1 MiB, and starts with
+6. Accept the download only if it is nonempty, at most 1 MiB, and starts with
    the exact bytes `# AGENTS.md`, a blank line, and
    ``> **Managed by [`_agent-guidance`].**``.
-8. Run the bundled `fleet-memory.sh` with `FLEET_GUIDANCE_PAYLOAD` set to the
+7. Run the bundled `fleet-memory.sh` with `FLEET_GUIDANCE_PAYLOAD` set to the
    download and `FLEET_GUIDANCE_PAYLOAD_STAMP` set to the commit epoch. Its
    verdict line passes through unchanged.
+
+**The hook never reads anything from the session's project directory.** It
+consults neither `CLAUDE_PROJECT_DIR` nor any file under it. A repo the user
+opens can carry any data file, and this hook writes the user's GLOBAL
+`~/.claude/CLAUDE.md`. A repo's own SessionStart hook needs a settings entry
+that workspace trust gates; a plain data file would need nothing, and could be a
+symlink to a secrets file or carry arbitrary instructions with a far-future git
+commit date that pins the stamp.
 
 **A fallback** runs the bundled script on the bundled `fleet-guidance.md`, then
 prints one line: `fleet-guidance-source: the adam-anything-anywhere plugin's
 bundled copy (<reason>), which can be older than _agent-guidance main`. The
-reason is one of: fetching is off, curl is not installed, no working Python,
-cannot create a temporary directory, the GitHub API request failed, the GitHub
-API answer was not a commit, the base.md download failed, or the downloaded
-base.md failed validation.
+reason is one of: fetching is off, curl is not installed, git is not installed,
+cannot create a temporary directory, the commit lookup failed, the base.md
+download failed, or the downloaded base.md failed validation.
 
 **The stamp is the committer date of `main`'s HEAD, not of the last commit that
 touched `base.md`.** The HEAD commit's date is never earlier than the merge that
@@ -132,10 +157,12 @@ delivered the current `base.md`. A history filtered to the file returns the
 commit that authored the change, and for a merged branch that commit predates
 the merge, so a delivery stamped from it could lose to an older copy.
 
-**Transport.** Both requests use `curl -fsS --proto '=https' --proto-redir
-'=https' --connect-timeout 3 --max-time 5 --max-filesize 1048576`. There is no
+**Transport.** The download uses `curl -q -fsS --proto '=https' --proto-redir
+'=https' --connect-timeout 3 --max-time 5 --max-filesize 1048576`. `-q` is the
+first argument so curl ignores `~/.curlrc`: a `write-out` there would print into
+the session's context and `location` would turn redirects back on. There is no
 `-L`, so no redirect is followed, and no token or auth header of any kind is
-sent.
+sent, by curl or by git.
 
 `adam-anything-anywhere` moves from 1.0.1 to 1.1.0 (ADR 0009). The hook and the
 three files above are runtime changes, so the pull request waits on the
@@ -143,21 +170,25 @@ three files above are runtime changes, so the pull request waits on the
 
 ## Consequences
 
-- Every session with the plugin enabled makes one or two HTTPS requests, about
-  25 kB in all, at start. The worst case is bounded at about 10 seconds
-  (`--max-time 5` on each), inside the hook's 30-second `timeout`, and a
-  failure is bounded by the same limit.
-- The unauthenticated GitHub API allows 60 requests per hour per IP address. A
-  machine without an authenticating proxy, or several machines behind one
-  address, can reach that limit; the hook then falls back to the bundled copy
-  and says so. The raw download is not on that budget.
+- Every session with the plugin enabled makes a commit-only git fetch and one
+  raw download at start, about 25 kB of `base.md` and one git object. The worst
+  case is bounded at about 20 seconds (15 for the fetch where `timeout` exists,
+  `--max-time 5` for the download), inside the hook's 30-second `timeout`. Where
+  `timeout` does not exist, git's low-speed limits end a stalled transfer after
+  5 seconds and the hook's own limit caps the rest. A failure is bounded the
+  same way. No GitHub API call is made.
 - In a fleet repo session both this hook and the repo's own `fleet-memory`
-  hook run. That is harmless: this hook installs the checkout's own copy, so
-  both deliver identical bytes and an identical stamp, an equal version only
-  refreshes an older stamp, and when two writes race the last atomic rename
-  wins, which `_agent-guidance`'s
+  hook run, and the higher stamp wins. The repo's hook stamps its checkout's
+  copy with that checkout's git time; this hook stamps `main`'s copy with
+  `main`'s HEAD time, which is usually the higher. So a branch checkout of
+  `_agent-guidance` can load `main`'s guidance once `main` has moved past the
+  branch's last commit. **Read the branch's `base.md` directly when that
+  matters.** An equal version only refreshes an older stamp, and when two writes
+  race the last atomic rename wins, which `_agent-guidance`'s
   [ADR 0016](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
   accepts.
+- The plugin never reads the project directory, so no repo a user opens can
+  steer what reaches the global `~/.claude/CLAUDE.md` through this hook.
 - The bundled `fleet-memory.sh` and `fleet-guidance.md` are refreshed only by a
   reviewed pull request, so the fallback can lag `main`. The extra
   `fleet-guidance-source:` line is how a session tells.
@@ -170,8 +201,8 @@ three files above are runtime changes, so the pull request waits on the
   disable the plugin. Content outside the managed markers is left untouched.
 - Codex is not covered by this file. It keeps its own registration in
   `_agent-guidance`.
-- Hosts that block `api.github.com` or `raw.githubusercontent.com` get the
-  bundled copy every time.
+- Hosts that block `raw.githubusercontent.com`, or git smart-HTTP to
+  `github.com`, get the bundled copy every time.
 
 ## Alternatives considered
 
@@ -188,9 +219,19 @@ three files above are runtime changes, so the pull request waits on the
 - **Put the hook in `hooks/hooks.json`.** Codex would load it too, which means a
   `commandWindows`, a harness check and a trust prompt for each definition
   (ADR 0017), to deliver something Codex already gets.
-- **Always fetch, even in a fleet repo session.** It is simpler, but it races
-  the repo's own hook with a different version and can replace a branch's
-  guidance with `main`'s.
+- **Prefer the session's own checkout.** If the project directory carries
+  `.claude/hooks/fleet-guidance.md`, install that file and skip the network, so
+  a fleet repo session gets its branch's guidance. Rejected: a data file any
+  repo can carry would reach the global memory with a stamp nothing bounds (the
+  script bounds a caller-supplied stamp, not one read from git history, so a
+  far-future commit date pins it), and it could be a symlink to a secrets file. It also mixes two stamp
+  sources, a checkout's git time and `main`'s HEAD time, which misorders
+  deliveries across sessions.
+- **The REST commits API for the sha and date.** One request
+  (`commits?sha=main&per_page=1`) and a JSON parse. Rejected: the cloud proxy
+  answers `api.github.com` with HTTP 403 for any repo not attached to the
+  session, so it fails in the sessions this hook exists for. It also needs a
+  JSON parser on the host.
 - **Fetch `main`'s `base.md` in one request.** It saves a request but carries no
   commit time, so the stamp would be 0 and lose every ordering contest, and the
   bytes could change between the stamp and the download.

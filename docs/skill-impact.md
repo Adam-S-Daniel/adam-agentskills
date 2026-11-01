@@ -54,6 +54,12 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-01 — adam-coding-anywhere/skills-doctor — edit
+- Motivation: [adam-agentskills#99](https://github.com/Adam-S-Daniel/adam-agentskills/pull/99) changed the bootstrap hook to install the newer pin when one lock descends from another on the same registry ([ADR 0022](decisions/0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md)), but `check_provenance.py`'s `read_union` still copied the old rule and reported a skill the hook had delivered as `deleted-by-the-cross-lock-conflict`.
+- Change: the doctor reads what the hook did: a contested name whose install record entry, newer than every contesting lock, names it at one contesting lock's digest with matching bytes is the note `resolved-by-newer-pin`, naming the winning lock; any other contest stays `deleted-by-the-cross-lock-conflict`, now worded as contested under ADR 0022's conditions; SKILL.md's two statements of the old rule updated; bundle `adam-coding-anywhere` 1.3.5 -> 1.3.6 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261026T144654Z-5dd589` (bucketed-account-store: with_skill objective 4/5, without_skill 3.7/5, n=3); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only, so it cannot measure this branch before merge); no fixture exercises a cross-lock contest, so the behavior is pinned by two new end-to-end tests that drive the real hook.
+- Outcome: pending
+
 ## 2026-11-01 — adam-coding-anywhere/fan-out-triage — create
 
 - Motivation: a `new-skill` lesson mined from agent sessions (redacted, 1 pieces of evidence) that the draft loop's triage could not check mechanically.

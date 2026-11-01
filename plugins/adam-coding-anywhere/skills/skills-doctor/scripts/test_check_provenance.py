@@ -2118,6 +2118,100 @@ def test_two_locks_naming_one_destination_at_different_digests_delete_it(
     assert not (store / "alpha").exists(), verdict
 
 
+def _age_locks_against_the_record(store: Path, *locks: Path,
+                                  newer: Tuple[Path, ...] = ()) -> None:
+    """Put each lock's mtime before (or, for `newer`, after) the record's.
+
+    Set explicitly rather than left to the order the files were written in, so
+    the outcome does not depend on the filesystem's timestamp granularity.
+    """
+    recorded = (store / prov.RECORD_NAME).stat().st_mtime_ns
+    for lock in locks:
+        os.utime(lock, ns=(recorded - 10**9, recorded - 10**9))
+    for lock in newer:
+        os.utime(lock, ns=(recorded + 10**9, recorded + 10**9))
+
+
+@pytest.mark.parametrize("behind_first", [True, False],
+                         ids=["behind-sorts-first", "newer-sorts-first"])
+def test_a_contest_the_hook_resolved_to_the_newer_pin_is_reported_resolved(
+        tmp_path, capsys, ephemeral, behind_first):
+    """ADR 0022, end to end: the doctor reads what the hook did, not the old rule.
+
+    Two locks pin one registry at a commit and its descendant. The real hook
+    installs the newer pin and records it. The doctor cannot redo the ancestry
+    and default-branch checks offline, so it reads the record and the bytes.
+    Before this, it copied the hook's original case (b) and reported a skill the
+    hook had just delivered as `deleted-by-the-cross-lock-conflict`.
+
+    Both lock orders, so the winner the doctor names is the one whose digest is
+    on disk, never the one that sorts first.
+    """
+    suite = _suite()
+    registry = tmp_path / "registry"
+    _, (old_sha, old), (new_sha, new) = suite._linear_registry(registry)
+    project = tmp_path / "repos"
+    behind, newer = ("repo-a", "repo-b") if behind_first else ("repo-b", "repo-a")
+    behind_lock = suite._pin_repo(project, behind, registry, old_sha, old) / "skills.lock"
+    newer_lock = suite._pin_repo(project, newer, registry, new_sha, new) / "skills.lock"
+    home = tmp_path / "home"
+    store = home / ".claude" / "skills"
+
+    proc = suite._run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "installed the newer pin" in suite._verdict(proc), suite._verdict(proc)
+    _age_locks_against_the_record(store, behind_lock, newer_lock)
+
+    code, out = run_autolock(store, project, capsys)
+    text = flat(out)
+    assert "[resolved-by-newer-pin] alpha" in text, out
+    assert "cross-lock-conflict" not in out, out
+    assert f"the winning lock is `{newer_lock}`, installed over `{behind_lock}`" \
+        in text, out
+    assert code == 0, out
+
+
+def test_a_contest_the_hook_has_not_resolved_is_still_a_conflict(
+        tmp_path, capsys, ephemeral):
+    """A contesting lock newer than the record: the doctor cannot tell, so conflict.
+
+    Run one installs alpha from repo-a's pin alone and records it. Then repo-b,
+    whose pin has DIVERGED from repo-a's, joins the session. The record still
+    names alpha at a digest one contesting lock pins and the bytes still match,
+    which is the resolved shape on its face. But repo-b's lock is newer than the
+    record, so no hook run has judged this contest, and the next one installs
+    neither. The doctor must report the conflict, phrased as contested, and must
+    not name a winner.
+    """
+    suite = _suite()
+    registry = tmp_path / "registry"
+    _base, (side_sha, side), (main_sha, main) = suite._diverged_registry(registry)
+    project = tmp_path / "repos"
+    lock_a = suite._pin_repo(project, "repo-a", registry, side_sha, side) / "skills.lock"
+    home = tmp_path / "home"
+    store = home / ".claude" / "skills"
+
+    proc = suite._run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert (store / "alpha").is_dir(), suite._verdict(proc)
+    lock_b = suite._pin_repo(project, "repo-b", registry, main_sha, main) / "skills.lock"
+    _age_locks_against_the_record(store, lock_a, newer=(lock_b,))
+
+    code, out = run_autolock(store, project, capsys)
+    text = flat(out)
+    assert code == 1, out
+    assert "[deleted-by-the-cross-lock-conflict] alpha" in text, out
+    assert "resolved-by-newer-pin" not in out, out
+    assert "the hook installs the newer pin only when" in text, out
+    assert "(ADR 0022); otherwise it installs neither" in text, out
+
+    # The next run proves the doctor right: it installs neither.
+    proc = suite._run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    verdict = suite._verdict(proc)
+    assert "claimed at different digests by different locks" in verdict, verdict
+    assert not (store / "alpha").exists(), verdict
+
+
 def _forge(store: Path, name: str, **fields) -> None:
     """Rewrite one record row's fields in place, leaving the rest of it alone."""
     path = store / prov.RECORD_NAME
@@ -2315,6 +2409,13 @@ def test_every_fate_on_the_ladder_is_one_the_hook_can_reach(fate, tmp_path):
         prov.hook_fate(contested, "contested", replaceable=True, repo_owned={},
                        union=ALONE._replace(conflicted={
                            "contested": ("a.lock", "b.lock")})),
+        # A losing lock of a resolved contest (ADR 0022): its digest is not
+        # the winner's, so its row is skipped before `may_replace`.
+        prov.hook_fate(contested, "contested", replaceable=False,
+                       repo_owned={},
+                       union=ALONE._replace(resolved={
+                           "contested": prov.NewerPin(
+                               "b" * 64, ("b.lock",), ("a.lock",))})),
         prov.hook_fate(lock, "alpha", replaceable=True,
                        repo_owned={"alpha": tmp_path}, union=ALONE),
         prov.hook_fate(lock, "alpha", replaceable=True, repo_owned=None,

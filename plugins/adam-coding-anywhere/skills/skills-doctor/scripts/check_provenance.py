@@ -327,12 +327,13 @@ LOCK_REFUSED = "not-reached-the-lock-is-refused"
 LEFT_UNREPLACED = "left-in-place-unreplaced"
 DELETED_BY_THE_DUP_GUARD = "deleted-by-the-dup-guard"
 DELETED_BY_THE_CROSS_LOCK_CONFLICT = "deleted-by-the-cross-lock-conflict"
+RESOLVED_BY_NEWER_PIN = "resolved-by-newer-pin"
 DELETED_BY_THE_COLLISION_GUARD = "deleted-by-the-collision-guard"
 COLLISION_UNMEASURED = "collision-guard-unmeasured"
 REPLACED = "replaced-by-the-locked-copy"
 FATES = (LOCK_REFUSED, LEFT_UNREPLACED, DELETED_BY_THE_DUP_GUARD,
-         DELETED_BY_THE_CROSS_LOCK_CONFLICT, DELETED_BY_THE_COLLISION_GUARD,
-         COLLISION_UNMEASURED, REPLACED)
+         DELETED_BY_THE_CROSS_LOCK_CONFLICT, RESOLVED_BY_NEWER_PIN,
+         DELETED_BY_THE_COLLISION_GUARD, COLLISION_UNMEASURED, REPLACED)
 
 # The fates under which the locked skill is still delivered out of THIS
 # directory, and therefore the only ones any sentence may say "delivery is
@@ -379,17 +380,47 @@ CROSS_LOCK_CONFLICT_DELETES = (
     "more than one lock discovered in this session names `{name}` as a "
     "destination and they do not agree on the digest for it ({locks}). The "
     "install directory is FLAT, so one destination name is one directory with "
-    "one owner, and there is no non-invented tiebreak between two pinned locks "
-    "— serving bytes under a name whose own lock pins different bytes is the "
-    "integrity guarantee the lock exists for. So the hook stamps every row for "
-    "this name `dup`, removes the destination and installs NEITHER: this "
-    "directory is deleted and the skill is delivered by no lock at all, with "
-    "the verdict naming it after `DEGRADED` as `destination name(s) claimed at "
-    "different digests by different locks, none installed`. Note the direction "
-    "before reading this as a duplicate: locks naming the SAME digest for one "
-    "name are the ordinary fleet shape and collapse to a single install. "
-    "Reconcile the locks — regenerate them against one ref of the registry that "
-    "ships this skill — or open the session on one repo.")
+    "one owner. The name is contested: the hook installs the newer pin only "
+    "when every contesting row comes from the same registry, for the same "
+    "`<bundle>/<skill>` key at the same path, at full commit SHAs, and one pin "
+    "descends from every other, is on the registry's default branch, and "
+    "matches the default branch's copy of the skill today (ADR 0022); "
+    "otherwise it installs neither. This doctor runs offline and cannot check "
+    "ancestry, and nothing in this store shows the hook resolving it: that "
+    "would be an install record, written after every contesting lock, naming "
+    "these bytes at one of the contesting digests. So unless the session's `skills:` verdict carries `installed the "
+    "newer pin` for this name, the hook stamps every row for it `dup`, removes "
+    "the destination and installs NEITHER, with the verdict naming it after "
+    "`DEGRADED` as `destination name(s) claimed at different digests by "
+    "different locks, none installed`. Note the direction before reading this "
+    "as a duplicate: locks naming the SAME digest for one name are the "
+    "ordinary fleet shape and collapse to a single install. Reconcile the "
+    "locks — regenerate them against one ref of the registry that ships this "
+    "skill — or open the session on one repo.")
+# The resolved sibling (ADR 0022). It is a NOTE: the hook reports a resolved
+# contest after `— OK`, not as a problem. The evidence is the hook's own: its
+# install record names this directory at the digest one contesting lock pins,
+# and the bytes still digest to it, and the record is newer than every
+# contesting lock. The hook records a still-locked name only
+# for an install it verified in that run, and removes the destination of a
+# contest it could not resolve, so a record entry that survives with those
+# bytes means the run installed the winner. `{winners}` and `{behind}` are
+# properties of the NAME, so every lock's copy of this note is byte-identical
+# and `dedupe` folds them, as with `CROSS_LOCK_CONFLICT_DELETES`.
+NEWER_PIN_RESOLVES = (
+    "more than one lock discovered in this session names `{name}` at "
+    "different digests, and the hook resolved the contest by installing the "
+    "newer pin of one registry (ADR 0022): its install record names this "
+    "directory at the digest pinned by {winners}, and the bytes here still "
+    "digest to it, so the winning lock is {winners}, installed over {behind}. "
+    "The "
+    "hook's `skills:` verdict carries this as a note (`installed the newer pin "
+    "of ... where one lock is behind another on the same registry`), not as a "
+    "problem. This doctor cannot recheck the ancestry and default-branch "
+    "proofs offline, so this reads the hook's last run: a later run installs "
+    "the same pin only while those proofs still hold, and otherwise removes "
+    "the directory and installs neither. Re-pinning {behind} to the newer ref "
+    "ends the contest.")
 # `{path}` is the WHOLE path to the file, joined by the caller with `/` on a
 # Path rather than assembled here out of a directory and two more segments. The
 # hook's verdict names the repo root because that is what its own loop holds; a
@@ -547,6 +578,7 @@ OBSERVATION_KINDS: Dict[str, Tuple[str, ...]] = {
                          "bytes-are-the-locked-ones",
                          DELETED_BY_THE_DUP_GUARD,
                          DELETED_BY_THE_CROSS_LOCK_CONFLICT,
+                         RESOLVED_BY_NEWER_PIN,
                          DELETED_BY_THE_COLLISION_GUARD,
                          COLLISION_UNMEASURED,
                          "stale-out-of-scope", "stale"),
@@ -714,6 +746,20 @@ class Lock(NamedTuple):
 NO_CONFLICTS: Mapping[str, Tuple[str, ...]] = MappingProxyType({})
 
 
+class NewerPin(NamedTuple):
+    """A contested destination the hook's last run resolved (ADR 0022).
+
+    `digest` is the winning digest, `winners` the locks that pin it and
+    `behind` the other contesting locks. See `resolve_newer_pins`.
+    """
+    digest: str
+    winners: Tuple[str, ...]
+    behind: Tuple[str, ...]
+
+
+NO_NEWER_PINS: Mapping[str, NewerPin] = MappingProxyType({})
+
+
 class Union(NamedTuple):
     """What the NEXT hook run declares, across every lock it discovers.
 
@@ -734,8 +780,12 @@ class Union(NamedTuple):
       flag is `any(...)` over every row for the name, so one lock's authoring
       error stamps the rows the OTHER locks contributed as well.
     * `conflicted` — a destination two or more locks name at DIFFERENT digests,
-      mapped to the locks that disagree. Nothing installs there at all, and no
-      single lock can see the condition.
+      mapped to the locks that disagree, and not shown resolved. Unless the
+      hook proves ADR 0022's newer pin, nothing installs there, and no single
+      lock can see the condition.
+    * `resolved` — a contested destination the hook's own install record and
+      the bytes on disk show it resolved to the newer pin. Kept OUT of
+      `conflicted`. Empty unless `resolve_newer_pins` filled it.
 
     Built from the ACCEPTED locks only — the ones this file reads as PRESENT —
     because a lock the hook refuses contributes no rows and no claims, so
@@ -746,6 +796,7 @@ class Union(NamedTuple):
     claims: Set[Tuple[str, str]]
     duplicated: FrozenSet[str] = frozenset()
     conflicted: Mapping[str, Tuple[str, ...]] = NO_CONFLICTS
+    resolved: Mapping[str, NewerPin] = NO_NEWER_PINS
 
 
 class Surface(NamedTuple):
@@ -1196,6 +1247,15 @@ def lock_names_the_bytes(lock: Lock, name: str,
     return measured is not None and measured in lock.digests.get(name, frozenset())
 
 
+def newer_pin_note(origin: str, name: str, union: Union,
+                   but_here: str) -> Finding:
+    """The `resolved-by-newer-pin` note, identical for every lock that raises it."""
+    pin = union.resolved[name]
+    return _observed(RESOLVED_BY_NEWER_PIN, origin, name, NEWER_PIN_RESOLVES.format(
+        name=name, winners=name_list(list(pin.winners)),
+        behind=name_list(list(pin.behind))) + but_here)
+
+
 def hook_fate(lock: Lock, name: str, *, replaceable: bool,
               repo_owned: Optional[Mapping[str, Path]], union: Union) -> str:
     """What the next hook run does to `~/.claude/skills/<name>`, as one of `FATES`.
@@ -1288,6 +1348,14 @@ def hook_fate(lock: Lock, name: str, *, replaceable: bool,
         raise ValueError(
             f"{name!r} is not a destination this lock names, so the install "
             f"loop never visits it and it has no fate on this ladder")
+    # A losing row of a resolved contest (ADR 0022) is skipped BEFORE the
+    # `may_replace` gate and every removal, so it never touches the directory
+    # the winner owns. A winning row is an ordinary install row and walks the
+    # rest of the ladder. `resolve_newer_pins` keeps duplicated names out of
+    # `resolved`, which is the hook's `intra` precedence.
+    pin = union.resolved.get(name)
+    if pin is not None and pin.digest not in lock.digests.get(name, frozenset()):
+        return RESOLVED_BY_NEWER_PIN
     if not replaceable:
         return LEFT_UNREPLACED
     # The hook's own precedence inside its single `dup` arm: `intra` first, and
@@ -1352,6 +1420,85 @@ def read_union(locks: List[Tuple[Path, Lock]]) -> Union:
             {path for paths in digests.values() for path in paths}))
     return Union(names, claims, frozenset(duplicated),
                  MappingProxyType(conflicted))
+
+
+def _older_than(path: Path, mtime_ns: int) -> bool:
+    """Was `path` last modified strictly before `mtime_ns`? False if unknown."""
+    try:
+        return path.stat().st_mtime_ns < mtime_ns
+    except OSError:
+        return False
+
+
+def resolve_newer_pins(union: Union, locks: List[Tuple[Path, Lock]],
+                       record: Record, skills_dir: Path) -> Union:
+    """Move the contests the hook's last run resolved out of `conflicted`.
+
+    ADR 0022: the hook installs the newer pin of a contested name when every
+    contesting row is one registry's, for one key and path, and that pin
+    descends from the others, is on the default branch and matches the
+    default branch's copy. This doctor runs offline and cannot redo those
+    checks, so it reads what the hook DID instead.
+
+    A contested name counts as resolved only when all of these hold:
+
+    * the install record names it, under the planner's rules, at digest D;
+    * the record's `may_replace` reader vouches for the same name at D, and
+      the directory on disk still digests to D;
+    * D is the digest at least one contesting lock pins (the winners);
+    * every contesting lock claims the recorded (registry, bundle), which is
+      the one-registry condition as far as a lock read offline can show it;
+    * every contesting lock file is OLDER than the record. The hook rewrites
+      the record on every run, so a lock modified at or after the record's
+      mtime is one that run may not have read, and its entry says nothing about
+      the contest that lock started.
+
+    Why the record is evidence: the hook never carries a record entry forward
+    for a name some lock still names (its planner `continue`s on `locked`), so
+    a locked name's entry exists only for an install that run verified. A
+    contest it could not resolve removes the destination and records nothing.
+
+    What it cannot see: a lock file older than the record that the last run
+    still did not discover (the session opened on a different project
+    directory). The note says it reads the hook's last run for that reason.
+    Anything short of all of the above stays in `conflicted`, whose sentence
+    says the name is contested rather than asserting the outcome.
+    """
+    if record.state != PRESENT or not union.conflicted:
+        return union
+    try:
+        recorded_at = (skills_dir / RECORD_NAME).stat().st_mtime_ns
+    except OSError:
+        return union
+    by_path = {str(path): lock for path, lock in locks if lock.state == PRESENT}
+    conflicted = dict(union.conflicted)
+    resolved: Dict[str, NewerPin] = {}
+    for name, paths in union.conflicted.items():
+        entry = record.entries.get(name)
+        if entry is None:
+            continue
+        measured = digest_skill_dir(skills_dir / name)
+        if measured != entry.digest or not record_vouches_for(record, name,
+                                                              measured):
+            continue
+        contesting = [(path, by_path[path]) for path in paths if path in by_path]
+        winners = tuple(path for path, lock in contesting
+                        if measured in lock.digests.get(name, frozenset()))
+        behind = tuple(path for path, lock in contesting
+                       if measured not in lock.digests.get(name, frozenset()))
+        if not winners or not behind:
+            continue
+        if not all((entry.registry, entry.bundle) in lock.claims
+                   for _, lock in contesting):
+            continue
+        if not all(_older_than(Path(path), recorded_at) for path, _ in contesting):
+            continue
+        resolved[name] = NewerPin(measured, winners, behind)
+        del conflicted[name]
+    if not resolved:
+        return union
+    return union._replace(conflicted=MappingProxyType(conflicted),
+                          resolved=MappingProxyType(resolved))
 
 
 def discover_locks(explicit: Optional[str], project_dir: Path) -> List[Path]:
@@ -2430,6 +2577,8 @@ def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
                         name=name,
                         locks=name_list(list(union.conflicted[name])))
                     + but_here))
+            elif fate == RESOLVED_BY_NEWER_PIN:
+                notes.append(newer_pin_note(origin, name, union, but_here))
             elif fate == DELETED_BY_THE_COLLISION_GUARD:
                 notes.append(_observed(
                     DELETED_BY_THE_COLLISION_GUARD, origin, name,
@@ -2451,6 +2600,11 @@ def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
                     notes.append(_observed(
                         "bytes-are-the-locked-ones", origin, name,
                         THE_BYTES_THE_LOCK_NAMES + but_here))
+                # The winning lock of a resolved contest walks the ladder to
+                # the copy; the note naming the contest is the same one each
+                # losing lock raises, so `dedupe` folds them into one.
+                if name in union.resolved:
+                    notes.append(newer_pin_note(origin, name, union, but_here))
             elif in_lock and origin == UNATTRIBUTED:
                 findings.append(_observed(
                     "hand-placed-over-locked", origin, name,
@@ -2571,6 +2725,8 @@ def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
                         name=name,
                         locks=name_list(list(union.conflicted[name])))
                     + but_here))
+            elif fate == RESOLVED_BY_NEWER_PIN:
+                notes.append(newer_pin_note(HOOK, name, union, but_here))
             elif fate == DELETED_BY_THE_COLLISION_GUARD:
                 notes.append(_observed(
                     DELETED_BY_THE_COLLISION_GUARD, HOOK, name,
@@ -2592,6 +2748,8 @@ def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
                     notes.append(_observed(
                         "bytes-are-the-locked-ones", HOOK, name,
                         THE_BYTES_THE_LOCK_NAMES + but_here))
+                if name in union.resolved:
+                    notes.append(newer_pin_note(HOOK, name, union, but_here))
             elif integrity == ARTEFACTS_ONLY:
                 extra = dropped_files(skills_dir / name)
                 findings.append(_observed(
@@ -3651,7 +3809,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # `store_findings` and `shadow_findings` outside the per-lock loop. The
     # union is what the next hook run will install, so every question about
     # what it REMOVES or REFUSES TO INSTALL is asked of this and not of a lock.
-    union = read_union(locks)
+    union = resolve_newer_pins(read_union(locks), locks, record, skills_dir)
     # After the locks, because `project_ships` needs both the names to ask about
     # and the directories to ask in. The hook asks its collision question once
     # per row it is installing, so the candidates are the store's directories

@@ -299,6 +299,11 @@ jobs:
   pytest:
     if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
+    # pull-requests: read for the eval-protection step at the end, which reads
+    # the PR's body and file list fresh from the API.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v7.0.1
         with:
@@ -443,6 +448,47 @@ jobs:
       - name: Run every test suite in the repo
         if: steps.salient.outputs.run == 'true'
         run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto
+      # _agent-guidance ADR 0034: an edit to a skill that eval evidence
+      # currently supports (verdict keep, or runs on its current text) passes
+      # only as a marked correctness fix, because any edit to a skill's
+      # directory restarts its evidence. The gate is _agent-guidance's
+      # scripts/eval-protected.js at a pinned commit; bump the checkout `ref:` with
+      # it. It runs after the suites, so its checkout under the workspace is
+      # never seen by them. The PR body and file list come from the API, so a
+      # re-run after a body edit sees the new body. When a skill is touched
+      # and the explorer cannot be fetched, the gate fails closed: re-run.
+      - name: Check out the eval-protection gate
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@v7.0.1
+        with:
+          repository: Adam-S-Daniel/_agent-guidance
+          ref: fcfaac81c320ddafb58f3a8724960f64232b3eea
+          path: .eval-protection-gate
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            agents-md
+            package.json
+            package-lock.json
+          sparse-checkout-cone-mode: false
+      - name: Eval-protected skills take correctness fixes only
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/eval-protected"
+          mkdir -p "$d"
+          npm ci --prefix .eval-protection-gate --ignore-scripts --no-audit --no-fund
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls/$n/files?per_page=100" \
+            | jq 'add // []' > "$d/files.json"
+          curl -fsSL --retry 3 -o "$d/explorer.json" \
+            https://raw.githubusercontent.com/Adam-S-Daniel/skills-evals/persistent/eval-results/explorer/latest.json \
+            || rm -f "$d/explorer.json"
+          node .eval-protection-gate/scripts/eval-protected.js ci --repo "$GITHUB_REPOSITORY" \
+            --pr-json "$d/pr.json" --files "$d/files.json" --explorer "$d/explorer.json"
 
   # The same suites on Windows, because until #98 they could not run there at
   # all — 72 failures, every one of them a platform fault rather than a real

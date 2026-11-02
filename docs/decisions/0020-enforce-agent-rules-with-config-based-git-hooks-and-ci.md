@@ -86,3 +86,13 @@ re-checks paths over every pushed commit.
   Windows machine may lack, which is the gitleaks failure again.
 - **Global hooks pointing at a script in a checkout.** The sync-skills design;
   it breaks every push when the checkout moves.
+
+## Addendum (2026-11-02)
+
+The `agent-checks` CI job moved out of `ci.yml` into its own workflow,
+`.github/workflows/agent-checks.yml`. The runner now also checks the pull
+request description, so the job must re-run when the description is edited
+(the `edited` activity type), and `ci.yml`'s suites must not. The job id is
+unchanged, so the required context is still `agent-checks`; it has no
+`concurrency:` group and no `paths:` filter, for the reasons a required check
+needs.

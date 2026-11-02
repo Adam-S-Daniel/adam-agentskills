@@ -626,3 +626,37 @@ def test_the_pytest_job_runs_the_skill_gates_on_pull_requests():
                                         "--base", "$BASE_SHA", "--head", "$HEAD_SHA"]
     assert "${{" not in step["run"]
     assert "continue-on-error" not in step
+
+
+AGENT_CHECKS_WORKFLOW = WORKFLOWS_DIR / "agent-checks.yml"
+
+
+def load_agent_checks() -> dict:
+    return yaml.safe_load(AGENT_CHECKS_WORKFLOW.read_text(encoding="utf-8"))
+
+
+def test_agent_checks_is_a_job_of_its_own_workflow_and_not_of_ci():
+    """The required context `agent-checks` is published once: the job lives in
+    agent-checks.yml (so a description edit re-runs it without re-running the
+    suites) and ci.yml must not carry a second one."""
+    assert "agent-checks" in load_agent_checks()["jobs"]
+    assert "agent-checks" not in load_ci()["jobs"]
+
+
+def test_the_agent_checks_job_publishes_its_context_under_its_job_id():
+    job = load_agent_checks()["jobs"]["agent-checks"]
+    assert "name" not in job
+    assert "matrix" not in (job.get("strategy") or {})
+
+
+def test_no_concurrency_group_governs_the_agent_checks_job():
+    doc = load_agent_checks()
+    assert "concurrency" not in doc
+    assert "concurrency" not in doc["jobs"]["agent-checks"]
+
+
+def test_agent_checks_reports_on_every_pull_request_and_reruns_on_an_edit():
+    pull_request = ci_triggers(load_agent_checks())["pull_request"]
+    narrowing = {"paths", "paths-ignore", "branches", "branches-ignore"}
+    assert not (narrowing & set(pull_request)), "a filter would leave the required context unreported"
+    assert {"opened", "edited", "reopened", "synchronize"} <= set(pull_request["types"])

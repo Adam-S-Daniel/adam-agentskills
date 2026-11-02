@@ -9707,6 +9707,256 @@ def test_a_record_that_cannot_be_written_is_reported_rather_than_fatal(
             if path.name.endswith(".tmp")] == [], verdict
 
 
+# --------------------------------------------------------------------------
+# which commit each install came from (_agent-guidance#398)
+#
+# Every record entry carries `ref`, the 40-hex commit its source resolved to,
+# and the record carries `sources`, the distinct (registry, ref) pairs behind
+# those entries. Refs are informational: a missing or bad one only drops the
+# ref, never an install, and an unchanged record is not rewritten at all.
+# --------------------------------------------------------------------------
+
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+
+
+def _record_path(home: Path) -> Path:
+    return home / ".claude" / "skills" / _RECORD
+
+
+def test_installed_entries_carry_the_commit_their_source_resolved_to(
+        tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).endswith("— OK"), _verdict(proc)
+    record = _record(home)
+    assert record["version"] == 1
+    assert [(entry["name"], entry["ref"]) for entry in record["installed"]] == [
+        ("alpha", sha), ("beta", sha)]
+    registry_url = record["installed"][0]["registry"]
+    assert record["sources"] == [{"registry": registry_url, "ref": sha}]
+
+
+def test_a_branch_ref_is_recorded_as_the_commit_it_resolved_to(tmp_path, registry):
+    root, sha = registry
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / ".git").mkdir()
+    proc = run_generator("--repo", str(root),
+                         "--registry", root.resolve().as_uri(),
+                         "--ref", "main", "--bundles", "adam",
+                         "-o", str(project / "skills.lock"))
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads((project / "skills.lock").read_text(
+        encoding="utf-8"))["ref"] == "main"
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).endswith("— OK"), _verdict(proc)
+    record = _record(home)
+    assert {entry["ref"] for entry in record["installed"]} == {sha}
+    assert [row["ref"] for row in record["sources"]] == [sha]
+
+
+def test_an_identical_run_does_not_rewrite_the_record(tmp_path, registry):
+    """Same lock, same bytes: the record's inode and mtime must not move.
+
+    A fixed old mtime is stamped after run 1, so the assertion cannot pass by
+    two writes landing in the same timestamp tick.
+    """
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    first = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert first.returncode == 0, first.stderr
+    record_path = _record_path(home)
+    before_bytes = record_path.read_bytes()
+    os.utime(record_path, ns=(1_000_000_000, 1_000_000_000))
+    before = os.stat(record_path)
+
+    second = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert second.returncode == 0, second.stderr
+    assert _verdict(second).endswith("— OK"), _verdict(second)
+    after = os.stat(record_path)
+    assert after.st_mtime_ns == before.st_mtime_ns == 1_000_000_000
+    assert after.st_ino == before.st_ino
+    assert record_path.read_bytes() == before_bytes
+    assert [path.name for path in (home / ".claude" / "skills").iterdir()
+            if path.name.endswith(".tmp")] == []
+
+
+def test_a_kept_entry_carries_its_ref_forward(tmp_path, registry):
+    """`alpha` leaves the lock edited, so it is kept, not removed: its ref stays."""
+    root, sha = registry
+    home, project = _install_then_relock(tmp_path, registry, {"beta"})
+    with open(home / ".claude" / "skills" / "alpha" / "SKILL.md", "a",
+              encoding="utf-8", newline="") as handle:
+        handle.write("edited by hand\n")
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert (home / ".claude" / "skills" / "alpha" / "SKILL.md").is_file()
+    record = _record(home)
+    assert [(entry["name"], entry["ref"]) for entry in record["installed"]] == [
+        ("alpha", sha), ("beta", sha)]
+    assert [row["ref"] for row in record["sources"]] == [sha]
+
+
+def test_a_failed_source_contributes_no_ref(tmp_path, federated):
+    primary, primary_sha, extra, _extra_sha = federated
+    project = tmp_path / "project"
+    lock_path = _federated_project(project, federated)
+    lock = json.loads(lock_path.read_text(encoding="utf-8"))
+    lock["sources"][0]["ref"] = "0" * 40
+    lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+    home = tmp_path / "home"
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert _verdict(proc).startswith("skills: 1/2 "), _verdict(proc)
+    record = _record(home)
+    assert [(entry["name"], entry["ref"]) for entry in record["installed"]] == [
+        ("alpha", primary_sha)]
+    assert record["sources"] == [
+        {"registry": record["installed"][0]["registry"], "ref": primary_sha}]
+    assert extra.resolve().as_uri() not in json.dumps(record)
+
+
+@pytest.mark.parametrize("shape", ["nested", "fifo"])
+def test_a_hostile_previous_record_neither_hangs_nor_survives(
+        tmp_path, registry, shape):
+    """A previous record the readers must not trust: deep JSON, or a FIFO.
+
+    Opening a FIFO blocks until a writer appears, so every reader of the record
+    has to refuse one without opening it for a blocking read; the bounded
+    `timeout` is what turns a regression into a failure rather than a hang.
+    """
+    if shape == "fifo" and not hasattr(os, "mkfifo"):
+        pytest.skip("no FIFOs on this platform")
+    home, project = _install_then_relock(tmp_path, registry, {"beta"})
+    record_path = _record_path(home)
+    record_path.unlink()
+    if shape == "fifo":
+        os.mkfifo(record_path)
+    else:
+        record_path.write_text("[" * 100_000, encoding="utf-8")
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"}, timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert verdict.startswith("skills: 1/1 "), verdict
+    assert f"could not read the install record {_hook_path(record_path)}" in verdict
+    assert record_path.is_file() and not record_path.is_symlink()
+    record = _record(home)
+    assert [(entry["name"], entry["ref"]) for entry in record["installed"]] == [
+        ("beta", registry[1])]
+
+
+def _extract_record_writer() -> str:
+    """RECORD_PY, the hook's install-record writer, lifted out to run alone.
+
+    Anchored on its own heredoc delimiter, which no other block shares.
+    """
+    text = HOOK.read_text(encoding="utf-8")
+    start = text.index("\n", text.index("<<'RECORD_PY'")) + 1
+    end = text.index("\nRECORD_PY\n", start)
+    block = text[start:end] + "\n"
+    assert "installed_refs.nul" in block and "os.replace" in block, (
+        "the extracted block is not the install-record writer")
+    return block
+
+
+def _run_record_writer(tmp_path: Path, keep=(), installed=(), refs=None,
+                       previous: Optional[dict] = None) -> dict:
+    """Run RECORD_PY over hand-built streams; return the record it wrote.
+
+    `refs` is written verbatim as bytes, so a test can hand it a truncated or
+    malformed stream; None leaves the stream absent.
+    """
+    work = tmp_path / "writer"
+    stream_dir = work / "tmp"
+    stream_dir.mkdir(parents=True)
+    record_path = work / "skills" / _RECORD
+    record_path.parent.mkdir()
+
+    def frame(rows):
+        return "".join(field + "\0" for row in rows for field in row)
+
+    (stream_dir / "keep.nul").write_text(frame(keep), encoding="utf-8", newline="")
+    (stream_dir / "installed.nul").write_text(frame(installed), encoding="utf-8",
+                                              newline="")
+    if refs is not None:
+        (stream_dir / "installed_refs.nul").write_bytes(refs)
+    if previous is not None:
+        record_path.write_text(json.dumps(previous), encoding="utf-8")
+    script = work / "record-writer.py"
+    script.write_text(_extract_record_writer(), encoding="utf-8")
+    proc = subprocess.run(
+        [sys.executable, "-I", str(script)],
+        env={"RECORD_PATH": str(record_path), "TMP_DIR": str(stream_dir),
+             "PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+        capture_output=True, text=True, timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    return json.loads(record_path.read_text(encoding="utf-8"))
+
+
+_REG = "https://example.com/registry.git"
+_D1, _D2 = "1" * 64, "2" * 64
+_C1, _C2 = "a" * 40, "b" * 40
+
+
+def test_a_kept_entry_loses_its_ref_when_the_digest_differs(tmp_path):
+    record = _run_record_writer(
+        tmp_path,
+        keep=[("alpha", _REG, "adam", _D1), ("gamma", _REG, "adam", _D1)],
+        previous={"version": 1, "installed": [
+            {"name": "alpha", "registry": _REG, "bundle": "adam",
+             "digest": _D1, "ref": _C1},
+            {"name": "gamma", "registry": _REG, "bundle": "adam",
+             "digest": _D2, "ref": _C2}]})
+    assert [(entry["name"], entry["ref"]) for entry in record["installed"]] == [
+        ("alpha", _C1), ("gamma", None)]
+    assert record["sources"] == [{"registry": _REG, "ref": _C1}]
+
+
+@pytest.mark.parametrize("refs", [
+    None,
+    b"",
+    b"alpha\0" + _C1.encode(),                 # truncated: no final NUL
+    b"alpha\0",                                # short: name without ref
+    b"alpha\0not-a-commit\0",
+    b"alpha\0" + _C1.upper().encode() + b"\0",
+    b"\xff\xfe\0\0",                           # not UTF-8 at all
+], ids=["missing", "empty", "truncated", "short", "not-hex", "upper-hex",
+        "not-utf8"])
+def test_a_bad_refs_stream_drops_refs_and_nothing_else(tmp_path, refs):
+    record = _run_record_writer(
+        tmp_path,
+        installed=[("alpha", _REG, "adam", _D1), ("beta", _REG, "adam", _D2)],
+        refs=refs)
+    assert [(entry["name"], entry["digest"], entry["ref"])
+            for entry in record["installed"]] == [
+        ("alpha", _D1, None), ("beta", _D2, None)]
+    assert record["sources"] == []
+
+
+def test_a_good_refs_stream_is_read_as_name_ref_pairs(tmp_path):
+    """The positive control for the test above: the same writer, a good stream."""
+    record = _run_record_writer(
+        tmp_path,
+        installed=[("alpha", _REG, "adam", _D1), ("beta", _REG, "adam", _D2)],
+        refs=f"alpha\0{_C1}\0beta\0{_C1}\0".encode())
+    assert [entry["ref"] for entry in record["installed"]] == [_C1, _C1]
+    assert record["sources"] == [{"registry": _REG, "ref": _C1}]
+
+
 def test_another_repos_lock_does_not_reap_this_ones_skills(tmp_path):
     """Two repos, one ~/.claude/skills — the reason the scope is per-source.
 

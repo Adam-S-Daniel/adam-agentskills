@@ -1,6 +1,10 @@
-## What and why
+## TLDR
 
-<!-- One or two sentences: what changes, and the reason. -->
+<!-- One to three plain-English sentences: what changes and why, for someone who has not seen the code. -->
+
+## Details
+
+<!-- What changes, and the reason, with whatever a reviewer needs to check it. -->
 
 ## Checklist
 

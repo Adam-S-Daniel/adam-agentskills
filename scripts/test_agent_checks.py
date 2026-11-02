@@ -47,6 +47,9 @@ def env_for(tmp_path: Path) -> dict:
     home = tmp_path / "home"
     home.mkdir(exist_ok=True)
     env = dict(os.environ)
+    # Under Actions on a pull request these name the REAL event, which the ci check would read.
+    env.pop("GITHUB_EVENT_NAME", None)
+    env.pop("GITHUB_EVENT_PATH", None)
     env.update(HOME=str(home), USERPROFILE=str(home),
                GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig"), GIT_CONFIG_NOSYSTEM="1",
                GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.com",

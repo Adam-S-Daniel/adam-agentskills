@@ -1,0 +1,41 @@
+# ADR 0020: the same .githooks/agent-checks the local git hooks run, over
+# every commit this change adds. The local hooks are feedback and can be
+# skipped with --no-verify; this job is the check that cannot be.
+#
+# Its own workflow, not a job in ci.yml, because the runner also checks the
+# pull request description and so must re-run when the description is edited
+# (the `edited` activity type). ci.yml's suites are expensive and must not
+# re-run on a description edit, and skipping them on `edited` is unsafe: a
+# skipped required job reads as success and would mask an earlier failure on
+# the same sha.
+#
+# `agent-checks` is a required status check, published under the job id, so
+# the job has no `name:` and no matrix. It has no `concurrency:` group (a
+# required check that can fire twice on one head sha, as `opened` and
+# `synchronize` can, must not be cancellable) and no `paths:` filter (a
+# required check that never reports blocks the merge).
+name: agent-checks
+
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run the commit-time checks over this change
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: bash .githooks/agent-checks ci "$BASE" "$HEAD_SHA"

@@ -55,8 +55,10 @@ def build_vector_tree(work: Path) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     _git("init", "-q", cwd=work)
-    _git("add", ".gitignore", "SKILL.md", "a", "nul.bin", NON_ASCII_NAME,
-         "empty.txt", cwd=root)
+    # `add .` rather than naming each file: Windows git mangles a
+    # non-ASCII argv entry. The ignore rules leave out exactly the two
+    # ignored paths, and the force-add below brings one of them back.
+    _git("add", ".", cwd=root)
     _git("add", "-f", "build/keep.log", cwd=root)
     _git("commit", "-q", "-m", "vector", cwd=work)
     return root

@@ -1392,7 +1392,8 @@ CLAUDE_CODE_JSON = HOOKS / "claude-code.json"
 def test_claude_code_json_wires_one_session_start_hook():
     config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
     assert set(config) == {"hooks"}
-    assert set(config["hooks"]) == {"SessionStart"}
+    # PreToolUse is the write-marker hook, checked in test_github_write_marker_hook.py.
+    assert set(config["hooks"]) == {"SessionStart", "PreToolUse"}
     groups = config["hooks"]["SessionStart"]
     assert len(groups) == 1
     group = groups[0]
@@ -1444,6 +1445,7 @@ def test_the_bare_bash_rule_accepts_the_env_bash_command():
     assert errors == []
     config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
     assert check_consistency._bare_bash_hooks(config) == 0
-    # Negative control: the same command with a bare `bash` first is reported.
+    # Negative control: each command with a bare `bash` first is reported (the
+    # SessionStart hook and the PreToolUse write-marker hook).
     bare = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8").replace("/usr/bin/env bash", "bash"))
-    assert check_consistency._bare_bash_hooks(bare) == 1
+    assert check_consistency._bare_bash_hooks(bare) == 2

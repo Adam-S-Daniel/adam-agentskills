@@ -148,6 +148,8 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 
 The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: at session start it fetches `_agent-guidance`'s `main` HEAD commit with a commit-only git fetch and `base.md` at that commit from `raw.githubusercontent.com`, and installs it through the bundled `fleet-memory.sh`. It never reads the project directory. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a reviewed pull request and never edited here.
 
+The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker/github-write-marker.sh`, wired as a `PreToolUse` hook on `Bash` and GitHub MCP tools in the same `hooks/claude-code.json`) enforces the fleet guidance's agent-marker rule: it blocks (exit 2) a GitHub issue, PR, comment or review write whose body lacks `on behalf of @Adam-S-Daniel`, and any APPROVE review. It is Claude-only too, and a verbatim copy of `_agent-guidance`'s `.claude/hooks/github-write-marker.sh` under the same refresh rule; `scripts/test_github_write_marker_hook.py` pins what it blocks and what it never blocks.
+
 ### Operational gotchas
 
 - **The ADR 0013 layout is data, not test source.** Which skills each plugin

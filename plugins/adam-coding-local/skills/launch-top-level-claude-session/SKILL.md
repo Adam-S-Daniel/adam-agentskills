@@ -254,6 +254,8 @@ the script encodes them:
   ConPTY's process group and the claude **TUI exits immediately**. `env` is a transparent
   exec, so claude stays a direct child holding the ConPTY (like the working bare launch),
   just with the right PATH.
+  Verify a launched session's PATH with `tr '\0' '\n' < /proc/<pid>/environ`. PATH belongs in
+  the launcher, not patched into the repos the session works on (e.g. benchmark repos).
 - **`--cd <wsl-path>` sets the working directory** for the session; pass a WSL path
   (`/home/...`), not a Windows path.
 - **Escape every literal `;` in a prompt or remote-control name as `\;` before handing

@@ -114,7 +114,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 - Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
 - Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
-- Eval: baseline on main before the edit: [run 36263643613](https://github.com/Adam-S-Daniel/skills-evals/actions/runs/36263643613), exit 0; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Eval: baseline on main before the edit: routine run `20261103T133006Z-870f69` (stamps-skip-quotes: with 5/5, without 4/5); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
 - Outcome: pending review.
 
 ## 2026-11-03 — adam-coding-anywhere/workflow-path-audit — edit

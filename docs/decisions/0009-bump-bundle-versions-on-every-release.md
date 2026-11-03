@@ -1,6 +1,6 @@
 # 0009. Bump bundle versions on every release so `plugin update` can fire
 
-- **Status:** Proposed (one constraint names the `sync-skills` account uploads, since retired by [0014](0014-retire-the-account-zip-upload-channel.md))
+- **Status:** Accepted (amended 2026-11-03: `scripts/check_plugin_versions.py` enforces it in CI; one constraint names the `sync-skills` account uploads, since retired by [0014](0014-retire-the-account-zip-upload-channel.md))
 - **Date:** 2026-08-31
 - **Deciders:** Adam Daniel
 

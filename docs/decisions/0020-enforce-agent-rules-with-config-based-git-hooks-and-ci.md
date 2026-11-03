@@ -1,6 +1,6 @@
 # 0020. Enforce agent rules with config-based git hooks, backed by CI
 
-- **Status:** Accepted (pilot in this repo)
+- **Status:** Accepted (amended 2026-11-03: no longer only a pilot in this repo; the AGENTS.md sync delivers agent-checks fleet-wide)
 - **Date:** 2026-10-20
 - **Deciders:** Adam Daniel
 

@@ -618,6 +618,53 @@ def test_racing_processes_never_share_a_slot(world, stale):
     assert len(owners) == 2 and owners <= set(range(200, 210))
 
 
+slots_mod = _load("slots")
+
+
+def _sharing_violations(monkeypatch, name, times):
+    """Make os.<name> raise PermissionError, as a Windows sharing violation does,
+    for its first `times` calls on a slot file, and pretend to be on Windows."""
+    real = getattr(os, name)
+    left = {"n": times}
+
+    def flaky(path, *args, **kwargs):
+        if str(path).endswith(".json") and left["n"] > 0:
+            left["n"] -= 1
+            raise PermissionError(13, "The process cannot access the file", str(path))
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr(slots_mod.os, name, flaky)
+    monkeypatch.setattr(slots_mod.os, "name", "nt")
+    monkeypatch.setattr(slots_mod.time, "sleep", lambda _s: None)
+    return left
+
+
+def test_a_slot_file_held_open_on_windows_reads_as_taken(tmp_path, monkeypatch):
+    path = tmp_path / "slot-1.json"
+    _sharing_violations(monkeypatch, "open", 1)
+    assert slots_mod._create(str(path), 201, NOW) is False
+    assert not path.exists()
+
+
+def test_a_takeover_waits_out_windows_sharing_violations(tmp_path, monkeypatch):
+    path = tmp_path / "slot-1.json"
+    path.write_text(json.dumps({"pid": 91, "heartbeat": iso(NOW - dt.timedelta(minutes=10))}) + "\n")
+    unlinks = _sharing_violations(monkeypatch, "unlink", 3)
+    assert slots_mod._take_over(str(path), 202, NOW) is True
+    assert unlinks["n"] == 0
+    assert json.loads(path.read_text())["pid"] == 202
+    assert not (tmp_path / "slot-1.json.takeover").exists()
+
+
+def test_permission_errors_off_windows_are_not_swallowed(tmp_path, monkeypatch):
+    real = os.open
+    monkeypatch.setattr(slots_mod.os, "open", lambda p, *a: (_ for _ in ()).throw(PermissionError(13, "denied", p))
+                        if str(p).endswith(".json") else real(p, *a))
+    monkeypatch.setattr(slots_mod.os, "name", "posix")
+    with pytest.raises(PermissionError):
+        slots_mod._create(str(tmp_path / "slot-1.json"), 203, NOW)
+
+
 # =================================================================================
 # The signer, with a throwaway software key
 # =================================================================================

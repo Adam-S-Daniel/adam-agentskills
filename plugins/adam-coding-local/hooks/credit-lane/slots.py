@@ -30,6 +30,7 @@ import datetime as dt
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -37,6 +38,12 @@ import gate  # noqa: E402
 
 STALE_SECONDS = 180
 TAKEOVER_STALE_SECONDS = 60
+# Windows refuses to delete or re-create a file another process still has open
+# (a sharing violation, raised as PermissionError) until that handle closes.
+# Racing acquirers only hold a slot file open for one read, so a short retry
+# clears it.
+SHARING_RETRIES = 50
+SHARING_RETRY_SECONDS = 0.02
 
 
 def host_kind():
@@ -86,11 +93,32 @@ def _record(pid, now, started=None):
                        "started": started or gate.iso(now), "heartbeat": gate.iso(now)}) + "\n"
 
 
-def _create(path, pid, now):
-    """O_EXCL create; True when this call made the file."""
+def _sharing_retry(call):
+    """Run call(), retrying a Windows sharing violation; re-raise when it persists."""
+    for attempt in range(SHARING_RETRIES):
+        try:
+            return call()
+        except PermissionError:
+            if os.name != "nt" or attempt == SHARING_RETRIES - 1:
+                raise
+            time.sleep(SHARING_RETRY_SECONDS)
+
+
+def _create(path, pid, now, retry=False):
+    """O_EXCL create; True when this call made the file.
+
+    On Windows a file another process is deleting, or still has open, refuses
+    the create with PermissionError: the slot is taken for now. With retry the
+    caller has just deleted it itself and waits for the last handle to close.
+    """
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        fd = _sharing_retry(lambda: os.open(path, flags, 0o644)) if retry else os.open(path, flags, 0o644)
     except FileExistsError:
+        return False
+    except PermissionError:
+        if os.name != "nt":
+            raise
         return False
     with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(_record(pid, now))
@@ -101,6 +129,10 @@ def _take_over(path, pid, now):
     lock = path + ".takeover"
     try:
         fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    except PermissionError:
+        if os.name != "nt":
+            raise
+        return False  # another taker's lock is being deleted: it is busy
     except FileExistsError:
         try:
             if now.timestamp() - os.stat(lock).st_mtime > TAKEOVER_STALE_SECONDS:
@@ -114,10 +146,10 @@ def _take_over(path, pid, now):
         if data is not None and _age(path, data, now) <= STALE_SECONDS:
             return False  # someone refreshed or re-took it meanwhile
         try:
-            os.unlink(path)
+            _sharing_retry(lambda: os.unlink(path))
         except FileNotFoundError:
             pass
-        return _create(path, pid, now)
+        return _create(path, pid, now, retry=True)
     finally:
         try:
             os.unlink(lock)

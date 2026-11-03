@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-03 — adam-coding-local/launch-top-level-claude-session — edit
+
+- Motivation: memory-promotion issue #115; two facts from agent memory were missing from the skill's login-PATH gotcha.
+- Change: added how to verify a launched session's PATH (`/proc/<pid>/environ`) and that PATH belongs in the launcher, not in the repos the session works on; bundle version 2.2.4 to 2.2.5 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
 ## 2026-11-03 — adam-anything-anywhere/finding-unknowns — edit
 
 - Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).

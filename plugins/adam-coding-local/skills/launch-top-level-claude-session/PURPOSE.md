@@ -22,6 +22,9 @@ in a hosted session. It is a machine-bound coding skill;
 - **A missing PATH.** `wsl.exe` does not run the login shell's rc files, so
   the agent's subprocesses could not find `pwsh`, `bun`, etc.; hence the
   captured login PATH injected with `env`, not a wrapping interactive shell.
+  Memory-promotion issue #115 (2026-11-03) added the `/proc/<pid>/environ`
+  check and the rule that PATH is fixed in the launcher, never in the
+  repos the session works on.
 - **A prompt split by `;` (2026-09-24).** `wt.exe` re-parses its command line
   and treats an unescaped `;` as a new-tab separator even inside a quoted
   argument. Prompts containing `;` opened the real tab with the prompt

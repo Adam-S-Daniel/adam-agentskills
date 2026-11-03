@@ -6,7 +6,8 @@ own suite covers it in depth. These tests pin what this plugin depends on: it
 is wired as a Claude-only PreToolUse hook, a GitHub write without the agent
 marker is blocked, one with it passes, an APPROVE review is blocked, and the
 calls a session makes all the time (non-GitHub tools, reads, `git push`,
-GitHub text inside an argument) are never blocked.
+GitHub text inside an argument) are never blocked. The tests that run the
+script are POSIX-only; the shape tests also run on Windows.
 
 Run with the repo's runner, never as a plain script:
     python3 -m pytest scripts/test_github_write_marker_hook.py -q
@@ -30,7 +31,14 @@ CLAUDE_CODE_JSON = HOOKS / "claude-code.json"
 MARKER = "<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"
 BLOCK = 2
 
-pytestmark = pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+# The repo's pattern for hook tests (test_fleet_guidance_hook.py,
+# test_credit_lane.py): the tests that run the script need a POSIX bash; the
+# shape tests also run on Windows. On a Windows runner a bare `bash` is
+# C:\Windows\System32\bash.exe, the WSL launcher (ADR 0016), which exits 1
+# without running the script, so every run_hook() case read as exit 1 there.
+posix_only = pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None or shutil.which("python3") is None,
+    reason="runs the hook script with a POSIX bash and python3")
 
 
 def run_hook(event, cwd=None):
@@ -54,6 +62,7 @@ def mcp(tool, **tool_input):
 
 # ── Blocked: a GitHub write without the marker, and any APPROVE ──────────────
 
+@posix_only
 @pytest.mark.parametrize("event", [
     mcp("mcp__github__create_pull_request", title="t", body="## TLDR\nA change."),
     mcp("mcp__github__add_issue_comment", body="A comment."),
@@ -70,6 +79,7 @@ def test_a_github_write_without_the_marker_is_blocked(event):
     assert MARKER in err  # it tells the agent exactly what to append
 
 
+@posix_only
 @pytest.mark.parametrize("event", [
     mcp("mcp__github__create_pull_request", title="t", body="## TLDR\nA change.\n\n" + MARKER),
     mcp("mcp__github__add_issue_comment", body="A comment.\n\n" + MARKER),
@@ -82,6 +92,7 @@ def test_a_github_write_with_the_marker_passes(event):
     assert rc == 0, err
 
 
+@posix_only
 def test_a_body_file_holding_the_marker_passes(tmp_path):
     body = tmp_path / "body.md"
     body.write_text("Text.\n\n%s\n" % MARKER, encoding="utf-8")
@@ -93,6 +104,7 @@ def test_a_body_file_holding_the_marker_passes(tmp_path):
     assert rc == BLOCK, err
 
 
+@posix_only
 @pytest.mark.parametrize("event", [
     mcp("mcp__github__pull_request_review_write", method="create", event="APPROVE",
         body="Looks right.\n" + MARKER),
@@ -108,6 +120,7 @@ def test_an_approve_review_is_blocked_even_with_the_marker(event):
 
 # ── Never blocked: the calls every session makes ─────────────────────────────
 
+@posix_only
 @pytest.mark.parametrize("event", [
     # Not GitHub at all.
     {"tool_name": "Read", "tool_input": {"file_path": "/tmp/gh-notes.md"}},

@@ -163,8 +163,8 @@ hold before writing.
   only one with Actions tools (`actions_*`), job logs (`get_job_logs`),
   auto-merge and review-thread resolution. Reach: the attached repos.
 - **`github-mcp` — the claude.ai org connector**, in `ListConnectors`, tool
-  prefix varying by surface: the same reads and PR/issue/merge/push/delete
-  writes, none of those four. Reach: a GitHub App allowlist INDEPENDENT of the
+  prefix varying by surface: the same reads and PR/merge/push/delete writes,
+  none of those four; issue writes can 403. Reach: a GitHub App allowlist INDEPENDENT of the
   attached repos. **Probe for it by connector NAME, never a remembered
   prefix**. It checks a PR with `pull_request_read` `method:
   "get_check_runs"` and `"get_status"`; read BOTH (`get_status` can
@@ -188,6 +188,13 @@ commits keep `Co-Authored-By:` and add `Agent: claude-code`/`codex`.
 Explain a merge, close or label change in a marked comment.
 **Never submit an APPROVE review**: it cannot be marked. The
 `github-write-marker.sh` hook enforces it.
+
+## PR descriptions open with a TLDR
+
+Start every PR description with a `## TLDR` heading and one to three
+plain-English sentences on what changes and why. Only an attribution block
+(HTML comments, a `_Requested by …_` line) may precede it. `agent-checks`
+fails a PR without it; editing the description re-runs the check.
 
 ## A GitHub 404 means "not authorized", not "not there"
 

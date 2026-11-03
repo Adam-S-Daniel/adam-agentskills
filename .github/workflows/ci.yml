@@ -73,15 +73,69 @@ jobs:
           # Reject, never rewrite: a prerelease, junk or several lines is not
           # a version to install.
           [[ "$latest" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::npm reported no usable latest Claude Code version"; exit 1; }
-          npm install -g "@anthropic-ai/claude-code@${latest}"
-          version="$(timeout -k 10 60 claude --version)" || { echo "::error::claude --version failed"; exit 1; }
-          # First line only, and only characters a version string needs: this
-          # lands in a markdown code span in the step summary.
-          version="${version%%$'\n'*}"
-          version="${version:0:80}"
-          version="${version//[^A-Za-z0-9._() -]/}"
-          [[ -n "$version" ]] || { echo "::error::claude --version printed no version"; exit 1; }
-          [[ "${version%% *}" == "$latest" ]] || { echo "::error::claude on PATH reports '${version}', not npm latest ${latest}"; exit 1; }
+          # Install, then prove `claude --version` works and reports $latest.
+          # A bad install (run 41670633700 in skills-evals left no native
+          # binary: "claude native binary not installed") is retried with
+          # --force after 5, 10, 20, 40 and 80 s, all inside 180 s from the
+          # first install; no attempt starts if its delay would reach the
+          # limit. SLEEP_CMD and NOW_CMD are test seams, unset in CI.
+          limit=180
+          delays=(5 10 20 40 80)
+          read -r -a sleep_cmd <<<"${SLEEP_CMD:-sleep}"
+          read -r -a now_cmd <<<"${NOW_CMD:-date +%s}"
+          errf="$(mktemp)"
+          trap 'rm -f "$errf"' EXIT
+          start="$("${now_cmd[@]}")"
+          elapsed() { echo $(("$("${now_cmd[@]}")" - start)); }
+          attempt=0
+          last_error=""
+          while :; do
+            attempt=$((attempt + 1))
+            args=(-g)
+            ((attempt == 1)) || args+=(--force)
+            budget=$((limit - $(elapsed)))
+            ((budget >= 1)) || budget=1
+            rc=0
+            out="$(timeout -k 10 "$budget" npm install "${args[@]}" "@anthropic-ai/claude-code@${latest}" 2>&1)" || rc=$?
+            if ((rc != 0)); then
+              last_error="${out:-npm install exited ${rc}}"
+            else
+              hash -r
+              vt=$((limit - $(elapsed)))
+              ((vt >= 1)) || vt=1
+              ((vt <= 60)) || vt=60
+              rc=0
+              # stdout alone is the version; stderr only explains a failure.
+              version="$(timeout -k 10 "$vt" claude --version 2>"$errf")" || rc=$?
+              if ((rc != 0)); then
+                last_error="${version:-$(<"$errf")}"
+                last_error="${last_error:-claude --version failed (exit ${rc})}"
+              else
+                # First line only, and only characters a version string needs:
+                # this lands in a markdown code span in the step summary.
+                version="${version%%$'\n'*}"
+                version="${version:0:80}"
+                version="${version//[^A-Za-z0-9._() -]/}"
+                if [[ -z "$version" ]]; then
+                  last_error="claude --version printed no version"
+                elif [[ "${version%% *}" != "$latest" ]]; then
+                  last_error="claude on PATH reports '${version}', not npm latest ${latest}"
+                else
+                  break
+                fi
+              fi
+            fi
+            idx=$((attempt - 1))
+            if ((idx >= ${#delays[@]})) || (($(elapsed) + delays[idx] >= limit)); then
+              last_error="${last_error%%$'\n'*}"
+              last_error="${last_error//[^[:print:]]/}"
+              echo "::error::Claude Code ${latest} did not install a working claude after ${attempt} attempts in $(elapsed) seconds (last error: ${last_error:0:200})"
+              exit 1
+            fi
+            echo "attempt ${attempt} failed; retrying in ${delays[idx]}s"
+            "${sleep_cmd[@]}" "${delays[idx]}"
+          done
+          echo "Claude Code ${latest} installed and verified on attempt ${attempt}"
           echo "harness: Claude Code ${version} (npm latest)"
           { echo "### Harness"; echo "Claude Code \`${version}\` (npm latest)"; } >> "$GITHUB_STEP_SUMMARY"
       - name: Validate marketplace and plugins

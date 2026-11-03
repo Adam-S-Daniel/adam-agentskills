@@ -30,7 +30,7 @@ def ensure_pypdf():
         import pypdf  # noqa: F401
     except ImportError:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "pypdf", "--break-system-packages", "-q"]
+            [sys.executable, "-m", "pip", "install", "--user", "pypdf", "-q"]
         )
 
 

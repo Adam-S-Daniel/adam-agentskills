@@ -98,7 +98,7 @@ Optional sections for high-impact decisions:
 | [0006](0006-drive-the-account-store-drift-loop-from-one-published-artifact.md) | Drive the account-store drift loop from one published artifact, read by two repos on their own schedules | Superseded by 0014 |
 | [0007](0007-install-the-union-of-every-discovered-lock.md) | Install the union of every discovered lock in a multi-repo session | Accepted (case (b) amended by 0022) |
 | [0008](0008-refuse-symlinks-in-a-skill-directory.md) | Refuse symlinks in a skill directory rather than digest them | Accepted |
-| [0009](0009-bump-bundle-versions-on-every-release.md) | Bump bundle versions on every release so `plugin update` can fire | Proposed (its `sync-skills` constraint retired by 0014) |
+| [0009](0009-bump-bundle-versions-on-every-release.md) | Bump bundle versions on every release so `plugin update` can fire | Accepted (enforced in CI by `scripts/check_plugin_versions.py`; its `sync-skills` constraint retired by 0014) |
 | [0010](0010-let-pinned-channels-own-the-terminal.md) | Let pinned channels own the terminal and leave the account channel the surfaces with nothing else | Accepted (partially superseded by 0014) |
 | [0011](0011-remove-a-school-bell-schedule-skill-from-registry-and-account.md) | Remove a school bell-schedule skill from the registry and the account store | Accepted |
 | [0012](0012-serve-the-account-skills-as-one-repo-synced-plugin.md) | Serve the account's skills as one repo-synced plugin | Superseded by 0013 (`sync-skills` retired by 0014) |
@@ -109,7 +109,7 @@ Optional sections for high-impact decisions:
 | [0017](0017-harness-aware-plugin-hooks-because-codex-loads-them-too.md) | Write harness-aware plugin hooks, because Codex loads them too | Accepted |
 | [0018](0018-api-credit-lane-for-claude-code.md) | Delegate to an API-credit lane when weekly usage runs ahead of pace | Accepted |
 | [0019](0019-point-the-repo-settings-skill-at-repo-settings-instead-of-a-copy.md) | Point the repo-settings skill at repo-settings instead of shipping a copy of its engine | Accepted |
-| [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (pilot in this repo) |
+| [0020](0020-enforce-agent-rules-with-config-based-git-hooks-and-ci.md) | Enforce agent rules with config-based git hooks, backed by CI | Accepted (delivered fleet-wide by the AGENTS.md sync since the pilot) |
 | [0021](0021-automated-skill-changes-merge-without-review.md) | Automated skill changes from the evals loop (removals, accepted improvements and new skills) merge without review | Accepted |
 | [0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md) | Install the newer pin when one lock descends from the other | Accepted |
 | [0023](0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md) | Deliver the fleet guidance from a plugin hook that fetches it | Accepted |

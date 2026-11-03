@@ -1,13 +1,10 @@
 ---
 name: windows-elevation-from-wsl
 description: >-
-  Handle "Access is denied" from powershell.exe or pwsh.exe run inside WSL —
-  Register-ScheduledTask / Set-ScheduledTask on a
-  RunLevel=HighestAvailable task, a service change (Set-Service, Stop-Service,
-  New-Service), an LSA rights grant such as "Log on as a batch job"
-  (SeBatchLogonRight, secedit, ntrights), an HKLM registry write, or any other
-  change to Windows state from a WSL session. Use it BEFORE attempting such a
-  write from WSL and the moment one is denied.
+  Handle "Access is denied" from powershell.exe or pwsh.exe run inside WSL:
+  scheduled-task registration, service changes, LSA rights grants such as
+  SeBatchLogonRight, HKLM writes or any other Windows state change from WSL. Use it
+  before attempting such a write from WSL and the moment one is denied.
 license: MIT
 compatibility: >-
   A WSL session on a Windows host that drives Windows through powershell.exe /

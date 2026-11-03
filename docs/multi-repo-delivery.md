@@ -188,6 +188,7 @@ apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/de
 
 cat > "$user_claude/settings.json" <<'JSON'
 {
+  "skillListingBudgetFraction": 0.02,
   "hooks": {
     "SessionStart": [
       {
@@ -241,6 +242,13 @@ JSON
 echo "wiring: wrote $user_claude/settings.json"
 exit 0
 ```
+
+`skillListingBudgetFraction` doubles Claude Code's skill-listing budget from its
+default 1% of the context window (in characters). A cloud session lists the
+account's skills, the bundles and the plugins together, and at 1% the end of the
+listing loses its descriptions, so those skills cannot trigger. A cloud session
+on 2026-11-03 listed eight `anthropic-skills:` entries by name only.
+The Windows desktop settings carry the same value.
 
 Both groups use `startup|resume|fork`: since Claude Code
 [2.1.214](https://github.com/anthropics/claude-code/releases/tag/v2.1.214) a

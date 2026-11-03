@@ -1,13 +1,10 @@
 ---
 name: compare-pdfpairs
-description: >
-  Compare pairs of PDFs (name.pdf + name<suffix>.pdf in the same folder) to
-  determine whether they would produce identical printouts and whether their
-  embedded text differs — e.g. to safely delete redundant "-signed" or
-  "-needsocr" duplicates. Recursively finds every pair under a directory,
-  rasterizes pages and compares hashes, and diffs extracted text. Triggers:
-  "compare pdf pairs", "find duplicate pdfs", "are these pdfs identical",
-  "which suffixed pdfs can I delete", "dedupe scanned pdfs".
+description: >-
+  Compare PDF pairs (name.pdf + name<suffix>.pdf) under a folder to tell whether they
+  print identically and whether their text differs, e.g. before deleting "-signed" or
+  "-needsocr" duplicates. Triggers: "compare pdf pairs", "find duplicate pdfs", "are
+  these pdfs identical", "dedupe scanned pdfs".
 compatibility: Requires PowerShell 7+ and poppler-utils (pdftoppm, pdftotext) on PATH
 ---
 

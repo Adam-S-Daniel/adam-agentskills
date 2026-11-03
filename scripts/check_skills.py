@@ -20,7 +20,8 @@ Finding classes
   name-dir-mismatch     frontmatter `name` != the skill directory basename
   name-pattern          `name` does not match `name_pattern:`
   field-type            a field's value is not the shape `field_types:` declares
-  length-limit          a string field exceeds its `max_lengths:` entry
+  length-limit          a string field exceeds its `max_lengths:` entry (a registry
+                        entry's own `max_lengths:` overrides the top-level one)
   non-spec-field        a frontmatter key outside `known_fields:`
   dangling-payload-ref  a code block names a missing `<payload_dir>/…` or invokes a bare script
                         (prose-only mentions deliberately do not gate — see PROSE_ONLY_RULE)
@@ -157,6 +158,8 @@ class Registry:
     exists: bool
     order: int
     skills_scanned: int = 0
+    # Per-registry `max_lengths:` entries, layered over the top-level ones.
+    max_lengths: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -353,6 +356,9 @@ def resolve_registries(
         configured = str(entry.get("path") or ".")
         optional = bool(entry.get("optional", False))
         reason = str(entry.get("reason") or "").strip()
+        own_lengths = entry.get("max_lengths") or {}
+        if not isinstance(own_lengths, dict):
+            sys.exit(f"ERROR: registries[{order}] 'max_lengths:' must be a mapping")
 
         overridden = name in overrides
         raw_path = overrides[name] if overridden else configured
@@ -369,6 +375,7 @@ def resolve_registries(
             overridden=overridden,
             exists=resolved.is_dir(),
             order=order,
+            max_lengths=dict(own_lengths),
         )
         registries.append(registry)
 
@@ -1235,8 +1242,13 @@ def run(
         skills = find_skills(registry)
         registry.skills_scanned = len(skills)
         all_skills.extend(skills)
+        registry_config = config
+        if registry.max_lengths:
+            registry_config = dict(config)
+            registry_config["max_lengths"] = {**(config.get("max_lengths") or {}),
+                                               **registry.max_lengths}
         for skill in skills:
-            skill_findings, candidates = check_skill(skill, config)
+            skill_findings, candidates = check_skill(skill, registry_config)
             findings.extend(skill_findings)
             dismissed.append((skill, [c for c in candidates if c.dismissed_by is not None]))
 

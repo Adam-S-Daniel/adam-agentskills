@@ -94,7 +94,9 @@ merges". Adam chose the opposite for both.
   re-pins this repository's own `skills.lock` in a second commit.
 - **A removal is still a one-way door downstream.** A consumer that
   installed the skill loses it on its next update.
-- **The repo-settings half is still owed.** The fleet rule "PR + auto-merge
+- **The repo-settings half was owed; since 2026-11-03 it is in place.** The
+  repo-settings exceptions now exist and loop pull requests auto-merge. The
+  original concern, kept for the record: the fleet rule "PR + auto-merge
   is not a sanctioned bot-write path" needs its own exception ADR in
   repo-settings before either path runs. The improvement path also needs the
   skills-evals GitHub App's secrets and this repository's `eval-improve`

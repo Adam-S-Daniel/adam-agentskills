@@ -44,6 +44,11 @@ registries:
   - name: adam-agentskills
     path: .
     layout: "plugins/*/skills/*/SKILL.md"
+    # Tighter than the spec's 1024: once the skill listing passes Claude Code's character
+    # budget, it drops descriptions, so in a session with many skills the last ones are
+    # listed by name only and rarely trigger (skills-evals#668).
+    max_lengths:
+      description: 400
   - name: cms-platform
     path: ../cms-platform
     layout: "skills/*/SKILL.md"

@@ -1,14 +1,11 @@
 ---
 name: migrate-claude-memory
-description: >
+description: >-
   Inventory and clean up Claude Code auto-memory stores under
-  ~/.claude/projects/<munged-path>/memory/ on this machine. List decoded paths,
-  file counts, sizes, and freshness; identify ORPHANED stores for human review;
-  keep undecodable or ambiguous stores UNRESOLVED and never delete on that
-  basis. Trigger on "clean up claude memory", "migrate claude memory",
-  "inventory memory stores", "orphaned memory", or mentions of
-  `~/.claude/projects`. LOCAL-ONLY: requires this machine's ~/.claude
-  directory; do not invoke in a hosted/cloud session without it.
+  ~/.claude/projects/*/memory/ on this machine: decoded paths, counts, sizes, freshness,
+  orphaned stores for review, never deleting ambiguous ones. Trigger on "clean up claude
+  memory", "orphaned memory", "inventory memory stores". Local-only; needs this
+  machine's ~/.claude.
 compatibility: Inventory requires native POSIX paths with Bash and GNU tools (including find, stat, and du), such as Linux or WSL; native Windows Git Bash/MSYS, Cygwin, and win32 Bash are unsupported. Requires read/write access to ~/.claude/projects on the local machine; local execution only — memory stores are machine-local and this skill cannot run in a hosted/cloud session without that directory present.
 ---
 

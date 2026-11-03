@@ -1,19 +1,11 @@
 ---
 name: github-actions-repo-settings
-description: >
-  Configure and enforce GitHub repository security settings as code: require
-  actions to be pinned to full-length commit SHAs, require approval for all
-  outside collaborators' fork pull-request workflow runs, and protect the
-  default branch via a repository ruleset. The settings-as-code engine, its
-  schema, and the fleet fan-out live in the repo-settings repo, which this skill
-  points to; it also carries manual `gh api` recipes. Trigger
-  when: setting up a new repo, running a security audit, onboarding a repo to org
-  standards, enforcing settings across a fleet, or when asked to configure or
-  harden Actions security settings. Trigger on mentions of "actions settings",
-  "repo security settings", "repo settings as code", "settings drift", "fork
-  approval", "outside collaborators", "actions policy", "branch protection",
-  "ruleset", "harden repo", "actions event policy", or "pull_request_target
-  policy".
+description: >-
+  Configure and enforce GitHub repo security settings as code: SHA-pinned actions, fork
+  PR approval for outside collaborators, default-branch rulesets, via the repo-settings
+  repo or `gh api`. Use for new repos, security audits, settings drift and fleet
+  enforcement, or mentions of actions policy, branch protection, rulesets, fork approval
+  or "harden repo".
 compatibility: >-
   Requires the GitHub CLI (gh). Settings-as-code also needs a checkout of the
   repo-settings repo (Python 3 with PyYAML); the manual recipes need only gh.

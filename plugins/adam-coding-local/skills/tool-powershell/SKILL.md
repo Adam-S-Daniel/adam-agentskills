@@ -1,13 +1,11 @@
 ---
 name: tool-powershell
 description: >-
-  Use when a PowerShell tool call fails with a bare "Exit code 1", fails the
-  same way twice, or is refused as blocked or protected (for example a
-  Remove-Item on a system or VM-storage path). Covers getting the real error
-  out of the first failure, the two-strikes stop rule, treating a policy block
-  as a decision to report rather than a bug to route around, and previewing
-  deletions before running them. For "Access is denied" from powershell.exe
-  inside WSL, use windows-elevation-from-wsl instead.
+  Use when a PowerShell tool call fails with a bare "Exit code 1", fails the same way
+  twice, or is refused as blocked or protected. Covers getting the real error, the
+  two-strikes stop rule, reporting a policy block instead of routing around it, and
+  previewing deletions. For "Access is denied" from powershell.exe in WSL, use
+  windows-elevation-from-wsl.
 license: MIT
 compatibility: >-
   A session that drives Windows PowerShell or pwsh through a PowerShell tool or

@@ -1,13 +1,10 @@
 ---
 name: launch-top-level-claude-session
 description: >-
-  Launch a new, top-level, interactive Claude Code session in a new Windows
-  Terminal tab — native Windows or inside WSL — in a chosen folder, optionally
-  remote-controllable and optionally seeded with an initial prompt or a handoff
-  file. Use this WHENEVER the user asks to start / open / launch / spawn a new
-  (top-level, separate, fresh, detached, background) Claude Code session, hand
-  off to a fresh session, or launch Claude in a new terminal, tab or window, on
-  Windows or in WSL, even if they don't name every detail.
+  Launch a new top-level interactive Claude Code session in a new Windows Terminal tab,
+  on Windows or in WSL, in a chosen folder, optionally remote-controllable and seeded
+  with a prompt or handoff file. Use whenever the user asks to start, open, launch or
+  spawn a new or separate Claude Code session, or to hand off to a fresh one.
 compatibility: >-
   Requires a Windows PC with Windows Terminal (and WSL for the WSL launchers). Works
   whether Claude runs on the Windows host (Windows PowerShell 5.1 or PowerShell 7) or inside the WSL distro

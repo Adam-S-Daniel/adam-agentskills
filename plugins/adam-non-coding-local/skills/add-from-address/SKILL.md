@@ -1,14 +1,10 @@
 ---
 name: add-from-address
-description: >
-  Add one or more email addresses to a Fastmail account as selectable "From"
-  (sending) identities by triggering the add-from-address GitHub Actions workflow
-  in the Adam-S-Daniel/fastmail-actions repo (which does the JMAP work with the
-  FASTMAIL_API_TOKEN repo secret). Trigger when the user wants to "add a from
-  address", "add a sending identity", "let me send as X", "add an alias I can
-  send from", or "register a new From address in Fastmail". Supports a dry-run
-  (whatif) preview. For discovering which received alias addresses are worth
-  adding, use the add-received-from-addresses skill instead.
+description: >-
+  Add email addresses to a Fastmail account as "From" sending identities by triggering
+  the add-from-address workflow in Adam-S-Daniel/fastmail-actions, with a dry-run
+  preview. Trigger on "add a from address", "add a sending identity", "let me send as
+  X". To discover which aliases are worth adding, use add-received-from-addresses.
 allowed-tools: Bash Read
 compatibility: Requires the GitHub CLI (gh) authenticated with workflow scope, and the Adam-S-Daniel/fastmail-actions repo with its FASTMAIL_API_TOKEN secret configured. Optionally pwsh 7 to use the bundled trigger.ps1 helper.
 ---

@@ -1,6 +1,11 @@
 ---
 name: disarm-inherited-reach
-description: "Sever a scratch tree's inherited push path to the real repository the moment the tree exists, before anything runs in it. Fires on the concrete act, not on how risky the work feels: copying a repo (cp -a, cp -r, rsync, untarring, a /tmp scratch tree), git clone, git worktree add, or standing up a throwaway checkout to run something in; and on any negative control - proving the verifier can fail, a mutation test, a deliberately broken tree, editing a dry-run flag or confirmation prompt or required check to watch it fire, or running an untested destructive path such as a reaper, a sweeper, a delete or force-push script, or a data migration. cp -a copies .git/config, so the copy inherits origin pointing at production. A worktree is not a copy and must be handled differently, because removing its remote removes the parent's. Use this even when you believe you are only verifying."
+description: >-
+  Sever a scratch tree's inherited push path to the real repo before anything runs in
+  it. Fires on the act: cp -a/rsync/untar of a repo, git clone, git worktree add, a
+  throwaway checkout; and on negative controls or untested destructive paths (mutation
+  tests, broken trees, reapers, force-push or migration scripts). A worktree needs
+  different handling. Use even when only verifying.
 ---
 
 # Disarm inherited reach

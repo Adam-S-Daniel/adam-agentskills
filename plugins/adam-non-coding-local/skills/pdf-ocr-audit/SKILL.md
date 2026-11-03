@@ -1,10 +1,10 @@
 ---
 name: pdf-ocr-audit
-description: >
-  Audit PDF files to determine whether OCR (optical character recognition) is needed to make them fully text-searchable.
-  Use this skill whenever the user asks about PDF searchability, OCR status, whether PDFs have embedded text, which PDFs are scans,
-  or wants to audit/inventory a folder of PDFs for text extraction readiness. Also triggers for: "which PDFs need OCR",
-  "are my PDFs searchable", "do these PDFs have text layers", "audit my PDFs", "find scanned PDFs".
+description: >-
+  Audit PDFs to see whether OCR is needed to make them text-searchable. Use when asked
+  about PDF searchability, OCR status, embedded text or which PDFs are scans, or to
+  inventory a folder for text extraction. Triggers: "which PDFs need OCR", "are my PDFs
+  searchable", "audit my PDFs", "find scanned PDFs".
 ---
 
 # PDF OCR Audit Skill

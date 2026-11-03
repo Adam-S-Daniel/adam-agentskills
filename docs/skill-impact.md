@@ -54,6 +54,153 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-03 — adam-anything-anywhere/finding-unknowns — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232251Z-7913f6` (with 3/4, without 3/4); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-anything-anywhere/writing-adrs — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232327Z-cdc21e` (with 9/9, without 5/9); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/ci-job-performance — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261101T211416Z-706447` (with 5/7, without 5/7); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/disarm-inherited-reach — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232655Z-23534d` (with 7/9, without 6/9); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/fan-out-triage — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261101T134413Z-2962c7` (with_skill objective 23/25, without_skill 4/25); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/github-actions-repo-settings — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232454Z-ee22cd` (with 3/9, without 3/9); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/red-ci-adamdaniel-ai — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261103T003800Z-5baf20` (with_skill objective 9/10, without_skill 7/10); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232624Z-2b2255` (with 4/5, without 4/5); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/vendor-release-impact-issues — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: [run 36263643613](https://github.com/Adam-S-Daniel/skills-evals/actions/runs/36263643613), exit 0; post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-anywhere/workflow-path-audit — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232423Z-4b06bc` (with 8/8, without 8/8); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-local/launch-top-level-claude-session — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-local/migrate-claude-memory — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-local/tool-powershell — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261103T004441Z-300a13` (with_skill objective 16/17, without_skill 15/17); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-coding-local/windows-elevation-from-wsl — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232726Z-a3fb46` (with 7/7, without 7/7); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/add-from-address — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/add-received-from-addresses — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/compare-pdfpairs — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/fastmail — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`)
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/pdf-ocr-audit — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea` (with 13/13, without 1/13); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
+## 2026-11-03 — adam-non-coding-local/rename-pdfs — edit
+
+- Motivation: the skill listing drops descriptions once it passes Claude Code's character budget, and Windows desktop sessions listed 13 skills by name only (skills-evals#668).
+- Change: frontmatter description shortened to 400 characters or fewer, keeping its purpose, trigger phrases and boundaries; this registry now caps descriptions at 400 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232136Z-d58e9f` (with 8/8, without 4/8); post-merge routine run to follow in a correcting entry (the eval routine evaluates the default branch only). Description-only edit; the body is unchanged.
+- Outcome: pending review.
+
 ## 2026-11-03 — adam-coding-local/tool-powershell — create
 
 - Motivation: a `new-skill` lesson mined from agent sessions (redacted, 4 pieces of evidence) that the draft loop's triage could not check mechanically.

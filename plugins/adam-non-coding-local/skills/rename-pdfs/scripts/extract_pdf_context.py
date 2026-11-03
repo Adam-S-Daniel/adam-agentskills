@@ -135,7 +135,7 @@ def main():
     # this ran at import time: even `--help` exits 2 when pypdf is missing.
     if pypdf is None:
         sys.stderr.write(
-            "Missing pypdf. Install with: pip install pypdf --break-system-packages\n"
+            "Missing pypdf. Install with: pip install --user pypdf (or into a venv)\n"
         )
         sys.exit(2)
 

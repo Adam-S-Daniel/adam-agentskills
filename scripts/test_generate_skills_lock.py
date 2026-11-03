@@ -4669,10 +4669,11 @@ def test_every_test_this_repo_cites_by_name_exists():
         path = REPO_ROOT / name
         if path.suffix == ".py":
             defined.add(path.stem)
-            # Indentation allowed: a test defined as a method on a class is
-            # cited by its bare name just like a top-level one.
-            defined |= set(re.findall(r"^\s*def (test_[a-z0-9_]+)",
-                                      path.read_text(encoding="utf-8"), re.M))
+        # A shell hook can embed Python that defines the function it cites (e.g. .claude/hooks/guidance-load-record.sh).
+        # Indentation allowed: a test defined as a method on a class is
+        # cited by its bare name just like a top-level one.
+        defined |= set(re.findall(r"^\s*def (test_[a-z0-9_]+)",
+                                  path.read_text(encoding="utf-8"), re.M))
     assert "test_every_test_this_repo_cites_by_name_exists" in defined, (
         "the scan found no test names at all, so it would pass on anything")
 

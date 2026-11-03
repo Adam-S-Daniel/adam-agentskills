@@ -252,6 +252,20 @@ The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker
   mid-run; see the evidence file linked above.) Take the baseline before editing,
   or re-run it after — never read one that overlapped the edits.
 
+### The freshness lint runs on a schedule
+
+`scripts/check_skill_freshness.py` checks that every repo file and workflow a
+skill cites still exists in the repo it names (skills-evals#661); skills-evals
+replaced the evals of reference-heavy skills with it. It reads each cited repo
+with a shallow, blob-less `git clone`, so it runs from
+`.github/workflows/skill-freshness.yml` (schedule and dispatch, no
+`pull_request`/`push` trigger, not a required check) and files or updates one
+`Skill freshness lint is failing` issue when it fails. Run it locally the same
+way; add `--check-secrets` to check cited secret names with a credential that
+can list them (the workflow's token cannot, so it checks files and workflows
+only). Which repo a bare path resolves in, and the reasoned waivers, are in
+`scripts/skills_freshness.yml`.
+
 ### One-way doors get an adversarial round
 
 - The irreversible surfaces in this repo are plugin names once enabled

@@ -16,6 +16,9 @@ workflows:
     '.github/workflows/plugin-runtime-review.yml':
         - 'actions/checkout@v7.0.1'
     '.github/workflows/scheduled-run-health.yml': []
+    '.github/workflows/skill-freshness.yml':
+        - 'actions/checkout@v7.0.1'
+        - 'actions/setup-python@v7.1.0'
 dependencies:
     'actions/checkout@v7.0.1':
         ref: 'v7.0.1'

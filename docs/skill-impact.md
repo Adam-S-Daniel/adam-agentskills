@@ -61,6 +61,72 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: draft-loop measurement, skills-evals routine run `20261103T003800Z-5baf20`, 1 trials per arm over 4 new fixtures: with_skill objective 9/10, without_skill 7/10. Not badge input; the fixtures land in a companion skills-evals PR.
 - Outcome: pending review.
 
+## 2026-11-03 — adam-non-coding-local/rename-pdfs — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56), held out of #96 until a baseline routine run existed.
+- Change: example `Form W-2` is now `Form W2` (the file forbids hyphens in name parts); pip advice and the script's missing-pypdf message use `pip install --user` (or a venv) instead of `--break-system-packages`.
+- Eval: baseline on main before the edit: routine run `20261102T232136Z-d58e9f`, with 8/8, without 4/8 objective checks (1 trial); post-merge run to follow in a correcting entry.
+- Outcome: pending
+
+## 2026-11-03 — adam-non-coding-local/pdf-ocr-audit — edit
+- Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56), held out of #96 until a baseline routine run existed.
+- Change: fixed a contradiction about scanner-named files; dropped all-caps; pip advice and `check_ocr.py`'s auto-install use `--user` instead of `--break-system-packages`; new PURPOSE.md.
+- Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea`, with 13/13, without 1/13 objective checks (1 trial); post-merge run to follow in a correcting entry.
+- Outcome: pending
+
+## 2026-11-03 — adam-anything-anywhere/finding-unknowns — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232251Z-7913f6`: with 3/4, without 3/4. The cited baseline `20261026T145523Z-6dc188` recorded no objective checks, so there is no before number; the fixture does not exercise the new step. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-anything-anywhere/writing-adrs — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232327Z-cdc21e` (bootstrap): with 9/9, without 5/9; baseline with 9/9, without 5/9. No change. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/workflow-path-audit — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232423Z-4b06bc` (required-check-routing): with 8/8, without 8/8; baseline the same. No change. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/github-actions-repo-settings — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232454Z-ee22cd` (drift-diagnosis): with 3/9, without 3/9. The cited baseline `20261026T145520Z-e53d67` recorded no objective checks, so there is no before number. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/ci-job-performance — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261101T211416Z-706447` (browser-cache): with 5/7, without 5/7; baseline with 6/7, without 6/7. Both arms fell by one check, so the drop is not from the skill text. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/debug-github-workflows — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232543Z-c5b420` (swallowed-failure): with 6/7, without 7/7; baseline with 5/7, without 6/7. The with arm rose by one; the one-check gap to without is unchanged. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/skills-doctor — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232624Z-2b2255` (bucketed-account-store): with 4/5, without 4/5. The cited baseline `20261026T144654Z-5dd589` recorded no objective checks, so there is no before number. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-anywhere/disarm-inherited-reach — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232655Z-23534d`: with 7/9, without 6/9; baseline with 9/9, without 8/9. Both arms newly failed `rotation-ran` and `rotation-location-standalone` (the reaper script did not run in either arm), so the drop is not from the skill text; the with arm still passes every disarm check and keeps its one-check lead. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
+## 2026-11-03 — adam-coding-local/windows-elevation-from-wsl — edit
+- Motivation: Correcting entry for the 2026-10-31 edit (#96): post-merge eval result.
+- Change: none (eval record only).
+- Eval: routine run `20261102T232726Z-a3fb46`: with 7/7, without 7/7; baseline with 7/7, without 6/7. The with arm is unchanged. One trial per arm.
+- Outcome: no regression attributable to the edit; kept.
+
 ## 2026-11-01 — adam-coding-anywhere/skills-doctor — edit
 - Motivation: [adam-agentskills#99](https://github.com/Adam-S-Daniel/adam-agentskills/pull/99) changed the bootstrap hook to install the newer pin when one lock descends from another on the same registry ([ADR 0022](decisions/0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md)), but `check_provenance.py`'s `read_union` still copied the old rule and reported a skill the hook had delivered as `deleted-by-the-cross-lock-conflict`.
 - Change: the doctor reads what the hook did: a contested name whose install record entry, newer than every contesting lock, names it at one contesting lock's digest with matching bytes is the note `resolved-by-newer-pin`, naming the winning lock; any other contest stays `deleted-by-the-cross-lock-conflict`, now worded as contested under ADR 0022's conditions; SKILL.md's two statements of the old rule updated; bundle `adam-coding-anywhere` 1.3.5 -> 1.3.6 (PR pending).

@@ -13508,3 +13508,9 @@ def test_setup_script_removes_only_its_own_project_settings(tmp_path):
     proc, _, _ = _run_setup_script(other, apt_exit=0)
     assert proc.returncode == 0, proc.stderr
     assert keep.read_text(encoding="utf-8") == '{"model": "x"}'
+
+
+def test_setup_script_doubles_the_skill_listing_budget():
+    # At the default 1% the listing drops descriptions for the skills listed
+    # last, which then cannot trigger; 0.02 keeps every description.
+    assert _documented_settings()["skillListingBudgetFraction"] == 0.02

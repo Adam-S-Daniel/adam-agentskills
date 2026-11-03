@@ -1,11 +1,6 @@
 ---
 name: ci-job-performance
-description: >-
-  Speed up a slow GitHub Actions job or test step from measurements, not guesses. Use
-  when CI is slow, to cache a tool or Playwright browser download, to parallelize or
-  shard tests, tune workers, explain why a step takes a minute, or evaluate nektos/act
-  locally. Covers step timings, cache economics and keeping a sharded required check
-  green.
+description: Speed up a slow GitHub Actions job or test step using measurements, not guesses. Trigger when CI is slow; when asked to speed up a workflow, job, or step; to cache a tool or browser download in CI; to parallelize or shard tests; to add more workers; when asked why a step takes a minute (or any specific duration); or when evaluating nektos/act as a local CI inner loop. Covers reading job/step timings and log timestamps to tell CPU-bound from waiting, the actions/cache economics for Playwright browser installs, Playwright worker-count tuning, sharding tradeoffs against the fixed per-job cost, keeping a required check green across shards, and running act locally (Docker-in-WSL, binary and image pinning).
 ---
 
 # CI Job Performance

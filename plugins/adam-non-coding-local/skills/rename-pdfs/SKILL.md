@@ -1,10 +1,14 @@
 ---
 name: rename-pdfs
-description: >-
-  Rename searchable PDFs in a folder to descriptive, date-prefixed names proposed from
-  their content, confirming each before applying. Use after ocr-pdfs to fix scanner
-  names like "Scan from 2024-03-15.pdf". Triggers: "rename my pdfs", "clean up pdf
-  filenames", "give my pdfs descriptive names".
+description: >
+  Rename already-searchable PDFs in a specified folder to descriptive, date-prefixed names,
+  proposing each name from the PDF's own content and prompting for per-file
+  confirmation or edit before applying. Use after running `ocr-pdfs` to clean up
+  scanner-output filenames like "Scan from 2024-03-15.pdf", "QuickScan_001.pdf",
+  or "Document(47).pdf" — or for any folder of PDFs that already have text layers
+  but unhelpful filenames. Triggers: "rename my pdfs", "clean up pdf filenames",
+  "rename searchable pdfs", "give my pdfs descriptive names",
+  "rename scanned pdfs", "tidy pdf names".
 allowed-tools: Bash Read
 compatibility: Requires Python 3 with pypdf (scripts/extract_pdf_context.py); PDFs must already have a text layer
 ---

@@ -1,10 +1,6 @@
 ---
 name: workflow-path-audit
-description: >-
-  Audit GitHub Actions workflows so every pull_request or push workflow filters on the
-  paths its steps depend on and skips with success otherwise. Use when adding or
-  changing a workflow, moving files one depends on, or when CI runs on irrelevant
-  changes.
+description: Audit GitHub Actions workflows for salient-path conditionals — every workflow that triggers on pull_request or push must filter on the files and directories its steps actually depend on, and skip with success when nothing salient changed. Use when adding a new workflow, modifying an existing one's steps, renaming/moving files a workflow depends on, or when a CI bill spike points at workflows running on irrelevant changes.
 ---
 
 # Workflow path-filtering audit

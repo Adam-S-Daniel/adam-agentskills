@@ -1,11 +1,6 @@
 ---
 name: red-ci-adamdaniel-ai
-description: >-
-  Diagnose and fix red or blocked CI after pushing to a cms-platform-style Jekyll site
-  such as adamdaniel.ai: a failed, cancelled or never-reported required check, a PR
-  stuck BLOCKED, or a job failing at "Set up job". Covers cancelled versus real
-  failures, concurrency cancels, timeouts, path-filtered required checks and unpinned
-  actions.
+description: Diagnose and fix a red or blocked CI result after pushing to a cms-platform-style Jekyll site such as adamdaniel.ai. Use when a pushed branch or PR shows a failed, cancelled or never-reported required check, a PR stuck BLOCKED, or a job that fails at "Set up job". Covers reading every check conclusion on the head commit, telling a cancelled required check from a real failure, and the fixes for concurrency cancels, timeout walls, path-filtered required checks and unpinned actions.
 ---
 
 # Red CI after a push

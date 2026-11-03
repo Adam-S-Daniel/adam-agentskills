@@ -1,11 +1,18 @@
 ---
 name: skills-doctor
-description: >-
-  Diagnose skill delivery for this session: diff `skills.lock` against what loaded,
-  attribute each skill to its registry and bundle from the bootstrap install record, and
-  flag shadowing and dangling payload refs. Read-only. Use when a skill is missing or
-  won't trigger, the `skills:` verdict is DEGRADED, or "why didn't that skill load",
-  "audit my skills".
+description: >
+  Diagnose skill DELIVERY health for the current session: name the surface,
+  diff the expected set in `skills.lock` against what actually loaded (the
+  session's own skill listing, `~/.claude/skills/`, the account
+  `synced/manifest.json`, `claude plugin list`), attribute every skill to the
+  registry and bundle it came from by reading the bootstrap hook's own install
+  record rather than guessing, and flag silent shadowing and dangling payload
+  references. Reports only — it never installs, copies, deletes or repairs
+  anything. Use when a skill you expected is missing or won't trigger, when a repo-owned skill looks
+  overridden, when the session-start `skills:` verdict reads DEGRADED, when you
+  need to know where a skill came from or whether the hook installed it, or
+  when the user says "why didn't that skill load", "which skills do I actually
+  have", "is my registry stale", "audit my skills", "skills doctor".
 compatibility: >-
   Claude Code only. Reads ~/.claude/skills, the account synced/ store and the
   `claude plugin` CLI, none of which exist in other agent harnesses. Needs the

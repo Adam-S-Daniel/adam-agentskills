@@ -28,6 +28,7 @@
         "launch-top-level-claude-session",
         "migrate-claude-memory",
         "sync-cc-settings-between-wsl-and-windows",
+        "tool-powershell",
         "windows-elevation-from-wsl"
       ]
     },

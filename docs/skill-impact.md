@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-03 — adam-coding-local/tool-powershell — create
+
+- Motivation: a `new-skill` lesson mined from agent sessions (redacted, 4 pieces of evidence) that the draft loop's triage could not check mechanically.
+- Change: new skill `plugins/adam-coding-local/skills/tool-powershell/`, drafted by the skills-evals draft loop with skill-creator at `2a40fd2e7c52`; bundle `adam-coding-local` 2.2.1 -> 2.2.2 (PR pending).
+- Eval: draft-loop measurement, skills-evals routine run `20261103T004441Z-300a13`, 1 trials per arm over 4 new fixtures: with_skill objective 16/17, without_skill 15/17. Not badge input; the fixtures land in a companion skills-evals PR.
+- Outcome: pending review.
+
 ## 2026-11-03 — adam-coding-anywhere/red-ci-adamdaniel-ai — create
 
 - Motivation: a `new-skill` lesson mined from agent sessions (redacted, 54 pieces of evidence) that the draft loop's triage could not check mechanically.

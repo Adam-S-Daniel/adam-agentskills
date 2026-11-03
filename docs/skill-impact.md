@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-03 — adam-coding-anywhere/red-ci-adamdaniel-ai — create
+
+- Motivation: a `new-skill` lesson mined from agent sessions (redacted, 54 pieces of evidence) that the draft loop's triage could not check mechanically.
+- Change: new skill `plugins/adam-coding-anywhere/skills/red-ci-adamdaniel-ai/`, drafted by the skills-evals draft loop with skill-creator at `2a40fd2e7c52`; bundle `adam-coding-anywhere` 1.3.6 -> 1.3.7 (PR pending).
+- Eval: draft-loop measurement, skills-evals routine run `20261103T003800Z-5baf20`, 1 trials per arm over 4 new fixtures: with_skill objective 9/10, without_skill 7/10. Not badge input; the fixtures land in a companion skills-evals PR.
+- Outcome: pending review.
+
 ## 2026-11-03 — adam-non-coding-local/rename-pdfs — edit
 - Motivation: prompt-audit sweep findings in [adam-agentskills#56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56), held out of #96 until a baseline routine run existed.
 - Change: example `Form W-2` is now `Form W2` (the file forbids hyphens in name parts); pip advice and the script's missing-pypdf message use `pip install --user` (or a venv) instead of `--break-system-packages`.

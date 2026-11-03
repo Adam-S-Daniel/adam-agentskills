@@ -1,0 +1,91 @@
+name: Skill freshness
+# The freshness lint (skills-evals#661): every repo file and workflow a skill
+# cites still exists in the repo it names. scripts/check_skill_freshness.py
+# says what counts as a citation and how each repo is read.
+#
+# Scheduled, not a pull-request check: the cited repos (cms-platform, the
+# sites, the fleet's other repos) change with no commit here, so a PR check
+# would pass on the day and miss the drift. A failed run files or updates ONE
+# tracking issue, because a scheduled failure is otherwise silent. A dispatch
+# runs the same check by hand and reports the same way.
+#
+# No `pull_request` or `push` trigger, so there is no salient-path filter to
+# keep, and nothing here is a required check. No `concurrency:` block: two runs
+# overlapping only means two reads of the same public repos.
+
+on:
+  schedule:
+    # Off the hour, where GitHub queues the platform's cron.
+    - cron: '41 7 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # issues: write is for the last step alone; the lint itself only reads.
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements-dev.txt
+      - name: Check out sibling registries
+        # Where scripts/skills_registries.yml expects them, as ci.yml's census
+        # does. Both are public: an anonymous shallow clone needs no token.
+        # adam-agentskills-private is private, so it is skipped and the report
+        # says so.
+        run: |
+          git clone --depth 1 --filter=blob:none --quiet https://github.com/Adam-S-Daniel/cms-platform.git ../cms-platform
+          git clone --depth 1 --filter=blob:none --quiet https://github.com/Adam-S-Daniel/adamdaniel.ai.git ../adamdaniel.ai
+      - name: Check every cited file and workflow still exists
+        # No --check-secrets: the job token cannot list repository secrets, so
+        # secret names are reported as not checked. The report holds only paths
+        # from public repos, never a secret value or anyone's data.
+        run: |
+          rc=0
+          python3 scripts/check_skill_freshness.py --output "$RUNNER_TEMP/freshness.md" || rc=$?
+          cat "$RUNNER_TEMP/freshness.md" >> "$GITHUB_STEP_SUMMARY" || true
+          exit "$rc"
+      # Everything arrives through env:; the only expressions are
+      # github.server_url/repository/run_id, so nothing the lint printed is
+      # evaluated as shell. `gh` is preinstalled, so this needs no `uses:`.
+      - name: File or update the tracking issue
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_TITLE: Skill freshness lint is failing
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          body="$RUNNER_TEMP/freshness-issue.md"
+          {
+            printf 'The skill freshness lint failed: %s\n\n' "$RUN_URL"
+            printf 'A skill cites a file or workflow its repo no longer has, or the lint could not run. '
+            printf 'The repos it reads change with no commit here, so look upstream first. '
+            printf 'Fix the skill, or add a waiver with a reason to `scripts/skills_freshness.yml`.\n\n'
+            if [ -s "$RUNNER_TEMP/freshness.md" ]; then
+              # An issue body holds at most 65,536 characters.
+              head -c 60000 "$RUNNER_TEMP/freshness.md"
+            else
+              printf 'The lint wrote no report; read the run log.\n'
+            fi
+          } > "$body"
+          # --search is full text; the title is re-checked exactly.
+          number=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --search "$ISSUE_TITLE in:title" --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$ISSUE_TITLE" --body-file "$body"
+          fi

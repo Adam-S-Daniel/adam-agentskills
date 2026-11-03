@@ -148,6 +148,8 @@ The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-co
 
 The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: at session start it fetches `_agent-guidance`'s `main` HEAD commit with a commit-only git fetch and `base.md` at that commit from `raw.githubusercontent.com`, and installs it through the bundled `fleet-memory.sh`. It never reads the project directory. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a reviewed pull request and never edited here.
 
+The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker/github-write-marker.sh`, wired as a `PreToolUse` hook on `Bash` and GitHub MCP tools in the same `hooks/claude-code.json`) enforces the fleet guidance's agent-marker rule: it blocks (exit 2) a GitHub issue, PR, comment or review write whose body lacks `on behalf of @Adam-S-Daniel`, and any APPROVE review. It is Claude-only too, and a verbatim copy of `_agent-guidance`'s `.claude/hooks/github-write-marker.sh` under the same refresh rule; `scripts/test_github_write_marker_hook.py` pins what it blocks and what it never blocks.
+
 ### Operational gotchas
 
 - **The ADR 0013 layout is data, not test source.** Which skills each plugin
@@ -249,6 +251,20 @@ The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`,
   (A "pre-existing" red once turned out to be a dangling citation written
   mid-run; see the evidence file linked above.) Take the baseline before editing,
   or re-run it after — never read one that overlapped the edits.
+
+### The freshness lint runs on a schedule
+
+`scripts/check_skill_freshness.py` checks that every repo file and workflow a
+skill cites still exists in the repo it names (skills-evals#661); skills-evals
+replaced the evals of reference-heavy skills with it. It reads each cited repo
+with a shallow, blob-less `git clone`, so it runs from
+`.github/workflows/skill-freshness.yml` (schedule and dispatch, no
+`pull_request`/`push` trigger, not a required check) and files or updates one
+`Skill freshness lint is failing` issue when it fails. Run it locally the same
+way; add `--check-secrets` to check cited secret names with a credential that
+can list them (the workflow's token cannot, so it checks files and workflows
+only). Which repo a bare path resolves in, and the reasoned waivers, are in
+`scripts/skills_freshness.yml`.
 
 ### One-way doors get an adversarial round
 

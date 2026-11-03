@@ -1,0 +1,123 @@
+# Configuration for scripts/check_skill_freshness.py, the freshness lint
+# (skills-evals#661): every repo file, workflow and secret name a skill cites
+# still exists in the repo it names.
+#
+# The skills it scans are the ones scripts/skills_registries.yml declares; this
+# file says which GitHub repo each registry's skills describe, and so where a
+# bare path such as `infrastructure/bootstrap/deploy.sh` is looked up.
+
+# registry name -> how its skills' citations resolve.
+#   repo:            the GitHub repo the registry lives in (owner/name).
+#   bare_paths:      true when a backticked path with no repo named is a claim
+#                    about this repo. False for registries of generic skills,
+#                    whose `docs/decisions/README.md` means "your repo", not
+#                    this one: there only citations that name a repo count.
+#   also_resolve_in: further places a bare path may live, as `owner/name` or
+#                    `owner/name:prefix/`. A bare path is fresh when it exists
+#                    in the registry's repo or in any of these.
+registries:
+  adam-agentskills:
+    repo: Adam-S-Daniel/adam-agentskills
+    bare_paths: false
+  adam-agentskills-private:
+    repo: Adam-S-Daniel/adam-agentskills-private
+    bare_paths: false
+  cms-platform:
+    repo: Adam-S-Daniel/cms-platform
+    bare_paths: true
+    # cms-platform's skills describe the platform and the sites built on it;
+    # examples/site/ is the template consumer, and the two sites are the
+    # consumers whose files the skills name.
+    also_resolve_in:
+      - Adam-S-Daniel/cms-platform:examples/site/
+      - Adam-S-Daniel/adamdaniel.ai
+      - jodidaniel/jodidaniel.com
+  adamdaniel.ai:
+    repo: Adam-S-Daniel/adamdaniel.ai
+    bare_paths: true
+    also_resolve_in:
+      - Adam-S-Daniel/cms-platform
+
+# Names a sentence may use for a repo, as in "cms-platform's `docs/OPERATIONS.md`".
+# A path right after "<name>'s " is looked up in that repo alone. The fleet spans
+# two owners, so each name carries its owner.
+repos:
+  _agent-guidance: Adam-S-Daniel/_agent-guidance
+  adam-agentskills: Adam-S-Daniel/adam-agentskills
+  adam-agentskills-private: Adam-S-Daniel/adam-agentskills-private
+  adamdaniel.ai: Adam-S-Daniel/adamdaniel.ai
+  claude-memory-map: Adam-S-Daniel/claude-memory-map
+  cms-platform: Adam-S-Daniel/cms-platform
+  jodidaniel.com: jodidaniel/jodidaniel.com
+  repo-settings: Adam-S-Daniel/repo-settings
+  skills-evals: Adam-S-Daniel/skills-evals
+
+# A citation that is right although the lint cannot see it, such as a file each
+# consumer generates and never commits, or a file the skill says is gone.
+# A waiver that matches nothing is listed in the report, not failed: the
+# skills live in other repos and change on their own. Each entry needs `skill`
+# (`<registry>/<skill>`), `cite` (the cited text exactly) and a `reason`.
+waivers:
+  - skill: adamdaniel.ai/embeddable-tool-pages
+    cite: "admin/config.yml"
+    reason: "rendered at build from the theme's config.base.yml; a consumer commits no admin/config.yml"
+  - skill: adamdaniel.ai/embeddable-tool-pages
+    cite: "scripts/sync-to-site.sh"
+    reason: "a file in claude-memory-map, which the sentence names after the path"
+  - skill: cms-platform/admin-config-render
+    cite: "config.yml"
+    reason: "the rendered Decap config, built from config.base.yml and never committed"
+  - skill: cms-platform/browser-testing
+    cite: "e2e/my-feature.spec.js"
+    reason: "an example name for a spec the reader creates"
+  - skill: cms-platform/browser-testing
+    cite: "prod-missing.json"
+    reason: "an artifact the regression-video spec writes at run time"
+  - skill: cms-platform/browser-testing
+    cite: "admin/config.yml"
+    reason: "rendered at build from the theme's config.base.yml; a consumer commits no admin/config.yml"
+  - skill: cms-platform/browser-testing
+    cite: ".base.yml"
+    reason: "a file-name suffix (config.base.yml), not a file"
+  - skill: cms-platform/cms-stuck-pr-triage
+    cite: "admin/config.yml"
+    reason: "rendered at build from the theme's config.base.yml; a consumer commits no admin/config.yml"
+  - skill: cms-platform/cms-stuck-pr-triage
+    cite: "config.yml"
+    reason: "the rendered Decap config, built from config.base.yml and never committed"
+  - skill: cms-platform/cms-stuck-pr-triage
+    cite: "error-context.md"
+    reason: "a file inside a Playwright failure artifact"
+  - skill: cms-platform/code-quality
+    cite: ".github/workflows/code-quality.yml"
+    reason: "the skill says this workflow does not exist in cms-platform"
+  - skill: cms-platform/code-quality
+    cite: "pyproject.toml"
+    reason: "the skill says this file does not exist in cms-platform"
+  - skill: cms-platform/code-quality
+    cite: ".yamllint.yml"
+    reason: "the skill says this file does not exist in cms-platform"
+  - skill: cms-platform/code-quality
+    cite: ".test.js"
+    reason: "a file-name suffix, not a file"
+  - skill: cms-platform/code-quality
+    cite: "code-quality.yml"
+    reason: "the skill says no repo in the fleet has this workflow any more"
+  - skill: cms-platform/github-actions-sha-pinning
+    cite: "actions.lock"
+    reason: "the skill says cms-platform does not use a lockfile"
+  - skill: cms-platform/github-actions-sha-pinning
+    cite: ".github/workflows/dependabot-comment-sync.yml"
+    reason: "the skill says this workflow was deleted"
+  - skill: cms-platform/github-actions-sha-pinning
+    cite: "scripts/sync-action-pin-comments.sh"
+    reason: "the skill says this script was deleted"
+  - skill: cms-platform/github-actions-sha-pinning
+    cite: "sync-action-pin-comments.sh"
+    reason: "the skill says this script was deleted"
+  - skill: cms-platform/preview-environments
+    cite: "teardown-preview.yml"
+    reason: "the skill says there is no separate teardown-preview.yml"
+  - skill: cms-platform/preview-environments
+    cite: "admin/config.yml"
+    reason: "rendered at build from the theme's config.base.yml; a consumer commits no admin/config.yml"

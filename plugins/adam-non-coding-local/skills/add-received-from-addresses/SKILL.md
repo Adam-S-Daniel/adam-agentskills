@@ -1,17 +1,11 @@
 ---
 name: add-received-from-addresses
-description: >
-  Discover which of a Fastmail account's own alias addresses are worth being able
-  to send from, and add them as "From" identities, by triggering the
-  add-received-from-addresses GitHub Actions workflow in the
-  Adam-S-Daniel/fastmail-actions repo (which does the JMAP work with the
-  FASTMAIL_API_TOKEN repo secret). It scans every message for distinct
-  X-Delivered-To addresses, keeps only those you actually correspond through,
-  drops any that are already identities, and adds the rest. Trigger when the user
-  wants to "add From addresses for aliases I actually use", "find alias addresses
-  worth sending from", or "set up identities for the addresses that receive my
-  mail". Supports a dry-run (whatif) preview. To add a specific known address, use
-  the add-from-address skill instead.
+description: >-
+  Find the Fastmail alias addresses you actually correspond through (distinct
+  X-Delivered-To, minus existing identities) and add them as "From" identities via the
+  add-received-from-addresses workflow in Adam-S-Daniel/fastmail-actions, with a dry-run
+  preview. Trigger on "add From addresses for aliases I use". For one known address, use
+  add-from-address.
 allowed-tools: Bash Read
 compatibility: Requires the GitHub CLI (gh) authenticated with workflow scope, and the Adam-S-Daniel/fastmail-actions repo with its FASTMAIL_API_TOKEN secret configured. Optionally pwsh 7 to use the bundled trigger.ps1 helper.
 ---

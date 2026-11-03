@@ -69,4 +69,84 @@
 # retired by ADR 0011 (2026-09-22) when the skill itself was removed from the
 # registry — its account-store copy is now deleted by hand instead of kept
 # under version control, so there is nothing left to waive.
-waivers: []
+waivers:
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/ci-job-performance/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/disarm-inherited-reach/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/fan-out-triage/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/github-actions-repo-settings/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/red-ci-adamdaniel-ai/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-non-coding-local/skills/rename-pdfs/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/skills-doctor/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/vendor-release-impact-issues/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-coding-anywhere/skills/workflow-path-audit/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
+  - klass: length-limit
+    registry: adam-agentskills
+    path: plugins/adam-anything-anywhere/skills/writing-adrs/SKILL.md
+    reason: >-
+      Eval-protected (_agent-guidance ADR 0034): its description is over the
+      400-character listing cap, but a wording edit would reset its eval evidence,
+      so the trim goes through skills-evals' eval-backed improve lane instead.
+    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668

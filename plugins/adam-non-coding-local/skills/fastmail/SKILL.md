@@ -1,17 +1,11 @@
 ---
 name: fastmail
-description: >
-  Automate Fastmail email workflows via a local browser session. Use this skill
-  ONLY when running on Adam's computer with access to his browser (e.g. via
-  Claude desktop / Cowork mode with Claude in Chrome). Do NOT use in headless
-  environments such as the Claude Code CLI, CI pipelines, or any context without
-  an interactive browser available. Trigger when the user wants to: search
-  Fastmail for emails by sender, subject, or keyword; read email threads or
-  attachment contents (including spreadsheets); compose and send new messages;
-  or draft and send replies. Trigger on "Fastmail", "check my email", "search my
-  inbox", "reply to", or similar email-management requests. Not for adding From
-  addresses or sending identities; those use add-from-address /
-  add-received-from-addresses.
+description: >-
+  Automate Fastmail via a local browser session: search mail, read threads and
+  attachments, compose, send and reply. Only on Adam's computer with browser access
+  (Claude desktop or Cowork with Claude in Chrome), never headless. Trigger on
+  "Fastmail", "check my email", "search my inbox". Not for From addresses; use
+  add-from-address.
 compatibility: Requires Claude in Chrome (browser automation) with a logged-in Fastmail session; local interactive execution only — not usable in headless or cloud sessions
 ---
 

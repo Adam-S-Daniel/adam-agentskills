@@ -1,6 +1,11 @@
 ---
 name: finding-unknowns
-description: Surface and resolve the ambiguities in a task before, during, and after implementation — the blind-spot pass, the self-interview, reference-driven specs, implementation notes, and a post-hoc explainer or quiz. Use at the start of any non-trivial build, when working in an unfamiliar codebase or a new domain, when acceptance criteria are subjective ("make it feel polished", "clean this up"), when a plan keeps needing rework mid-implementation, or when the user says "help me find my unknowns", "what am I missing", "poke holes in this", "what haven't I thought about". Also use after a change lands, to produce the explainer or comprehension check that proves the work is understood.
+description: >-
+  Surface and resolve a task's ambiguities before, during and after implementation:
+  blind-spot pass, self-interview, reference-driven specs, implementation notes,
+  post-hoc explainer or quiz. Use on non-trivial builds, unfamiliar code or domains,
+  subjective criteria, plans that keep needing rework, or "what am I missing", "poke
+  holes in this".
 ---
 
 # Finding your unknowns

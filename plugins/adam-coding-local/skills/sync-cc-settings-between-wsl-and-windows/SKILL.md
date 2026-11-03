@@ -1,6 +1,10 @@
 ---
 name: sync-cc-settings-between-wsl-and-windows
-description: Sync Claude Code settings.json between a Windows home and a WSL home, merging per property and keeping OS-bound keys per file. Triggers on requests to "sync Claude Code settings", "merge my settings.json", "keep WSL and Windows Claude settings in sync", or mentions of reconciling %USERPROFILE%\.claude\settings.json with ~/.claude/settings.json in WSL. Windows-only (needs PowerShell 7+ and access to the WSL UNC share). Use when the user wants the two settings.json files reconciled, not when they want a single file edited in place.
+description: >-
+  Sync Claude Code settings.json between the Windows and WSL homes, merging per property
+  and keeping OS-bound keys per file. Use for "sync Claude Code settings", "merge my
+  settings.json", or keeping WSL and Windows settings in sync, not for editing one file.
+  Windows-only (PowerShell 7+ and the WSL UNC share).
 license: MIT
 compatibility: Requires Windows with PowerShell 7+ and WSL2 (UNC access to \\wsl.localhost); local execution only
 ---

@@ -222,6 +222,25 @@ def test_length_limit_is_config_driven_not_hardcoded(tmp_path, local_registry):
     assert check_skills.K_LENGTH_LIMIT in klasses(strict)
 
 
+def test_a_registry_max_lengths_overrides_the_top_level_limit(tmp_path):
+    """A registry entry's own `max_lengths:` sets the limit for that registry only; the
+    other registries keep the top-level one."""
+    for root in ("strict", "loose"):
+        write_skill(tmp_path / root, "skills/verbose",
+                    frontmatter=f"---\nname: verbose\ndescription: {'x' * 150}\n---\n")
+    registries = [registry_entry("strict", "strict", max_lengths={"description": 100}),
+                  registry_entry("loose", "loose")]
+    report = run_tool(tmp_path, registries)
+    fired = [f for f in report.errors if f.klass == check_skills.K_LENGTH_LIMIT]
+    assert [f.registry for f in fired] == ["strict"]
+    assert "150" in fired[0].message and "100" in fired[0].message
+
+
+def test_a_registry_max_lengths_that_is_not_a_mapping_is_refused(tmp_path):
+    with pytest.raises(SystemExit):
+        run_tool(tmp_path, [registry_entry("alpha", ".", max_lengths=[400])])
+
+
 def test_non_spec_field(tmp_path, local_registry):
     write_skill(tmp_path, "skills/good-skill")
     write_skill(

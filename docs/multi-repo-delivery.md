@@ -413,10 +413,14 @@ done
   guidance, only the repo stub, neither, or unknown. It also uploads that line
   to the private repository's `persistent/usage-events` branch, because a
   cloud container's files do not outlive it. The upload uses the session's own
-  GitHub access, so it works only when the private repository is attached:
-  the cloud proxy replaces any other token sent to GitHub, which is why the
-  `USAGE_WRITER_APP_*` App credentials are only a fallback for hosts without
-  that proxy. With no copy of the hook attached it does nothing.
+  GitHub access, so it works only when the private repository is attached;
+  otherwise it goes to the private S3 drop bucket when the environment sets
+  `USAGE_SINK_BUCKET`, `USAGE_SINK_REGION` and `USAGE_SINK_SIGNING=proxy`
+  and holds the writer key as an AWS SigV4 **network secret**
+  (`_agent-guidance` ADR 0037). Never put a key, token or App private key in
+  a cloud environment's variables or in this setup script: every session in
+  the environment can read them. With no copy of the hook attached it does
+  nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

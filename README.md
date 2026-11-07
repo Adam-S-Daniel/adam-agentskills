@@ -145,7 +145,7 @@ Available skills:
 | `adam-coding-anywhere` | `/adam-coding-anywhere:ci-job-performance` | Speed up a slow GitHub Actions job or test step using measurements, not guesses. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:debug-github-workflows` | Debugging GitHub Actions workflow failures. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:disarm-inherited-reach` | Sever a scratch tree's inherited push path to the real repository the moment the tree exists, before anything runs in it. |
-| `adam-coding-anywhere` | `/adam-coding-anywhere:fan-out-triage` | Triage a large list of items (release-note bullets, issues, alerts, findings; dozens to thousands) against one or more repos by fanning the work out to parallel subagents, without letting ID drift or a thin inventory corrupt the result. |
+| `adam-coding-anywhere` | `/adam-coding-anywhere:fan-out-triage` | Triage a large list of items (release notes, issues, alerts, findings; dozens to thousands) against one or more repos with parallel subagents, guarding against ID drift and a thin inventory. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:github-actions-repo-settings` | Configure and enforce GitHub repository security settings as code: require actions to be pinned to full-length commit SHAs, require approval for all outside collaborators' fork pull-request workflow runs, and protect the default branch via a repository ruleset. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:red-ci-adamdaniel-ai` | Diagnose and fix a red or blocked CI result after pushing to a cms-platform-style Jekyll site such as adamdaniel.ai. |
 | `adam-coding-anywhere` | `/adam-coding-anywhere:review-bash-ci-reliability` | Review bash scripts for CI/CD reliability issues. |

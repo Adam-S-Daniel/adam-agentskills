@@ -1,6 +1,6 @@
 ---
 name: fan-out-triage
-description: Triage a large list of items (release-note bullets, issues, alerts, findings; dozens to thousands) against one or more repos by fanning the work out to parallel subagents, without letting ID drift or a thin inventory corrupt the result. Use when asked to go through a changelog, backlog or report and decide which items affect your code, especially if you are about to split the list across agents. Not for a list you can read in one sitting, or for reviewing one dependency bump.
+description: Triage a large list of items (release notes, issues, alerts, findings; dozens to thousands) against one or more repos with parallel subagents, guarding against ID drift and a thin inventory. Use when asked to go through a changelog, backlog or report and decide which items affect your code, especially before splitting across agents. Not for a list readable in one sitting or one dependency bump.
 ---
 
 # Fan-out triage

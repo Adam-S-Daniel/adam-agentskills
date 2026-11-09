@@ -112,8 +112,8 @@ merge-base, which a criss-cross history can make lie):
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
   `retire-skill/`) fails unless it targets the default branch and stays
   inside ADR 0021 (the loop's App may open pull requests only from those
-  branches, and the lanes and the check itself are read from the default
-  branch, never from a base the pull request chose): opened by the App
+  branches; CI reads the lanes and the check itself from the default branch,
+  never from a base the pull request chose): opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
   the ledger), manifests whose `version` stays a semantic version string, a `skills.lock` that changes only its own skill's entry and is
@@ -141,7 +141,13 @@ workflows could remove these steps) and no `statuses` or `checks` write
 permission (the required `pytest` context is not tied to GitHub Actions, so
 such a credential could report it green), and no `actions` write permission
 (a re-run keeps an old event's workspace). Verify all three whenever the App
-changes.
+changes. One gap remains that no permission closes: required checks belong
+to a head commit, not to one pull request, so a second pull request from the
+same head into a branch whose `ci.yml` predates these steps can report
+`pytest` green for the pull request into the default branch. Requiring
+branches to be up to date before merging (#137) closes it, since the head
+then carries the current `ci.yml`; until then, keep no long-lived branch
+besides the default one.
 
 Before anything in the job runs a pull request's code (the pip install
 reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only

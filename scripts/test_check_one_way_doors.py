@@ -1641,3 +1641,11 @@ def test_a_skill_folder_named_like_a_windows_device_needs_a_review(tmp_path):
 
 def test_a_version_with_non_ascii_digits_is_not_semantic():
     assert not owd._SEMVER_RE.fullmatch("1.3.1\u0669")
+
+
+# Round 20.
+
+def test_a_block_line_after_a_comment_on_the_same_line_counts():
+    url, blocked = owd.review_line("Adversarial-review: pass https://github.com/x/y\n\n"
+                                   "<!-- note --> Adversarial-review: block https://github.com/x/z\n")
+    assert url and blocked

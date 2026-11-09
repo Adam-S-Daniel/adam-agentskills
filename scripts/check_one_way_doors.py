@@ -67,7 +67,10 @@ A pull request whose head branch starts with a prefix in scripts/loop_prs.json
 plus a Bot author. So here it must be:
 
 - opened by the App login scripts/loop_prs.json names (user type `Bot`), from
-  a branch in this repository, never a fork;
+  a branch in this repository, never a fork; and any pull request that App
+  opens is held to these rules, from a lane's branch only;
+- into the default branch (a base the App wrote would supply its own copy of
+  this check and of the lanes);
 - about the one skill its branch names, in exactly one plugin, with the
   lane's kind: a create, an edit, or a removal of that SKILL.md;
 - inside ADR 0021 Decision 3's paths: the skill's directory,
@@ -95,10 +98,10 @@ plus a Bot author. So here it must be:
   from this repository (Decision 5). Forks and people cannot hold the slot,
   and two opened in the same seconds cannot block each other.
 
-Config is read at the base, and CI runs the base branch's copy of this
-script, so a pull request cannot loosen the rules it is judged by by editing
-them; a file
-absent there (the pull request that adds it) is read from the merge result.
+Config is read at the base, and CI runs the default branch's copy of this
+script and reads the lanes from the default branch, so a pull request cannot
+loosen the rules it is judged by by editing them; a file absent there (the
+pull request that adds it) is read from the merge result.
 A loop pull request may change only the paths its lanes write; a bash-only
 CI step refuses anything else before the job runs any of its code (the pip
 install, the skill gates), since that code could make this check pass. A
@@ -819,6 +822,10 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
     shown = [visible] + [t.content for t in tokens if t.type in ("fence", "code_block")
                          or (t.type == "html_block"
                              and not t.content.lstrip().startswith("<!--"))]
+    # Text after a comment's close in the same HTML block is shown (round 20).
+    shown += [t.content.rsplit("-->", 1)[1] for t in tokens
+              if t.type == "html_block" and t.content.lstrip().startswith("<!--")
+              and "-->" in t.content]
     # Tags are markup, not text: `<summary>Adversarial-review: block` starts a
     # visible line.
     shown = [re.sub(r"<[^>\n]*>", "", text) for text in shown]

@@ -859,8 +859,14 @@ def test_a_retired_name_cannot_return_with_another_case_or_a_trailing_dot(tmp_pa
     remove_skill(repo)
     commit(repo, "retire")
     _git(repo, "checkout", "-q", "-B", "pr")
-    _write(repo / "plugins" / CODE_PLUGIN / "skills" / variant / "SKILL.md", skill_md(variant))
-    commit(repo)
+    # Staged through the index, not the disk: Windows drops a trailing dot
+    # from a directory name, and the check reads git objects anyway.
+    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input=skill_md(variant), check=True, capture_output=True,
+                          text=True).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo",
+         f"100644,{blob},plugins/{CODE_PLUGIN}/skills/{variant}/SKILL.md")
+    _git(repo, "commit", "-q", "-m", "c")
     code, out = check(repo, tmp_path, pr_json())
     assert code == 1 and "reuse a retired name" in out, out
 

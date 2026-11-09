@@ -183,7 +183,7 @@ The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker
   version, then the canonical gate read from `$?` unpiped.
 
   A **venv** is the other measured-good answer and costs a `PATH`/interpreter
-  decision every later step in the session has to honour;
+  decision every later step in the session has to honor;
   `--break-system-packages` was not tried and the name is the warning.
 
 - **A long background run is not a baseline if you edit while it runs.** The

@@ -537,13 +537,18 @@ def _description_shape_ok(block: List[str]) -> bool:
 #: What Claude Code runs from a skill body when skill shell execution is on:
 #: `!` then a backtick span after any (Unicode) space or at a line start, and
 #: a ```! fence anywhere. Matched as Claude Code does, not as a grep would.
-_SKILL_SHELL_RES = (re.compile(r"(?:^|(?<=[\s\ufeff]))!`[^`]+`", re.MULTILINE),
-                    re.compile(r"```!"))
+#: Any `!` and backtick not inside a code span's opening backtick is refused,
+#: closed or not: Claude Code appends the arguments to the body, and a
+#: backtick in them closes an open span (round 15).
+_SKILL_SHELL_RES = (re.compile(r"(?<!`)!`"), re.compile(r"```!"))
 #: Only the placeholders Claude Code substitutes. A made-up `${...}` stays as
 #: written, so removing it would hide what it encloses (round 14).
 _PLACEHOLDER_RE = re.compile(
     r"\$ARGUMENTS(?:\[\d+\])?|\$\d+|\$\{(?:CLAUDE_SKILL_DIR|CLAUDE_SESSION_ID|CLAUDE_EFFORT"
-    r"|CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|user_config\.[\w.-]+)\}")
+    r"|CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|CLAUDE_PROJECT_DIR|user_config\.[\w.-]+)\}")
+#: Files Claude Code or Codex may load as project memory from a directory
+#: they read (round 15), whatever the case on a case-insensitive checkout.
+_MEMORY_FILE_NAMES = {"claude.md", "claude.local.md", "agents.md"}
 #: Names Windows will not create, whatever the extension (git refuses them).
 _WINDOWS_RESERVED_RE = re.compile(r"^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$",
                                   re.IGNORECASE)
@@ -1005,6 +1010,7 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
             rel = path[len(f"{root}/skills/{skill}/"):]
             if mode != "100644" or not _LOOP_SKILL_PATH_RE.match(rel) or (
                     rel != "SKILL.md" and posixpath.basename(rel).casefold() == "skill.md") \
+                    or posixpath.basename(rel).casefold() in _MEMORY_FILE_NAMES \
                     or any(_WINDOWS_RESERVED_RE.match(part) for part in rel.split("/")):
                 errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
                               "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "

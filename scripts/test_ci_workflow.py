@@ -889,6 +889,12 @@ def test_the_loop_path_guard_matches_whole_path_segments(tmp_path, changed, code
     assert _run_guard(tmp_path, "eval-improve/s", changed) == code
 
 
+def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):
+    run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
+               if s.get("name") == LOOP_PATH_GUARD)["run"]
+    assert '"$path"' in run.split("*)", 1)[1].split(";;", 1)[0]
+
+
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
                     reason="runs the step's bash with git and jq, as the Linux runner does")
 def test_the_loop_path_guard_ignores_other_branches(tmp_path):

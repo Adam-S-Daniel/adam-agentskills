@@ -477,7 +477,7 @@ jobs:
             case "$path" in
               docs/skill-impact.md|README.md|skills.lock) ;;
               scripts/plugin_layout.json|scripts/shipped_names.json|scripts/skills_waivers.yml) ;;
-              *) echo "::error::An evals-loop pull request may not change this path."; bad=1 ;;
+              *) printf '::error::An evals-loop pull request may not change %q.\n' "$path"; bad=1 ;;
             esac
           done < "$changed"
           exit "$bad"

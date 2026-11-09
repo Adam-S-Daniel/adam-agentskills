@@ -114,12 +114,17 @@ merge-base, which a criss-cross history can make lie):
   one complete quoted line or a `>`/`|` block, no shell line Claude Code
   would run, and nothing Claude Code could read differently; and in the
   skill directory only `SKILL.md`, `PURPOSE.md` or
-  lowercase `.md` files outside dot-directories and not named like a Windows device (`aux.md`), as regular files, with no
+  lowercase `.md` files outside dot-directories and not named like a Windows device (`aux.md`) or a memory file (`claude.md`, `agents.md`), as regular files, with no
   two paths that are one file to a case-insensitive file system. Text-only changes auto-merge in any
   plugin (owner decision 2026-11-03); a person who wants anything else takes
   it to a branch outside the loop's prefixes, since a draft could be marked
   ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and
   `bin/`, so it does not hold these.
+
+All of this rests on the loop's App having no `workflows` permission: a
+pull request's run uses its own `ci.yml`, so a branch that could change
+workflows could remove these steps. Verify that permission whenever the App
+changes.
 
 Before anything in the job runs a pull request's code (the pip install
 reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
@@ -134,12 +139,13 @@ on another one (it deletes a skill the other adds) passes against the old
 base and is not re-checked once the other merges, unless the ruleset
 requires branches to be up to date (it does not today; #137).
 
-A skill body that runs a shell command on load (an exclamation mark then a
-backtick span, or a fence opened with three backticks and `!`) is refused in
-a loop pull request's SKILL.md by this check, matched the way Claude Code
-matches it (after any Unicode space or a byte-order mark, a fence anywhere in
-a line), in the text as written and again with the placeholders Claude Code
-substitutes (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` and the like)
+A skill body that could run a shell command on load is refused in a loop
+pull request's SKILL.md by this check: any exclamation mark followed by a
+backtick (unless a backtick comes just before it, as in a code span showing
+`!`), closed or not, because Claude Code appends the arguments to the body
+and a backtick in them closes an open span; and a fence opened with three
+backticks and `!` anywhere in a line. It looks in the text as written and again with the placeholders Claude Code
+substitutes (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}`, `${CLAUDE_PROJECT_DIR}` and the like)
 replaced; any other `${...}` stays as written. The
 required `agent-checks` job's `skill-shell` check covers other pull
 requests, with a narrower match, and `disableSkillShellExecution` turns

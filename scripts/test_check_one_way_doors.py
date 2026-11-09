@@ -1569,3 +1569,41 @@ def test_a_loop_edit_of_a_skill_with_named_arguments_is_refused():
     text = "---\nname: a\ndescription: x\narguments: [topic]\n---\n\nRun !$topic now.\n"
     errors = owd.loop_frontmatter_errors(text, text)
     assert any("arguments" in e for e in errors), errors
+
+
+# Round 18.
+
+@pytest.mark.parametrize("root", [{"description": None}, {"version": 2}])
+def test_a_marketplace_root_field_claude_code_refuses_needs_a_review(tmp_path, root):
+    repo = make_repo(tmp_path)
+    path = repo / ".claude-plugin" / "marketplace.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.update(root)
+    _json(path, data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "manifest beyond" in out, out
+
+
+@pytest.mark.parametrize("sha", ["abc1234", "A" * 40])
+def test_a_remote_pin_claude_code_refuses_loses_the_plugin(tmp_path, sha):
+    repo = _remote_repo(tmp_path, {"source": "github", "repo": "Example/one", "ref": "v1.0.0"})
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["plugins"][-1]["source"].update(ref="v1.1.0", sha=sha)
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "remote-one" in out, out
+
+
+def test_a_pass_line_in_a_draft_body_cannot_reuse_a_retired_name(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    remove_skill(repo)
+    commit(repo, "retire")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL))
+    bump_version(repo, version="1.1.0")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"draft-skill/{SKILL}", body=PASS), open_prs=[])
+    assert code == 1 and "reuse a retired name" in out, out

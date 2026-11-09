@@ -400,6 +400,13 @@ _ENTRY_TYPES = {"description": str, "version": str, "category": str, "homepage":
 _SEMVER_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
 
 
+def _remote_pin_ok(source: dict) -> bool:
+    """A remote source's pin as Claude Code's schema takes it (round 18)."""
+    return (("ref" not in source or isinstance(source["ref"], str))
+            and ("sha" not in source or (isinstance(source["sha"], str)
+                                         and bool(re.fullmatch(r"[a-f0-9]{40}", source["sha"])))))
+
+
 def _routine_fields_ok(d: dict) -> bool:
     """The fields a routine change may touch, in the shapes Claude Code takes."""
     return (("version" not in d
@@ -422,6 +429,8 @@ def _config_shape(data, is_marketplace: bool):
         return {k: v for k, v in d.items() if k not in routine}
     if not is_marketplace:
         return strip(data) if _routine_fields_ok(data) else None
+    if not _routine_fields_ok(data):
+        return None  # a root field Claude Code refuses refuses the marketplace (round 18)
     plugins = data.get("plugins")
     if not isinstance(plugins, list):
         return json.dumps(data, sort_keys=True)
@@ -434,6 +443,8 @@ def _config_shape(data, is_marketplace: bool):
             return None
         entry = strip(entry)
         if isinstance(entry.get("source"), dict):
+            if not _remote_pin_ok(entry["source"]):
+                return None
             entry["source"] = {k: v for k, v in entry["source"].items() if k not in ("ref", "sha")}
         shaped.append(entry)
     return json.dumps({**strip(data), "plugins": shaped}, sort_keys=True)
@@ -715,7 +726,8 @@ def present_names(rev: str, verify_against: Optional[str] = None,
             continue
         source = entry.get("source")
         if not isinstance(source, str):
-            names["plugins"].add(plugin)  # a remote plugin: its name is all we own
+            if isinstance(source, dict) and _remote_pin_ok(source):
+                names["plugins"].add(plugin)  # a remote plugin: its name is all we own
             continue
         root = _local_root(source)
         if moved or root != f"plugins/{plugin}":
@@ -1106,7 +1118,7 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                     or any(_WINDOWS_RESERVED_RE.match(part) for part in rel.split("/")):
                 errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
                               "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "
-                              "dot-directories, as a regular file). {hold}")
+                              f"dot-directories, as a regular file). {hold}")
         in_skill = files_under(merged, f"{root}/skills/{skill}")
         seen: Dict[str, str] = {}
         for path in in_skill:
@@ -1157,8 +1169,25 @@ def run(base: str, head: str, pr: dict, open_prs: Optional[list]) -> List[str]:
     base = resolve(base)
     head = resolve(head)
     merged = merge_result(base, head)
-    return check_names(base, merged, pr.get("body")) + check_loop_pr(base, merged, pr,
-                                                                     open_prs, head)
+    # A create or edit lane's body is model-written (skills-evals pastes its
+    # report), so a pass line there opens no door; only the removal lane's
+    # reviewer writes one (round 18).
+    body = pr.get("body")
+    if _loop_kind(base, merged, pr) in ("create", "edit"):
+        body = None
+    return check_names(base, merged, body) + check_loop_pr(base, merged, pr, open_prs, head)
+
+
+def _loop_kind(base: str, merged: str, pr: dict) -> Optional[str]:
+    config = _json_at(base, LOOP_CONFIG)
+    if config is None:
+        config = _json_at(merged, LOOP_CONFIG)
+    lanes = config.get("lanes") if isinstance(config, dict) else None
+    if not isinstance(lanes, dict):
+        return None
+    ref = ((pr.get("head") or {}).get("ref")) or ""
+    lane = next((p for p in lanes if isinstance(p, str) and ref.startswith(p)), None)
+    return lanes.get(lane) if lane is not None else None
 
 
 def _escape(message: str) -> str:

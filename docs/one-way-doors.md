@@ -82,7 +82,7 @@ merge-base, which a criss-cross history can make lie):
   name that disappears must also be in `scripts/shipped_names.json`. A
   changed SKILL.md whose frontmatter Claude Code could read differently (a
   `---` inside a line, a duplicate key, a key-shaped line inside a value, or
-  any other line at column 0 that is not a key) counts as losing its name,
+  any other line at column 0 that is not a key) fails outright,
   and a SKILL.md that is a symlink or gitlink, sits beside a case variant
   (`skill.md`, as a file or a directory), carries a second byte-order mark
   or is over 1 MiB (Claude Code skips it) does not count as present. A
@@ -97,7 +97,8 @@ merge-base, which a criss-cross history can make lie):
   same line: on a Windows or macOS checkout one replaces the other.
 - **A change to the marketplace or a plugin manifest other than a `version`
   (a semantic version string), a non-empty `description`, `keywords` (a list
-  of non-empty strings) or a remote plugin's `ref`/`sha`** needs the same
+  of non-empty strings) or a remote plugin's `ref`/`sha`** (a string, and 40
+  lowercase hex characters) needs the same
   line: Claude Code validates both files against a schema this check does not
   model, and a file that fails it drops a plugin or every plugin.
 - **A skill folder whose name is not lowercase letters, digits and hyphens**
@@ -168,7 +169,14 @@ execution off where it is set.
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.
 
-Not checked mechanically: skills a plugin would load from anywhere other than
+In a `draft-skill/` or `eval-improve/` pull request the body is written by
+the loop's model, so a pass line there opens nothing: a create or edit that
+crosses a door fails. Only the removal lane's reviewer writes a line that
+counts. A frontmatter Claude Code could read differently is an error no
+line overrides; fix the frontmatter.
+
+Not checked mechanically: a skill folder that is a symlink (the required
+`pytest` suite's `check_no_symlinks` refuses one), skills a plugin would load from anywhere other than
 `plugins/<plugin>/skills/<skill>/SKILL.md` (a `commands/` file, or a `skills`
 or `commands` path in a manifest or marketplace entry; nothing here uses
 them today), and the skills inside a remote plugin such as `cms-platform`

@@ -143,18 +143,20 @@ adversarial review found both were prose only.
   improvement that trims a skill may remove that skill's own `length-limit`
   waiver from `scripts/skills_waivers.yml` and nothing else in it. A create or a
   removal may append the skill to `scripts/shipped_names.json`; a removal of
-  a skill not yet listed there must (every skill on `main` on 2026-11-09 is
-  listed). skills-evals' lanes do not write it yet; until they do, a removal
-  of a skill drafted after that date fails until the name is appended.
+  a skill not yet listed there must. The ledger lists every skill that was on
+  `main` on 2026-11-09 and the two retired before then (`sync-skills`,
+  `launch-wsl-claude-session`); skills-evals' removal lane appends from
+  [skills-evals#922](https://github.com/Adam-S-Daniel/skills-evals/pull/922)
+  on.
 - **Decisions 3 to 5 are checked on receipt.** `scripts/check_one_way_doors.py`,
   in the required `pytest` job, fails a `draft-skill/`, `eval-improve/` or
   `retire-skill/` pull request that is not opened by the App
   `scripts/loop_prs.json` names (from a branch here, not a fork), changes
   anything outside its one skill and the bookkeeping, changes a manifest
   beyond `version`, is armed to auto-merge while adding or changing `hooks`
-  or `allowed-tools` in the skill's frontmatter, or is not the only ready loop
-  pull request the App has open here (forks, people and the loop's own drafts
-  do not hold the slot).
+  or `allowed-tools` in the skill's frontmatter, or, unless it is a draft, has an
+  older ready loop pull request from the App open here (forks, people and the
+  loop's own drafts do not hold the slot, and the older of two wins).
 - **Decision 4 is as the owner narrowed it on 2026-11-03**, not as written
   above: text-only changes auto-merge in any plugin, and only a change
   `plugin-runtime-review` would hold (a skill's own `hooks/` or `bin/`, or a

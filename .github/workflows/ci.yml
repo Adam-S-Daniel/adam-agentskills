@@ -495,8 +495,17 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
             | jq 'add // []' > "$d/open.json"
-          base_ref="$(jq -r .base.ref "$d/pr.json")"
-          python3 scripts/check_one_way_doors.py --base "refs/remotes/origin/$base_ref" \
+          base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"
+          # Run the BASE branch's copy, so a pull request cannot loosen the
+          # check that judges it. Only the pull request that adds the script
+          # finds none there and runs its own.
+          if git cat-file -e "$base:scripts/check_one_way_doors.py" 2>/dev/null; then
+            git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"
+          else
+            echo "::notice::The base has no one-way-door check yet; running this pull request's copy."
+            cp scripts/check_one_way_doors.py "$d/check.py"
+          fi
+          python3 "$d/check.py" --base "$base" \
             --head "$HEAD_SHA" --pr-json "$d/pr.json" --open-prs "$d/open.json"
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,

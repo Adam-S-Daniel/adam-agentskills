@@ -71,12 +71,15 @@ plus a Bot author. So here it must be:
   narrowed it on 2026-11-03: text-only changes auto-merge in any plugin, and
   plugin-runtime-review already holds a skill's own hooks/ or bin/; it does
   not read frontmatter, #135);
-- the only ready (non-draft) loop pull request the App has open from this
-  repository (Decision 5). Forks and people cannot hold the slot.
+- unless it is a draft, the oldest ready loop pull request the App has open
+  from this repository (Decision 5). Forks and people cannot hold the slot,
+  and two opened in the same seconds cannot block each other.
 
-Config is read at the base, so a pull request cannot loosen the rules it is
-judged by; a file absent there (the pull request that adds it) is read from
-the merge result.
+Config is read at the base, and CI runs the base branch's copy of this
+script, so a pull request cannot loosen the rules it is judged by; a file
+absent there (the pull request that adds it) is read from the merge result.
+A pull request can still edit ci.yml to drop the step, as it can for every
+check in that job.
 
 Inputs and trust
 -----------------
@@ -114,10 +117,10 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REVIEW_PASS_RE = re.compile(
     r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+"
     r"(https://(?:github\.com|claude\.ai)/\S+)[ \t]*$", re.MULTILINE)
-#: A block counts wherever a reader could see it (inside <details> too), in
-#: any case: only HTML comments hide it. Too strict is the safe direction.
-REVIEW_BLOCK_RE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*block\b",
-                             re.MULTILINE | re.IGNORECASE)
+#: A block counts wherever a reader could see it (in a list, a quote, bold
+#: text or <details>), in any case: only HTML comments hide it. Too strict is
+#: the safe direction.
+REVIEW_BLOCK_RE = re.compile(r"Adversarial-review\W*block\b", re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 WAIVERS = "scripts/skills_waivers.yml"
 LENGTH_WAIVER_CLASS = "length-limit"
@@ -370,6 +373,15 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     if not after["marketplace"]:
         errors.append(f"{MARKETPLACE} in the merge result has no readable `name`.")
     lost = [(key, name) for key in LEDGER_KEYS for name in sorted(before[key] - after[key])]
+    # A remote plugin keeps its name but changes every skill under it when its
+    # source moves to another repository: that is a rename too.
+    _, base_entries, _, _ = marketplace_entries(base)
+    _, merged_entries, _, _ = marketplace_entries(merged)
+    for plugin in sorted(before["plugins"] & after["plugins"]):
+        old_src = base_entries.get(plugin, {}).get("source")
+        new_src = merged_entries.get(plugin, {}).get("source")
+        if not isinstance(old_src, str) and old_src != new_src:
+            lost.append(("plugins", plugin))
     # A name that arrives but has shipped before (by basename, for a skill, so
     # a retired skill re-created in another plugin counts) reuses a retired name:
     # stale locks and records keyed by it would now point at something else.
@@ -530,9 +542,12 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
         # person can name a branch `retire-skill/x`, and the loop opens drafts
         # on purpose (Decisions 4 and 5), so counting those would let anyone
         # stall the loop and fail the loop's own in-flight pull request.
+        # Only an OLDER one blocks, so two opened in the same seconds cannot
+        # fail each other forever: the older passes, the newer waits.
         others = sorted(
             o.get("number") for o in open_prs
-            if isinstance(o, dict) and o.get("number") != number and not o.get("draft")
+            if isinstance(o, dict) and isinstance(o.get("number"), int)
+            and isinstance(number, int) and o["number"] < number and not o.get("draft")
             and (o.get("user") or {}).get("login") == config["author"]
             and (o.get("user") or {}).get("type") == "Bot"
             and (((o.get("head") or {}).get("repo")) or {}).get("full_name") == base_repo

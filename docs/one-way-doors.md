@@ -36,9 +36,11 @@ Each item says what breaks downstream when it changes.
    and the `skills.lock` format are copied into consumer repositories; a
    change that an old copy cannot read breaks those repositories until each
    is updated.
-7. **Public history and pull request text.** This repository is public.
-   Anything committed, or written in a pull request, is published for good
-   (its predecessor was retired for this reason, ADR 0013).
+7. **Personal data in public history.** This repository is public, so
+   personal or sensitive data committed or written in a pull request is
+   published for good (its predecessor was retired for this reason, ADR
+   0013). The required `privacy` job is the check for this one; ordinary
+   commits and pull request text are not a one-way door.
 8. **Records keyed by a skill's name elsewhere.** skills-evals'
    `evals/<skill>/` fixtures and results, the explorer data, the
    eval-protection data and `docs/skill-impact.md` are all keyed by
@@ -49,8 +51,10 @@ Each item says what breaks downstream when it changes.
 `<plugin>/<skill>` name that has shipped. It is append-only: a retired name
 stays listed, so it is never reused by accident.
 
-Not one-way doors: hook handler names in `hooks/hooks.json` and the
-`persistent/*` branches (protected by a ruleset already).
+Not one-way doors: hook handler names in `hooks/hooks.json`, the
+`persistent/*` branches (protected by a ruleset already), and the claude.ai
+account store's old uploaded skills, which this repository no longer writes
+(ADR 0014; the owner removes leftovers by hand).
 
 ## What CI enforces
 
@@ -72,8 +76,8 @@ merge-base, which a criss-cross history can make lie):
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths, no new or changed `hooks` or `allowed-tools` in the
-  skill's frontmatter while armed to auto-merge, and no other ready loop pull
-  request from that App open. Text-only changes auto-merge in any plugin
+  skill's frontmatter while armed to auto-merge, and (unless it is a draft) no
+  older ready loop pull request from that App open. Text-only changes auto-merge in any plugin
   (owner decision 2026-11-03); a skill's own `hooks/` or `bin/` is held by
   the required `plugin-runtime-review` gate.
 
@@ -83,7 +87,11 @@ run; until that run registers (seconds), the previous result still shows.
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.
 
-Items 4 to 8 have no mechanical check. A pull request that touches one of
+Not checked mechanically: skills a plugin would load from anywhere other than
+`plugins/<plugin>/skills/<skill>/SKILL.md` (a `commands/` file, or a `skills`
+or `commands` path in a manifest or marketplace entry; nothing here uses
+them today), and the skills inside a remote plugin such as `cms-platform`
+(only its name and source are). Items 4 to 8 have no mechanical check. A pull request that touches one of
 them needs the same review and the same line, by the rule below.
 
 ## The adversarial review

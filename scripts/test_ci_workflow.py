@@ -754,12 +754,15 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
                            "GH_TOKEN": "${{ github.token }}"}
     # The base comes from the API's current base.ref, so a retargeted PR is
     # judged against its new base, and the trigger re-runs on that edit.
-    assert '--base "refs/remotes/origin/$base_ref"' in step["run"]
+    assert 'base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"' in step["run"]
+    assert '--base "$base"' in step["run"]
+    # The base branch's copy runs, so a PR cannot loosen its own judge.
+    assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
+    assert 'python3 "$d/check.py"' in step["run"]
     types = ci_triggers(load_ci())["pull_request"]["types"]
     assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
             "auto_merge_enabled", "auto_merge_disabled"} <= set(types)
     assert "${{" not in step["run"]
-    assert "scripts/check_one_way_doors.py" in step["run"]
     assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n"' in step["run"]
     assert "--open-prs" in step["run"]
     assert "continue-on-error" not in step

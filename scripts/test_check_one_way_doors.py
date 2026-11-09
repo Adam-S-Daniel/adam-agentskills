@@ -462,10 +462,11 @@ def test_a_second_open_loop_pr_fails(tmp_path):
     repo = make_repo(tmp_path)
     _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
     commit(repo)
-    open_prs = [open_pr(7, f"eval-improve/{SKILL}"), open_pr(9, f"draft-skill/{OTHER}"),
-                open_pr(10, "claude/unrelated")]
+    open_prs = [open_pr(7, f"eval-improve/{SKILL}"), open_pr(5, f"draft-skill/{OTHER}"),
+                open_pr(9, f"retire-skill/{OTHER}"), open_pr(3, "claude/unrelated")]
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=open_prs)
-    assert code == 1 and "[9]" in out, out
+    # Only the older loop PR (5) blocks; the newer one (9) waits behind this.
+    assert code == 1 and "[5]" in out, out
 
 
 def open_pr(number, ref, login=APP, user_type="Bot", repo="Example/registry", draft=False):
@@ -732,3 +733,54 @@ def test_a_block_line_inside_a_comment_does_not_count(tmp_path):
     body = f"<!--\nAdversarial-review: block https://github.com/Example/registry/pull/2\n-->\n\n{PASS}\n"
     code, out = check(repo, tmp_path, pr_json(body=body))
     assert code == 0, out
+
+
+# ---------------------------------------------------------------------------
+# Round 5 findings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("line", [
+    "- Adversarial-review: block https://github.com/Example/registry/pull/2",
+    "> Adversarial-review: block https://github.com/Example/registry/pull/2",
+    "**Adversarial-review: block** https://github.com/Example/registry/pull/2",
+])
+def test_a_block_line_in_a_list_quote_or_bold_fails(tmp_path, line):
+    repo = make_repo(tmp_path)
+    remove_skill(repo)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json(body=f"{line}\n\n{PASS}\n"))
+    assert code == 1 and "block" in out, out
+
+
+def test_moving_a_remote_plugin_to_another_repository_is_a_rename(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["plugins"].append({"name": "remote-one", "source": {"source": "github", "repo": "Example/one"}})
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo, "remote")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    data["plugins"][-1]["source"] = {"source": "github", "repo": "Someone/other"}
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and 'plugin "remote-one"' in out, out
+
+
+def test_the_ledger_lists_every_skill_the_impact_log_records_as_removed():
+    """Round 5: the ledger was first seeded from a shallow clone and missed
+    names retired before it. Every whole-skill `remove` entry for a plugin of
+    this marketplace must be listed. Entries are parsed the way the skill
+    gates parse them (markdown-it), not by a line scan."""
+    import check_skill_gates as csg
+
+    ledger = json.loads((ROOT / "scripts" / "shipped_names.json").read_text(encoding="utf-8"))
+    entries = csg.parse_entries((ROOT / "docs" / "skill-impact.md").read_text(encoding="utf-8"))
+    removed = {f"{e['plugin']}/{e['skill']}" for e in entries
+               if e["kind"] == "remove" and e["plugin"] in ledger["plugins"]}
+    on_disk = {f"{p.parent.parent.parent.name}/{p.parent.name}"
+               for p in (ROOT / "plugins").glob("*/skills/*/SKILL.md")}
+    # A partial removal (one flag of a skill that still ships) is not a retirement.
+    missing = sorted(removed - on_disk - set(ledger["skills"]))
+    assert removed, "the impact log parsed to no removals; the parser drifted"
+    assert not missing, f"retired names missing from the ledger: {missing}"

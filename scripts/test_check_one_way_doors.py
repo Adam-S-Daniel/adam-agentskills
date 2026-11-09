@@ -1173,7 +1173,9 @@ def _loop_edit(repo: Path, frontmatter: str, extra_files=()) -> None:
         blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w",
                                "--stdin"], input=text, check=True, capture_output=True,
                               text=True).stdout.strip()
-        _git(repo, "update-index", "--add", "--cacheinfo",
+        # Git for Windows refuses a device name (aux.md) in the index unless
+        # protectNTFS is off; the check reads objects, never the disk.
+        _git(repo, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo",
              f"100644,{blob},plugins/{PLUGIN}/skills/{SKILL}/{rel}")
     _git(repo, "commit", "-q", "-m", "c")
 

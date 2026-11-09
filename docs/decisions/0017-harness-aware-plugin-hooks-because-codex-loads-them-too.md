@@ -77,6 +77,9 @@ Hooks that only make sense in Claude Code go in a separate file,
 key. Claude Code merges that file with `hooks/hooks.json`; Codex never reads
 the Claude manifest, so it never sees them. No such file exists yet; the
 first will come with the API-credit lane.
+(Update 2026-11-09: two exist now, `plugins/adam-coding-local/hooks/claude-code.json`
+for the API-credit lane and `plugins/adam-anything-anywhere/hooks/claude-code.json`
+for the fleet-guidance and write-marker hooks.)
 
 **Harness detection.** `hooks/lib/harness.sh` takes a hook's stdin JSON (read
 once by the caller) and the environment, and prints one of:

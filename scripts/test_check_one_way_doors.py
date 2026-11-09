@@ -860,11 +860,12 @@ def test_a_retired_name_cannot_return_with_another_case_or_a_trailing_dot(tmp_pa
     commit(repo, "retire")
     _git(repo, "checkout", "-q", "-B", "pr")
     # Staged through the index, not the disk: Windows drops a trailing dot
-    # from a directory name, and the check reads git objects anyway.
+    # from a directory name, and the check reads git objects anyway. Git for
+    # Windows also refuses such a path in the index unless protectNTFS is off.
     blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
                           input=skill_md(variant), check=True, capture_output=True,
                           text=True).stdout.strip()
-    _git(repo, "update-index", "--add", "--cacheinfo",
+    _git(repo, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo",
          f"100644,{blob},plugins/{CODE_PLUGIN}/skills/{variant}/SKILL.md")
     _git(repo, "commit", "-q", "-m", "c")
     code, out = check(repo, tmp_path, pr_json())

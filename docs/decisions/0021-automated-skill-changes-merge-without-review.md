@@ -129,9 +129,13 @@ adversarial review found both were prose only.
   `Adversarial-review: pass <url>` into the pull request body
   ([skills-evals#917](https://github.com/Adam-S-Daniel/skills-evals/issues/917)).
   Improvements and new skills lose no name and keep the exception, unless a
-  new skill reuses a retired name. Until skills-evals#917 lands, every
-  `retire-skill/` pull request fails this repository's `pytest` check and
-  holds the one loop slot, so the removal lane is in effect paused until then.
+  new skill reuses a retired name. A removal without the line fails this
+  repository's `pytest` check and holds the one loop slot (Decision 5),
+  which stops all three lanes, not just removals. So this check merges only
+  after skills-evals' reviewer
+  ([skills-evals#922](https://github.com/Adam-S-Daniel/skills-evals/pull/922))
+  does; a `block` result still stops the loop until a person merges or
+  closes that pull request, by design.
 - **Decision 3's path list, corrected.** A new skill also edits
   `scripts/plugin_layout.json` (the draft lane always has). A create or a
   removal may append the skill to `scripts/shipped_names.json`; a removal of

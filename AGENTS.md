@@ -226,7 +226,7 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   a round's fix restarts the count (two of the four rounds that hardened
   `.claude/hooks/skills-bootstrap.sh` found defects the previous fix added).
   Record it in the PR body under `## Adversarial review`, ending with
-  `Adversarial-review: pass <https url>`.
+  `Adversarial-review: pass <url>` (a github.com or claude.ai link).
 - **CI enforces the name surfaces.** `scripts/check_one_way_doors.py`, in the
   required `pytest` job, compares the base with the would-be merge result
   and fails when a shipped marketplace, plugin or `<plugin>/<skill>` name

@@ -247,7 +247,8 @@ def frontmatter_name(text: str) -> Optional[str]:
     return value.strip() if isinstance(value, str) else None
 
 
-def present_names(rev: str, verify_against: Optional[str] = None) -> Dict[str, Set[str]]:
+def present_names(rev: str, verify_against: Optional[str] = None,
+                  bad: Optional[List[str]] = None) -> Dict[str, Set[str]]:
     """{marketplace, plugins, skills} present at rev.
 
     A plugin counts only when its name is listed once and, for a local plugin,
@@ -257,7 +258,9 @@ def present_names(rev: str, verify_against: Optional[str] = None) -> Dict[str, S
     A `metadata.pluginRoot` other than the repository root moves every local
     source, so no local plugin counts. Anything else is a rename in disguise.
     With verify_against (the base), a SKILL.md whose blob differs from that
-    rev's must also carry a frontmatter `name` equal to its directory."""
+    rev's must also carry a frontmatter `name` equal to its directory; one that
+    does not is appended to `bad` (the skill would load under another name, or
+    none, so it can neither keep a name nor arrive unseen)."""
     name, entries, dupes, plugin_root = marketplace_entries(rev)
     names = {"marketplace": {name} if name else set(), "plugins": set(), "skills": set()}
     moved = plugin_root not in (None, "", ".", "./")
@@ -284,6 +287,8 @@ def present_names(rev: str, verify_against: Optional[str] = None) -> Dict[str, S
             if verify_against is not None:
                 if blob_id(rev, path) != blob_id(verify_against, path):
                     if frontmatter_name(show(rev, path) or "") != skill:
+                        if bad is not None:
+                            bad.append(path)
                         continue
             names["skills"].add(f"{plugin}/{skill}")
     return names
@@ -349,7 +354,12 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
                     errors.append(f"{LEDGER} lost {key} entry {_q(name)}; it is "
                                   "append-only, so a retired name stays listed.")
     before = present_names(base)
-    after = present_names(merged, verify_against=base)
+    bad: List[str] = []
+    after = present_names(merged, verify_against=base, bad=bad)
+    for path in bad:
+        errors.append(f"{_q(path)} has no parsable frontmatter `name` equal to its "
+                      "directory. A skill's name is its directory name; fix the "
+                      "frontmatter (or rename both, which is a one-way door).")
     if not after["marketplace"]:
         errors.append(f"{MARKETPLACE} in the merge result has no readable `name`.")
     lost = [(key, name) for key in LEDGER_KEYS for name in sorted(before[key] - after[key])]
@@ -478,7 +488,10 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
                       "merges a change in what a skill runs or may run automatically. "
                       "Disarm it for a person to review.")
 
-    if open_prs is not None:
+    # A draft is never auto-merged, and Decision 5 lets the draft-skill gate
+    # open one while another loop PR is open, so the slot rule skips drafts;
+    # `ready_for_review` re-runs this when one is marked ready.
+    if open_prs is not None and not pr.get("draft"):
         number = pr.get("number")
         # Only the loop's own ready pull requests hold the slot: a fork or a
         # person can name a branch `retire-skill/x`, and the loop opens drafts

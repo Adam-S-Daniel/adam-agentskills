@@ -619,3 +619,48 @@ def test_the_loop_config_is_canonical_and_names_the_three_lanes():
     assert data["lanes"] == {"draft-skill/": "create", "eval-improve/": "edit",
                              "retire-skill/": "remove"}
     assert data["author"].endswith("[bot]")
+
+
+# ---------------------------------------------------------------------------
+# Round 3 findings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("text", [
+    "---\ndescription: Invented.\n---\n",                          # no name
+    "---\nname: other-name\ndescription: Invented.\n---\n",        # name != directory
+    "---\nname: brand-new\ndescription: Use when: x\n---\n",       # unparsable YAML
+])
+def test_a_new_skill_whose_frontmatter_name_is_not_its_directory_fails(tmp_path, text):
+    """A skill that would load under another name (or none) can neither keep
+    a name nor slip in past the retired-name check."""
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / "brand-new" / "SKILL.md", text)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 1 and "frontmatter `name`" in out, out
+
+
+def test_a_retired_name_cannot_return_under_another_directory(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    remove_skill(repo)
+    commit(repo, "retire")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / CODE_PLUGIN / "skills" / "fot2" / "SKILL.md",
+           skill_md("fot2", name=SKILL))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1, out
+
+
+def test_a_loop_draft_may_open_while_another_loop_pr_is_open(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / "new-skill" / "SKILL.md", skill_md("new-skill"))
+    commit(repo)
+    pr = loop_pr("draft-skill/new-skill")
+    pr["draft"] = True
+    code, out = check(repo, tmp_path, pr, open_prs=[open_pr(4, f"eval-improve/{OTHER}")])
+    assert code == 0, out
+    pr["draft"] = False
+    code, out = check(repo, tmp_path, pr, open_prs=[open_pr(4, f"eval-improve/{OTHER}")])
+    assert code == 1 and "[4]" in out, out

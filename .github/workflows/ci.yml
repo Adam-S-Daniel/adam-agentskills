@@ -1,14 +1,16 @@
 name: CI
 
 on:
-  # The default types plus three for the one-way-door check in `pytest`:
+  # The default types plus four for the one-way-door check in `pytest`:
   # `edited` (a body edit adds the review line; a base change retargets the
-  # PR, which must be re-judged against the new base) and
-  # `auto_merge_enabled` (that check treats an armed loop PR differently).
+  # PR, which must be re-judged against the new base), `ready_for_review`
+  # (the loop-PR slot rule skips drafts), and `auto_merge_enabled` /
+  # `auto_merge_disabled` (the frontmatter rule applies only while armed).
   # Several runs on one head sha are safe only because no job here has a
   # `concurrency` group (see test_no_concurrency_group_governs_a_required_job).
   pull_request:
-    types: [opened, synchronize, reopened, edited, auto_merge_enabled]
+    types: [opened, synchronize, reopened, edited, ready_for_review,
+            auto_merge_enabled, auto_merge_disabled]
   push:
     branches: [main]
   # Only skills-conformance benefits from a schedule. It clones the DEFAULT

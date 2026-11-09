@@ -95,10 +95,13 @@ merge-base, which a criss-cross history can make lie):
   re-pinned to a commit in its own history where that skill and every
   `.gitattributes` match the merge result, no change to
   `requirements-dev.txt`, and (unless it is a draft) no older ready loop pull
-  request from that App open. Draft or not, it must be text only: no
-  added or changed `hooks` or `allowed-tools` in the skill's frontmatter, no
-  frontmatter Claude Code could read differently, and nothing in the skill
-  directory but regular Markdown files. Text-only changes auto-merge in any
+  request from that App open. Draft or not, it must be text only: in
+  SKILL.md's frontmatter only the `description` lines may change (a new skill
+  may have only `name`, `description`, `license` and `compatibility`), with
+  no comment outside the description and nothing Claude Code could read
+  differently; and in the skill directory only `SKILL.md`, `PURPOSE.md` or
+  lowercase `.md` files outside dot-directories, as regular files, with no
+  two paths that are one file to a case-insensitive file system. Text-only changes auto-merge in any
   plugin (owner decision 2026-11-03); a person who wants anything else takes
   it to a branch outside the loop's prefixes, since a draft could be marked
   ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and

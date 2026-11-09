@@ -5,7 +5,7 @@ on:
   # `edited` (a body edit adds the review line; a base change retargets the
   # PR, which must be re-judged against the new base), `ready_for_review`
   # (the loop-PR slot rule skips drafts), and `auto_merge_enabled` /
-  # `auto_merge_disabled` (the frontmatter rule applies only while armed).
+  # `auto_merge_disabled` (the PR's state is re-read on each).
   # Several runs on one head sha are safe only because no job here has a
   # `concurrency` group (see test_no_concurrency_group_governs_a_required_job).
   pull_request:
@@ -512,10 +512,14 @@ jobs:
           # may not change that file: it could install a package that makes
           # the check pass. The lanes are read from the base's copy.
           ref="$(jq -r .head.ref "$d/pr.json")"
+          # Judged on the merge result, so main moving the file does not fail
+          # a loop branch cut before it; with a conflict, on the head itself.
+          merged="$(git merge-tree --write-tree --no-messages "$base" "$HEAD_SHA" | head -n1)" \
+            || merged="$HEAD_SHA"
           if git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null; then
             while IFS= read -r prefix; do
               if [[ "$ref" == "$prefix"* ]] && \
-                 ! git diff --quiet "$base" "$HEAD_SHA" -- requirements-dev.txt; then
+                 ! git diff --quiet "$base" "$merged" -- requirements-dev.txt; then
                 echo "::error::An evals-loop pull request may not change requirements-dev.txt."
                 exit 1
               fi

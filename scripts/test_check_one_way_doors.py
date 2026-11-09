@@ -1159,3 +1159,97 @@ def test_a_skill_md_symlink_does_not_count_as_present(tmp_path):
     _git(repo, "commit", "-q", "-m", "c")
     code, out = check(repo, tmp_path, pr_json())
     assert code == 1 and "disappear" in out, out
+
+
+# Round 11.
+
+def _loop_edit(repo: Path, frontmatter: str, extra_files=()) -> None:
+    skill_dir = repo / "plugins" / PLUGIN / "skills" / SKILL
+    _write(skill_dir / "SKILL.md", f"---\n{frontmatter}---\n\n# {SKILL}\n\nv2\n")
+    _git(repo, "add", "-A")
+    # Extras go straight into the index: on a case-insensitive file system
+    # `skill.md` would overwrite SKILL.md on disk, which is the attack itself.
+    for rel, text in extra_files:
+        blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w",
+                               "--stdin"], input=text, check=True, capture_output=True,
+                              text=True).stdout.strip()
+        _git(repo, "update-index", "--add", "--cacheinfo",
+             f"100644,{blob},plugins/{PLUGIN}/skills/{SKILL}/{rel}")
+    _git(repo, "commit", "-q", "-m", "c")
+
+
+def _base_with(repo: Path, frontmatter: str) -> None:
+    _git(repo, "checkout", "-q", "main")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           f"---\n{frontmatter}---\n\n# {SKILL}\n")
+    commit(repo, "base frontmatter")
+    _git(repo, "checkout", "-q", "-B", "pr")
+
+
+@pytest.mark.parametrize("head", [
+    # Bun rejects a comment touching a quoted scalar and repairs the text, so
+    # `Bash Read # *` becomes the value `*`: every tool, no prompt.
+    f"name: {SKILL}\ndescription: One line.\nallowed-tools: Bash Read # *\n"
+    "license: 'MIT'# see the repository\n",
+    f"name: {SKILL}\ndescription: One line.\n",  # removing allowed-tools
+])
+def test_a_loop_edit_may_change_only_the_description_lines(tmp_path, head):
+    repo = make_repo(tmp_path)
+    _base_with(repo, f"name: {SKILL}\ndescription: Invented.\nallowed-tools: Bash Read\n")
+    _loop_edit(repo, head)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "other than `description`" in out, out
+
+
+def test_a_loop_edit_of_the_description_alone_passes(tmp_path):
+    repo = make_repo(tmp_path)
+    _base_with(repo, f"name: {SKILL}\ndescription: Invented.\nallowed-tools: Bash Read\n")
+    _loop_edit(repo, f"name: {SKILL}\ndescription: >-\n  Rewritten, with `code` and a #tag.\n"
+                     "allowed-tools: Bash Read\n")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 0, out
+
+
+def test_a_new_loop_skill_may_not_have_a_commented_null_allowed_tools(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / "new-skill" / "SKILL.md",
+           "---\nname: new-skill\ndescription: Invented.\nallowed-tools: ~ # *\n---\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr("draft-skill/new-skill", draft=True), open_prs=[])
+    assert code == 1 and "allowed-tools" in out, out
+
+
+@pytest.mark.parametrize("rel", ["skill.md", ".claude/skills/helper/SKILL.md",
+                                 ".claude/agents/runner.md", "references/Notes.md"])
+def test_a_loop_edit_may_not_add_a_case_variant_or_dot_directory_markdown(tmp_path, rel):
+    repo = make_repo(tmp_path)
+    _loop_edit(repo, f"name: {SKILL}\ndescription: Invented.\n",
+               [(rel, "---\nname: x\ndescription: x\n---\n")])
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "may change" in out, out
+
+
+def test_a_case_variant_skill_md_counts_as_losing_the_name(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input=skill_md("other"), check=True, capture_output=True,
+                          text=True).stdout.strip()
+    _git(repo, "add", "-A")
+    _git(repo, "update-index", "--add", "--cacheinfo",
+         f"100644,{blob},plugins/{PLUGIN}/skills/{SKILL}/skill.md")
+    _git(repo, "commit", "-q", "-m", "c")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and SKILL in out, out
+
+
+def test_a_byte_order_mark_does_not_hide_the_name(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           "﻿" + skill_md(SKILL) + "\nv2\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 0, out

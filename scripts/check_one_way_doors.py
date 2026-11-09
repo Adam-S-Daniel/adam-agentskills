@@ -32,7 +32,8 @@ A name is the marketplace's `name`, a plugin's `name` in
 frontmatter `name` equal to `<skill>` that Claude Code reads the same way (no
 `---` inside a line, duplicate key, key-shaped line inside a value, or other
 line at column 0 that is not a key). A SKILL.md counts only as a regular
-file, not a symlink or gitlink. A local plugin counts only while it is
+file, not a symlink or gitlink, and not beside a case variant (skill.md)
+that overwrites it on a case-insensitive file system. A local plugin counts only while it is
 listed once, its `source` is `./plugins/<plugin>` and both manifests name it,
 and no `metadata.pluginRoot` moves it: a renamed bundle directory or manifest
 `name` is a rename too (round 2 on #134). A name present at the base and absent
@@ -74,10 +75,13 @@ plus a Bot author. So here it must be:
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
 - text only, draft or not (a draft marked ready and armed at once could
-  merge on its old green result): no added or changed `hooks` or `allowed-tools` in the skill's
-  frontmatter, no change to a frontmatter Claude Code could read differently
-  from this check, and nothing in the skill directory but regular Markdown
-  files (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
+  merge on its old green result): in SKILL.md's frontmatter only the
+  `description` lines change (a new skill: only name, description, license
+  and compatibility), with no comment elsewhere in it and nothing Claude Code
+  could read differently from this check; in the skill directory only
+  SKILL.md, PURPOSE.md or lowercase .md files outside dot-directories, as
+  regular files, no two of them one file to a case-insensitive file system
+  (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
   auto-merge in any plugin; plugin-runtime-review gates only a plugin's own
   hooks/ and bin/ and does not read frontmatter, #135). A person who wants
   such a change takes it to a branch outside the loop's prefixes;
@@ -325,6 +329,7 @@ def frontmatter(text: str) -> dict:
     """The SKILL.md frontmatter, parsed as YAML; {} when absent or unparsable."""
     import yaml  # third-party; imported only when a SKILL.md changed
 
+    text = text.lstrip("\ufeff")  # Claude Code strips a byte-order mark too
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return {}
@@ -352,6 +357,7 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     Claude Code's early end can resolve to the first)."""
     import yaml
 
+    text = text.lstrip("\ufeff")
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return _CC_FRONTMATTER_RE.match(text) is not None
@@ -391,6 +397,81 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     return not isinstance(data, dict) or sorted(shaped) != sorted(map(str, data))
 
 
+def frontmatter_blocks(text: str) -> Dict[str, List[str]]:
+    """{top-level key: its raw lines}, for frontmatter that is not ambiguous
+    (so every column-0 line starts a key, once)."""
+    lines = text.lstrip("\ufeff").split("\n")
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    blocks: Dict[str, List[str]] = {}
+    current = None
+    for line in lines[1:end]:
+        match = _KEY_LINE_RE.match(line)
+        if match:
+            current = match.group(1)
+            blocks[current] = []
+        if current is not None:
+            blocks[current].append(line)
+    return blocks
+
+
+#: A comment after a value: Claude Code's YAML repair (run only when its
+#: first parse fails, which a change elsewhere can cause) quotes a value whole,
+#: comment included, so `allowed-tools: Bash # *` would become `*` to it.
+_COMMENT_RE = re.compile(r"""(?:^|[\s'"])#""")
+_BLOCK_HEADER_RE = re.compile(r"^[>|][+-]?$")
+#: Keys a new skill from the loop may have.
+LOOP_NEW_SKILL_KEYS = ("name", "description", "license", "compatibility")
+
+
+def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[str]:
+    """What an evals-loop pull request may do to a SKILL.md's frontmatter:
+    rewrite the description and nothing else (a new skill: a few keys only),
+    with no comment outside the description that Claude Code's repair step
+    could fold into a value. Comparing raw lines, not parsed values, is what
+    catches a quoting or comment change PyYAML and Claude Code read
+    differently (round 11)."""
+    if frontmatter_is_ambiguous(head_text):
+        return ["frontmatter Claude Code could read differently (a `---` inside a line, "
+                "a duplicate key, or a non-key line at column 0)"]
+    try:
+        head = frontmatter_blocks(head_text)
+    except StopIteration:
+        return ["no frontmatter"]
+    errors = []
+    commented = sorted(k for k, block in head.items() if k != "description"
+                       and any(_COMMENT_RE.search(line.split(":", 1)[1] if i == 0 else line)
+                               for i, line in enumerate(block)))
+    if commented:
+        errors.append(f"a comment in frontmatter {commented}")
+    if base_text is not None:
+        try:
+            base = frontmatter_blocks(base_text)
+        except StopIteration:
+            base = {}
+        others = sorted(k for k in set(base) | set(head)
+                        if k != "description" and base.get(k) != head.get(k))
+        if others:
+            errors.append(f"frontmatter lines other than `description` changed: {others}")
+    else:
+        extra = sorted(set(head) - set(LOOP_NEW_SKILL_KEYS))
+        if extra:
+            errors.append(f"frontmatter keys a new skill from the loop may not have: {extra}")
+    return errors
+
+
+def _fold(name: str) -> str:
+    """A path as a case-insensitive file system sees it."""
+    import unicodedata
+    return "/".join(unicodedata.normalize("NFC", part).rstrip(". ").casefold()
+                    for part in name.split("/"))
+
+
+#: A file an evals-loop pull request may add or change in its skill: SKILL.md,
+#: PURPOSE.md, or a lowercase Markdown file in plain (not dot) directories.
+_LOOP_SKILL_PATH_RE = re.compile(
+    r"^(?:SKILL\.md|PURPOSE\.md|(?:[a-z0-9_-]+/)*[a-z0-9_-][a-z0-9._-]*\.md)$")
+
+
 def frontmatter_name(text: str) -> Optional[str]:
     value = frontmatter(text).get("name")
     return value.strip() if isinstance(value, str) else None
@@ -428,13 +509,23 @@ def present_names(rev: str, verify_against: Optional[str] = None,
             continue
         names["plugins"].add(plugin)
         prefix = root + "/skills/"
-        for path in files_under(rev, root + "/skills"):
+        all_files = files_under(rev, root + "/skills")
+        folded: Dict[str, int] = {}
+        for path in all_files:
+            folded[_fold(path)] = folded.get(_fold(path), 0) + 1
+        for path in all_files:
             rest = path[len(prefix):] if path.startswith(prefix) else ""
             skill, _, leaf = rest.partition("/")
             if leaf != "SKILL.md" or not skill:
                 continue
             if _mode(rev, path) not in ("100644", "100755"):
                 continue  # a symlink or gitlink: no SKILL.md on a consumer's disk
+            if verify_against is not None and folded.get(_fold(path), 0) > 1:
+                # Another file with the same name to a case-insensitive file
+                # system (skill.md) overwrites this one on checkout there.
+                if bad is not None:
+                    bad.append(path)
+                continue
             if verify_against is not None:
                 if blob_id(rev, path) != blob_id(verify_against, path):
                     text = show(rev, path) or ""
@@ -750,9 +841,23 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
             mode = _mode(merged, path)
             if mode is None:
                 continue  # deleted
-            if not path.endswith(".md") or mode != "100644":
-                errors.append(f"{_q(path)} is not a plain Markdown file (mode {mode}); "
-                              f"only text auto-merges. {hold}")
+            rel = path[len(f"{root}/skills/{skill}/"):]
+            if mode != "100644" or not _LOOP_SKILL_PATH_RE.match(rel) or (
+                    rel != "SKILL.md" and posixpath.basename(rel).casefold() == "skill.md"):
+                errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
+                              "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "
+                              f"dot-directories, mode 100644; this is {mode}). {hold}")
+        in_skill = files_under(merged, f"{root}/skills/{skill}")
+        seen: Dict[str, str] = {}
+        for path in in_skill:
+            other = seen.setdefault(_fold(path), path)
+            if other != path:
+                errors.append(f"{_q(other)} and {_q(path)} are one file on a "
+                              f"case-insensitive file system. {hold}")
+        if at_head:
+            for problem in loop_frontmatter_errors(
+                    (show(base, skill_md) or "") if at_base else None, head_text):
+                errors.append(f"{_q(skill_md)}: {problem}. {hold}")
     if "skills.lock" in changed:
         errors += _lock_matches_merge(base, merged, head,
                                       f"{plugin}/{skill}", kind == "remove")

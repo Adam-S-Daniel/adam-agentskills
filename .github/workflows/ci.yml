@@ -446,11 +446,21 @@ jobs:
       # the paths its lanes write; the check then holds it to the rest.
       - name: Loop pull requests change nothing that runs before their check
         if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          base="refs/remotes/origin/$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")"
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          # The base as it is now, from the API, as the check reads it: a
+          # re-run keeps the event's base from before a retarget (round 17).
+          base_ref="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$n" --jq .base.ref)"
+          base="refs/remotes/origin/$base_ref"
           head="$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")"
           ref="$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")"
+          if ! git rev-parse -q --verify "$base^{commit}" >/dev/null; then
+            echo "::error::Cannot read the base branch; nothing can be judged."
+            exit 1
+          fi
           git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null || exit 0
           # Captured, not read through a process substitution, so a failure
           # stops the step instead of reading as "no lanes" (round 14).
@@ -460,10 +470,12 @@ jobs:
             if [ -n "$prefix" ] && [[ "$ref" == "$prefix"* ]]; then loop=true; fi
           done <<< "$lanes"
           [ "$loop" = true ] || exit 0
-          # The workspace must be the merge of the head checked below; a merge
-          # ref that lags a push would install another head's files (round 16).
-          if [ "$(git rev-parse -q --verify 'HEAD^2' || true)" != "$head" ]; then
-            echo "::error::The checked-out merge commit is not of head $head; re-run the job."
+          # The workspace must be the merge of the head checked below into
+          # this base: a merge ref that lags a push (round 16) or a retarget
+          # (round 17) would install files nobody judged.
+          if [ "$(git rev-parse -q --verify 'HEAD^2' || true)" != "$head" ] \
+            || ! git merge-base --is-ancestor HEAD^1 "$base"; then
+            echo "::error::The checked-out merge commit is not of this head and base; push again or wait for the next run (a re-run keeps the same workspace)."
             exit 1
           fi
           # The merge result, so main moving a file does not fail an older

@@ -69,8 +69,9 @@ merge-base, which a criss-cross history can make lie):
 - **A shipped name that disappears** (items 1 to 3: a removal, a rename or a
   move between plugins; a plugin also counts as renamed when its directory
   stops being `./plugins/<name>`, a manifest `name` changes, it is listed twice,
-  `metadata.pluginRoot` moves it, or its marketplace entry has a field of a
-  type Claude Code refuses, such as `keywords` as a string), **or a retired name that comes back** (a skill by
+  `metadata.pluginRoot` is set (Claude Code applies it only to bare sources,
+  but the check does not model it and fails closed), or its marketplace entry
+  has a field of a type Claude Code refuses, such as `keywords` as a string), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
   `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
   The pass line must be visible paragraph text, not inside an HTML comment
@@ -94,6 +95,14 @@ merge-base, which a criss-cross history can make lie):
   case-insensitive file system could merge with another** (two names, or a
   name and a directory, that fold to one; or any non-ASCII name) needs the
   same line: on a Windows or macOS checkout one replaces the other.
+- **A change to the marketplace or a plugin manifest other than a `version`
+  (a semantic version string), a non-empty `description`, `keywords` (a list
+  of non-empty strings) or a remote plugin's `ref`/`sha`** needs the same
+  line: Claude Code validates both files against a schema this check does not
+  model, and a file that fails it drops a plugin or every plugin.
+- **A skill folder whose name is not lowercase letters, digits and hyphens**
+  needs the same line: Claude Code turns other characters into `-`, so
+  `fan out-triage` would register as `fan-out-triage` beside the shipped one.
 - **A changed `renames` map in the marketplace, or any changed
   `.gitattributes`** (`git archive`, and so every lock, applies its
   `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
@@ -112,7 +121,7 @@ merge-base, which a criss-cross history can make lie):
   SKILL.md's frontmatter only the `description` lines may change (a new skill
   may have only `name`, `description`, `license` and `compatibility`), with
   no comment outside the description, a description that is a plain line,
-  one complete quoted line or a `>`/`|` block, no shell line Claude Code
+  one complete quoted line or a `>`/`|` block, no named `arguments`, no shell line Claude Code
   would run, and nothing Claude Code could read differently; and in the
   skill directory only `SKILL.md`, `PURPOSE.md` or
   lowercase `.md` files outside dot-directories and not named like a Windows device (`aux.md`) or a memory file (`claude.md`, `agents.md`), as regular files, with no
@@ -126,13 +135,15 @@ All of this rests on the loop's App having no `workflows` permission (a
 pull request's run uses its own `ci.yml`, so a branch that could change
 workflows could remove these steps) and no `statuses` or `checks` write
 permission (the required `pytest` context is not tied to GitHub Actions, so
-such a credential could report it green). Verify both whenever the App
+such a credential could report it green), and no `actions` write permission
+(a re-run keeps an old event's workspace). Verify both whenever the App
 changes.
 
 Before anything in the job runs a pull request's code (the pip install
 reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
 step refuses a loop pull request that changes any path outside the ones its
-lanes write, or whose checked-out merge commit is not of the head it read. The check runs twice in the job: before the test suites, and again as the
+lanes write, or whose checked-out merge commit is not of the head it read and
+the base the API reports now. It fails closed when that base cannot be read. The check runs twice in the job: before the test suites, and again as the
 job's last step with the pull request's body, draft state and base
 read afresh, so the run that reports last has read them last. A pull
 request retargeted to a new base is checked again by the `edited` run;

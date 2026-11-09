@@ -326,6 +326,12 @@ def _path_hazards(rev: str) -> Set[str]:
     for name in names:
         by_fold.setdefault(_fold(name), set()).add(name)
     hazards |= {" = ".join(sorted(group)) for group in by_fold.values() if len(group) > 1}
+    # Claude Code names a plugin skill by its folder with every character
+    # outside [a-zA-Z0-9_-] turned into `-`, and keeps duplicates, so a folder
+    # such as `fan out-triage` takes over `fan-out-triage` (round 17).
+    hazards |= {f"skill folder {n}" for n in names
+                if re.fullmatch(r"plugins/[^/]+/skills/[^/]+", n)
+                and not SKILL_NAME_RE.match(n.rsplit("/", 1)[1])}
     return hazards
 
 
@@ -392,6 +398,45 @@ _ENTRY_TYPES = {"description": str, "version": str, "category": str, "homepage":
 
 
 _SEMVER_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+
+
+def _routine_fields_ok(d: dict) -> bool:
+    """The fields a routine change may touch, in the shapes Claude Code takes."""
+    return (("version" not in d
+             or (isinstance(d["version"], str) and bool(_SEMVER_RE.fullmatch(d["version"]))))
+            and ("description" not in d
+                 or (isinstance(d["description"], str) and d["description"].strip() != ""))
+            and ("keywords" not in d or (isinstance(d["keywords"], list) and all(
+                isinstance(k, str) and k.strip() for k in d["keywords"]))))
+
+
+def _config_shape(data, is_marketplace: bool):
+    """A marketplace or manifest with the routinely edited fields taken out
+    (a version, a description, keywords, a remote plugin's pin), or None when
+    one of those has a shape Claude Code would refuse. Two configs with equal
+    shapes differ only in routine edits (round 17)."""
+    if not isinstance(data, dict):
+        return ("unreadable", repr(data))
+    routine = ("version", "description", "keywords")
+    def strip(d):
+        return {k: v for k, v in d.items() if k not in routine}
+    if not is_marketplace:
+        return strip(data) if _routine_fields_ok(data) else None
+    plugins = data.get("plugins")
+    if not isinstance(plugins, list):
+        return json.dumps(data, sort_keys=True)
+    shaped = []
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            shaped.append(entry)
+            continue
+        if not _routine_fields_ok(entry):
+            return None
+        entry = strip(entry)
+        if isinstance(entry.get("source"), dict):
+            entry["source"] = {k: v for k, v in entry["source"].items() if k not in ("ref", "sha")}
+        shaped.append(entry)
+    return json.dumps({**strip(data), "plugins": shaped}, sort_keys=True)
 
 
 def _entry_types_ok(entry: dict) -> bool:
@@ -603,6 +648,11 @@ def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[st
     if any(r.search(body) for r in _SKILL_SHELL_RES for body in bodies):
         errors.append("a shell command Claude Code would run on load (`!` and a backtick "
                       "span, or a ```! fence)")
+    if "arguments" in head:
+        # Claude Code fills in `$<name>` for each named argument, which this
+        # scan does not model (round 17).
+        errors.append("named `arguments` in the frontmatter, whose placeholders this check "
+                      "does not model")
     commented = sorted(k for k, block in head.items() if k != "description"
                        and any(_COMMENT_RE.search(line.split(":", 1)[1] if i == 0 else line)
                                for i, line in enumerate(block)))
@@ -836,8 +886,8 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     # export-ignore drops a file, export-subst, ident, text/eol, filter and
     # working-tree-encoding rewrite one, and a macro can set any of them. So
     # any changed .gitattributes is a door, whatever it says.
-    attr_files = [p for p in changed_paths(base, merged)
-                  if posixpath.basename(p) == ".gitattributes"]
+    changed = changed_paths(base, merged)
+    attr_files = [p for p in changed if posixpath.basename(p) == ".gitattributes"]
     if attr_files:
         doors.append(("change what `git archive` exports",
                       [("marketplace", p) for p in attr_files]))
@@ -849,6 +899,20 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     if hazards:
         doors.append(("add a path a case-insensitive file system could merge",
                       [("marketplace", h) for h in hazards]))
+    # Claude Code validates the marketplace and each manifest against a schema
+    # this check does not model (required owner and author names, URL-shaped
+    # homepages, ...), and one that fails drops the plugin or every plugin
+    # (round 17). So any change but a manifest's `version`, kept a semantic
+    # version string, is a door.
+    configs = [p for p in changed if p == MARKETPLACE
+               or re.fullmatch(r"plugins/[^/]+/(?:\.claude-plugin/)?plugin\.json", p)]
+    touched = [("marketplace", path) for path in configs
+               if _config_shape(_json_at(base, path), path == MARKETPLACE)
+               != _config_shape(_json_at(merged, path), path == MARKETPLACE)
+               or _config_shape(_json_at(merged, path), path == MARKETPLACE) is None]
+    if touched:
+        doors.append(("change the marketplace or a plugin manifest beyond a `version`, "
+                      "`description`, `keywords` or remote pin", touched))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
@@ -1042,7 +1106,7 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                     or any(_WINDOWS_RESERVED_RE.match(part) for part in rel.split("/")):
                 errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
                               "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "
-                              f"dot-directories, mode 100644; this is {mode}). {hold}")
+                              "dot-directories, as a regular file). {hold}")
         in_skill = files_under(merged, f"{root}/skills/{skill}")
         seen: Dict[str, str] = {}
         for path in in_skill:

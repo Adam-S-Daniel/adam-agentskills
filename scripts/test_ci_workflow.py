@@ -841,7 +841,8 @@ def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_run
     assert "^plugins/[^/]+/skills/[^/]+/." in guard["run"] and "scripts/check" not in guard["run"]
 
 
-def _run_guard(tmp_path, ref: str, changed: str, stale=None) -> int:
+def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "main",
+               base=None) -> int:
     import json
     import subprocess
     run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
@@ -867,16 +868,23 @@ def _run_guard(tmp_path, ref: str, changed: str, stale=None) -> int:
     git("commit", "-q", "-m", "change")
     head = git("rev-parse", "HEAD")
     # The workspace is the merge commit, as actions/checkout leaves it.
-    git("checkout", "-q", "main")
+    git("checkout", "-q", "main" if base is None else base(git))
     git("merge", "-q", "--no-ff", "-m", "merge", head if stale is None else stale(git, head))
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"pull_request": {
-        "base": {"ref": "main"}, "head": {"sha": head, "ref": ref}}}),
+        "number": 7, "base": {"ref": "main"}, "head": {"sha": head, "ref": ref}}}),
         encoding="utf-8")
+    # A stand-in for `gh api .../pulls/N --jq .base.ref`: the base as it is now.
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "gh").write_text(f"#!/bin/sh\necho {api_base}\n", encoding="utf-8", newline="\n")
+    (fake / "gh").chmod(0o755)
     script = tmp_path / "guard.sh"
     script.write_text(run, encoding="utf-8", newline="\n")
     proc = subprocess.run(["bash", str(script)], cwd=repo, capture_output=True, text=True,
-                          env={**os.environ, "GITHUB_EVENT_PATH": str(event)})
+                          env={**os.environ, "GITHUB_EVENT_PATH": str(event),
+                               "GITHUB_REPOSITORY": "Example/registry",
+                               "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
     return proc.returncode
 
 
@@ -905,6 +913,29 @@ def test_the_loop_path_guard_refuses_a_workspace_of_another_head(tmp_path):
         git("checkout", "-q", "main")
         return older_head
     assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md", older) == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_refuses_a_workspace_merged_into_another_base(tmp_path):
+    """Round 17: a re-run keeps a workspace merged into the base from before
+    a retarget, whose requirements-dev.txt nobody judged."""
+    def other(git):
+        git("checkout", "-q", "-b", "other", "main")
+        (Path(git("rev-parse", "--show-toplevel")) / "requirements-dev.txt").write_text(
+            "./invented\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "other base")
+        return "other"
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                      base=other) == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_fails_closed_without_a_readable_base(tmp_path):
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                      api_base="gone") == 1
 
 
 def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):

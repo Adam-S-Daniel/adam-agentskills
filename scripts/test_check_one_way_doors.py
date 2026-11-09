@@ -1511,3 +1511,61 @@ def test_a_block_line_written_as_a_task_item_counts():
     url, blocked = owd.review_line("Adversarial-review: pass https://github.com/x/y\n\n"
                                    "- [ ] Adversarial-review: block https://github.com/x/z\n")
     assert url and blocked
+
+
+# Round 17.
+
+@pytest.mark.parametrize("edit", [
+    lambda d: d.update(owner={"name": ""}),
+    lambda d: d["plugins"][0].update(homepage="see the README"),
+    lambda d: d["plugins"][0].update(author={}),
+    lambda d: d["plugins"][0].update(description=""),
+])
+def test_a_marketplace_change_beyond_routine_fields_needs_a_review(tmp_path, edit):
+    repo = make_repo(tmp_path)
+    path = repo / ".claude-plugin" / "marketplace.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    edit(data)
+    _json(path, data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "manifest beyond" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 0, out
+
+
+def test_a_manifest_change_beyond_routine_fields_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _json(repo / "plugins" / PLUGIN / owd.MANIFESTS[0], manifest(PLUGIN, author={"name": ""}))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "manifest beyond" in out, out
+
+
+def test_routine_marketplace_and_manifest_edits_need_no_review(tmp_path):
+    repo = make_repo(tmp_path)
+    path = repo / ".claude-plugin" / "marketplace.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["plugins"][0].update(description="Invented, now longer.", keywords=["invented"])
+    _json(path, data)
+    for m in owd.MANIFESTS:
+        _json(repo / "plugins" / PLUGIN / m,
+              manifest(PLUGIN, version="1.1.0", description="Invented."))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 0, out
+
+
+def test_a_skill_folder_claude_code_would_rename_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    variant = SKILL.replace("-", " ", 1)
+    _write(repo / "plugins" / PLUGIN / "skills" / variant / "SKILL.md", skill_md(variant))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "skill folder" in out, out
+
+
+def test_a_loop_edit_of_a_skill_with_named_arguments_is_refused():
+    text = "---\nname: a\ndescription: x\narguments: [topic]\n---\n\nRun !$topic now.\n"
+    errors = owd.loop_frontmatter_errors(text, text)
+    assert any("arguments" in e for e in errors), errors

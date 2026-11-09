@@ -368,11 +368,14 @@ def frontmatter(text: str) -> dict:
     return {}
 
 
+#: Control characters (C0 except tab and newline, DEL, C1), the Unicode line
+#: and paragraph separators, and the byte-order mark. Every range is
+#: deliberate: each is a run of control characters.
+_ODD_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
+_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 #: How Claude Code finds a SKILL.md's frontmatter: it stops at the first
 #: `---` anywhere, even mid-line, where frontmatter() stops at a line that is
 #: only `---`. A file the two read differently can hide a key from this check.
-_ODD_CHAR_RE = re.compile("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\ufeff]")
-_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 _CC_FRONTMATTER_RE = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
 
 

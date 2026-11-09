@@ -860,6 +860,14 @@ def test_a_loop_pr_may_not_add_gitattributes_in_its_skill(tmp_path):
     assert code == 1 and ".gitattributes" in out, out
 
 
+def _blob(repo: Path, text: str) -> str:
+    """Write `text` as a blob byte for byte. Text-mode stdin would turn each
+    newline into CRLF on Windows, and the check reads blobs untranslated."""
+    return subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input=text.encode("utf-8"), check=True,
+                          capture_output=True).stdout.decode().strip()
+
+
 @pytest.mark.parametrize("variant", ["Widget-Polisher", "widget-polisher."])
 def test_a_retired_name_cannot_return_with_another_case_or_a_trailing_dot(tmp_path, variant):
     repo = make_repo(tmp_path)
@@ -870,9 +878,7 @@ def test_a_retired_name_cannot_return_with_another_case_or_a_trailing_dot(tmp_pa
     # Staged through the index, not the disk: Windows drops a trailing dot
     # from a directory name, and the check reads git objects anyway. Git for
     # Windows also refuses such a path in the index unless protectNTFS is off.
-    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
-                          input=skill_md(variant), check=True, capture_output=True,
-                          text=True).stdout.strip()
+    blob = _blob(repo, skill_md(variant))
     _git(repo, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo",
          f"100644,{blob},plugins/{CODE_PLUGIN}/skills/{variant}/SKILL.md")
     _git(repo, "commit", "-q", "-m", "c")
@@ -992,9 +998,7 @@ def test_a_ready_loop_edit_may_change_only_plain_markdown(tmp_path, sub, mode):
     skill_dir = repo / "plugins" / PLUGIN / "skills" / SKILL
     _write(skill_dir / "SKILL.md", skill_md(SKILL) + "\nv2\n")
     if mode == "symlink":
-        blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w",
-                               "--stdin"], input="SKILL.md", check=True, capture_output=True,
-                              text=True).stdout.strip()
+        blob = _blob(repo, "SKILL.md")
         _git(repo, "add", "-A")
         _git(repo, "update-index", "--add", "--cacheinfo",
              f"120000,{blob},plugins/{PLUGIN}/skills/{SKILL}/{sub}")
@@ -1152,9 +1156,7 @@ def test_a_skill_md_symlink_does_not_count_as_present(tmp_path):
     repo = make_repo(tmp_path)
     path = f"plugins/{PLUGIN}/skills/{SKILL}/SKILL.md"
     _git(repo, "rm", "-q", "--cached", path)
-    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
-                          input=skill_md(SKILL), check=True, capture_output=True,
-                          text=True).stdout.strip()
+    blob = _blob(repo, skill_md(SKILL))
     _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},{path}")
     _git(repo, "commit", "-q", "-m", "c")
     code, out = check(repo, tmp_path, pr_json())
@@ -1170,9 +1172,7 @@ def _loop_edit(repo: Path, frontmatter: str, extra_files=()) -> None:
     # Extras go straight into the index: on a case-insensitive file system
     # `skill.md` would overwrite SKILL.md on disk, which is the attack itself.
     for rel, text in extra_files:
-        blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w",
-                               "--stdin"], input=text, check=True, capture_output=True,
-                              text=True).stdout.strip()
+        blob = _blob(repo, text)
         # Git for Windows refuses a device name (aux.md) in the index unless
         # protectNTFS is off; the check reads objects, never the disk.
         _git(repo, "-c", "core.protectNTFS=false", "update-index", "--add", "--cacheinfo",
@@ -1237,9 +1237,7 @@ def test_a_loop_edit_may_not_add_a_case_variant_or_dot_directory_markdown(tmp_pa
 def test_a_case_variant_skill_md_counts_as_losing_the_name(tmp_path):
     repo = make_repo(tmp_path)
     _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
-    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
-                          input=skill_md("other"), check=True, capture_output=True,
-                          text=True).stdout.strip()
+    blob = _blob(repo, skill_md("other"))
     _git(repo, "add", "-A")
     _git(repo, "update-index", "--add", "--cacheinfo",
          f"100644,{blob},plugins/{PLUGIN}/skills/{SKILL}/skill.md")
@@ -1260,8 +1258,7 @@ def test_a_byte_order_mark_does_not_hide_the_name(tmp_path):
 # Round 12.
 
 def _stage(repo: Path, path: str, text: str) -> None:
-    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
-                          input=text, check=True, capture_output=True, text=True).stdout.strip()
+    blob = _blob(repo, text)
     _git(repo, "-c", "core.ignorecase=false", "-c", "core.protectNTFS=false",
          "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
 

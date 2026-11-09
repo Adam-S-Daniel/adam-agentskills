@@ -11,3 +11,4 @@
 - [ ] Examples, fixtures and docs use invented data only (example.com, fictional names); no real personal details, usernames, hostnames or account IDs.
 - [ ] A skill-content change has an entry in `docs/skill-impact.md`, and the plugin's version is bumped in both manifests.
 - [ ] Tests run: `python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q` (say the count).
+- [ ] A change to a one-way door ([`docs/one-way-doors.md`](https://github.com/Adam-S-Daniel/adam-agentskills/blob/main/docs/one-way-doors.md): a shipped marketplace, plugin or skill name, the registry layout, the lock schema, the bootstrap hook) has an `## Adversarial review` section ending in `Adversarial-review: pass <url>`, or touches none.

@@ -1,0 +1,38 @@
+{
+  "marketplace": [
+    "adam-agentskills"
+  ],
+  "plugins": [
+    "adam-anything-anywhere",
+    "adam-coding-anywhere",
+    "adam-coding-local",
+    "adam-non-coding-local",
+    "cms-platform"
+  ],
+  "skills": [
+    "adam-anything-anywhere/finding-unknowns",
+    "adam-anything-anywhere/writing-adrs",
+    "adam-coding-anywhere/ci-job-performance",
+    "adam-coding-anywhere/debug-github-workflows",
+    "adam-coding-anywhere/disarm-inherited-reach",
+    "adam-coding-anywhere/fan-out-triage",
+    "adam-coding-anywhere/github-actions-repo-settings",
+    "adam-coding-anywhere/red-ci-adamdaniel-ai",
+    "adam-coding-anywhere/review-bash-ci-reliability",
+    "adam-coding-anywhere/skills-doctor",
+    "adam-coding-anywhere/vendor-release-impact-issues",
+    "adam-coding-anywhere/workflow-path-audit",
+    "adam-coding-local/launch-top-level-claude-session",
+    "adam-coding-local/migrate-claude-memory",
+    "adam-coding-local/sync-cc-settings-between-wsl-and-windows",
+    "adam-coding-local/tool-powershell",
+    "adam-coding-local/windows-elevation-from-wsl",
+    "adam-non-coding-local/add-from-address",
+    "adam-non-coding-local/add-received-from-addresses",
+    "adam-non-coding-local/compare-pdfpairs",
+    "adam-non-coding-local/fastmail",
+    "adam-non-coding-local/ocr-pdfs",
+    "adam-non-coding-local/pdf-ocr-audit",
+    "adam-non-coding-local/rename-pdfs"
+  ]
+}

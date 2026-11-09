@@ -37,8 +37,10 @@ doors get an adversarial round" requires an independent adversarial round
 before a change to a shipped skill basename merges, and a removal is
 irreversible in every consumer that installed the skill. "Skill changes get
 recorded, and evals gate them" expects a person to write the skill-impact
-entry and run the touch gate. The fleet guidance says "PR + auto-merge is not
-a sanctioned bot-write path", with named exceptions only.
+entry and run the touch gate. The fleet guidance sanctions PR + auto-merge as
+a bot-write path only where a repo-settings ADR declares the exception, as
+one now does for the eval loop; when this ADR was written, that
+exception did not exist yet (see Consequences).
 
 The eval-loop thresholds design of 2026-10-25 defaulted both to "Adam
 merges". Adam chose the opposite for both.
@@ -112,3 +114,29 @@ merges". Adam chose the opposite for both.
 - **A ruleset bypass that pushes straight to `main`.** Rejected: the fleet
   rule forbids a bot pushing to a protected default branch, and it would skip
   the required checks that are the only gate left.
+
+## Addendum (2026-11-09): removals get an agent review, and CI checks the limits
+
+Issue [#133](https://github.com/Adam-S-Daniel/adam-agentskills/issues/133)
+made the one-way-door rule and this ADR's limits mechanical, after an
+adversarial review found both were prose only.
+
+- **Decision 2 changes for removals.** A removal loses a shipped name, so it
+  now needs the adversarial review like any other change that does
+  ([`docs/one-way-doors.md`](../one-way-doors.md)). The owner decided on
+  2026-11-09 that removals stay autonomous and the review may be
+  agent-generated: skills-evals' removal reviewer writes
+  `Adversarial-review: pass <url>` into the pull request body
+  ([skills-evals#917](https://github.com/Adam-S-Daniel/skills-evals/issues/917)).
+  Improvements and new skills lose no name and keep the exception.
+- **Decision 3's path list, corrected.** A new skill also edits
+  `scripts/plugin_layout.json` (the draft lane always has). A create or a
+  removal may append the skill to `scripts/shipped_names.json`; a removal of
+  a skill not yet listed there must.
+- **Decisions 3 to 5 are checked on receipt.** `scripts/check_one_way_doors.py`,
+  in the required `pytest` job, fails a `draft-skill/`, `eval-improve/` or
+  `retire-skill/` pull request that is not opened by the App
+  `scripts/loop_prs.json` names (from a branch here, not a fork), changes
+  anything outside its one skill and the bookkeeping, changes a manifest
+  beyond `version`, is in a plugin that runs code, or is not the only open
+  loop pull request.

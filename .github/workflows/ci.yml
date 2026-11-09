@@ -463,6 +463,31 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_skill_gates.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      # AGENTS.md's "One-way doors get an adversarial round" (issue #133): a
+      # shipped marketplace, plugin or skill name that disappears needs
+      # `Adversarial-review: pass <url>` in the PR body, and an evals-loop PR
+      # (draft-skill/, eval-improve/, retire-skill/) must stay inside ADR 0021.
+      # The body and the open-PR list come from the API, not the event
+      # payload, so re-running the job after a body edit sees the new body.
+      # Not gated on `salient`: a docs-only PR changes no name, so the check
+      # passes there without needing the dependencies (it imports PyYAML only
+      # when a SKILL.md changed). No `concurrency` group: required job.
+      - name: Shipped names and loop pull requests pass the one-way-door check
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/one-way-doors"
+          mkdir -p "$d"
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+            | jq 'add // []' > "$d/open.json"
+          python3 scripts/check_one_way_doors.py --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --pr-json "$d/pr.json" --open-prs "$d/open.json"
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
       # test_check_agent_plugins.py — 157 tests) once existed while this job ran

@@ -508,10 +508,11 @@ def test_a_loop_pr_may_not_add_skill_runtime_frontmatter(tmp_path, extra):
     # before a new run of this check registers (round 9).
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
     assert code == 1 and "Decision 4" in out, out
-    # As a draft it waits; a person takes it to a branch outside the loop.
+    # A draft too (round 10): marked ready and armed within seconds, it could
+    # merge on its old green result. A person takes it off the loop's branches.
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", draft=True),
                       open_prs=[])
-    assert code == 0, out
+    assert code == 1 and "Decision 4" in out, out
 
 
 def test_a_criss_cross_merge_base_cannot_hide_a_deletion(tmp_path):
@@ -1016,9 +1017,11 @@ def test_a_plain_markdown_loop_edit_passes(tmp_path):
     assert code == 0, out
 
 
-def _lock(repo: Path, ref: str) -> None:
+def _lock(repo: Path, ref: str, digest: str = "sha256:a", **extra) -> None:
     _json(repo / "skills.lock", {"registry": "Example/registry", "ref": ref,
-                                 "bundles": [PLUGIN], "skills": {}})
+                                 "bundles": [PLUGIN],
+                                 "skills": {f"{PLUGIN}/{SKILL}": digest,
+                                            f"{PLUGIN}/{OTHER}": "sha256:o", **extra}})
 
 
 def test_a_loop_lock_must_pin_the_content_that_merges(tmp_path):
@@ -1031,7 +1034,7 @@ def test_a_loop_lock_must_pin_the_content_that_merges(tmp_path):
     _write(md, f"---\nname: {SKILL}\ndescription: Invented.\nhooks: x\n---\n")
     sneaky = commit(repo, "content with hooks")
     _write(md, skill_md(SKILL) + "\nv2\n")
-    _lock(repo, sneaky)
+    _lock(repo, sneaky, "sha256:b")
     commit(repo, "repin to the intermediate commit")
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
                       open_prs=[])
@@ -1046,7 +1049,7 @@ def test_a_loop_lock_pinned_to_its_content_commit_passes(tmp_path):
     _git(repo, "checkout", "-q", "-B", "pr")
     _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
     content = commit(repo, "content")
-    _lock(repo, content)
+    _lock(repo, content, "sha256:b")
     commit(repo, "repin")
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
                       open_prs=[])
@@ -1072,3 +1075,87 @@ def test_a_block_line_inside_a_real_comment_is_hidden():
     url, blocked = owd.review_line("Adversarial-review: pass https://github.com/x/y\n\n"
                                    "<!--\nAdversarial-review: block x\n-->\n")
     assert url and not blocked
+
+
+# Round 10.
+
+@pytest.mark.parametrize("frontmatter", [
+    "name: a\ndescription: 'Text & more\n\"allowed-tools\": Bash\n# end'\n",
+    "name: a\n# a comment at column 0\ndescription: x\n",
+])
+def test_any_other_column_zero_line_is_ambiguous(frontmatter):
+    assert owd.frontmatter_is_ambiguous(f"---\n{frontmatter}---\n")
+
+
+def test_a_hidden_rename_through_a_quoted_key_line_fails(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           f"---\nname: {SKILL}\ndescription: 'Invented & more\n\"name\": other-name\n"
+           f"# end'\n---\n\n# {SKILL}\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "read differently" in out, out
+
+
+def _lock_repo(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _lock(repo, _git(repo, "rev-parse", "HEAD"))
+    commit(repo, "lock")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    return repo
+
+
+def test_a_loop_lock_may_not_drop_another_skill(tmp_path):
+    repo = _lock_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    content = commit(repo, "content")
+    lock = json.loads((repo / "skills.lock").read_text(encoding="utf-8"))
+    lock["ref"] = content
+    lock["skills"] = {f"{PLUGIN}/{SKILL}": "sha256:b"}
+    _json(repo / "skills.lock", lock)
+    commit(repo, "repin without the other skill")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "other than" in out, out
+
+
+def test_a_loop_lock_ref_may_not_carry_other_gitattributes(tmp_path):
+    repo = _lock_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    _write(repo / ".gitattributes", f"plugins/{PLUGIN}/skills/{OTHER} export-ignore\n")
+    content = commit(repo, "content with an export rule")
+    (repo / ".gitattributes").unlink()
+    _lock(repo, content, "sha256:b")
+    commit(repo, "repin and drop the rule")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and ".gitattributes" in out, out
+
+
+def test_a_loop_lock_still_passes_after_main_edits_another_skill(tmp_path):
+    repo = _lock_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    content = commit(repo, "content")
+    _lock(repo, content, "sha256:b")
+    commit(repo, "repin")
+    _git(repo, "checkout", "-q", "main")
+    _write(repo / "plugins" / PLUGIN / "skills" / OTHER / "SKILL.md", skill_md(OTHER) + "\nmain\n")
+    commit(repo, "main moves")
+    _git(repo, "checkout", "-q", "pr")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 0, out
+
+
+def test_a_skill_md_symlink_does_not_count_as_present(tmp_path):
+    repo = make_repo(tmp_path)
+    path = f"plugins/{PLUGIN}/skills/{SKILL}/SKILL.md"
+    _git(repo, "rm", "-q", "--cached", path)
+    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input=skill_md(SKILL), check=True, capture_output=True,
+                          text=True).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"120000,{blob},{path}")
+    _git(repo, "commit", "-q", "-m", "c")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "disappear" in out, out

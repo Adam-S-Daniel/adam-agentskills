@@ -79,8 +79,9 @@ merge-base, which a criss-cross history can make lie):
   heading, table or emphasis markers; one quoted mid-sentence does not. A
   name that disappears must also be in `scripts/shipped_names.json`. A
   changed SKILL.md whose frontmatter Claude Code could read differently (a
-  `---` inside a line, a duplicate key, a key-shaped line inside a value)
-  counts as losing its name.
+  `---` inside a line, a duplicate key, a key-shaped line inside a value, or
+  any other line at column 0 that is not a key) counts as losing its name,
+  and a SKILL.md that is a symlink or gitlink does not count as present.
 - **A changed `renames` map in the marketplace, or any changed
   `.gitattributes`** (`git archive`, and so every lock, applies its
   `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
@@ -90,16 +91,17 @@ merge-base, which a criss-cross history can make lie):
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
-  the ledger), a `skills.lock` re-pinned only to a commit in its own history
-  whose locked skills match the merge result, no change to
+  the ledger), a `skills.lock` that changes only its own skill's entry and is
+  re-pinned to a commit in its own history where that skill and every
+  `.gitattributes` match the merge result, no change to
   `requirements-dev.txt`, and (unless it is a draft) no older ready loop pull
-  request from that App open. Unless it is a draft it must be text only: no
+  request from that App open. Draft or not, it must be text only: no
   added or changed `hooks` or `allowed-tools` in the skill's frontmatter, no
   frontmatter Claude Code could read differently, and nothing in the skill
   directory but regular Markdown files. Text-only changes auto-merge in any
-  plugin (owner decision 2026-11-03); the loop lowers anything else to a
-  draft, and a person who wants it takes it to a branch outside the loop's
-  prefixes. `plugin-runtime-review` gates only a plugin's own `hooks/` and
+  plugin (owner decision 2026-11-03); a person who wants anything else takes
+  it to a branch outside the loop's prefixes, since a draft could be marked
+  ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and
   `bin/`, so it does not hold these.
 
 The check runs twice in the job: before the test suites, and again as the

@@ -155,8 +155,8 @@ adversarial review found both were prose only.
   `scripts/loop_prs.json` names (from a branch here, not a fork), changes
   anything outside its one skill and the bookkeeping, changes a manifest
   beyond `version`, changes `requirements-dev.txt`, re-pins `skills.lock`
-  to content other than what merges, is not a draft while it changes more
-  than text (frontmatter `hooks` or `allowed-tools`, a frontmatter Claude Code
+  to content other than what merges or changes another skill's entry in it,
+  changes more than text, draft or not (frontmatter `hooks` or `allowed-tools`, a frontmatter Claude Code
   could read differently, or any file in the skill but regular Markdown), or, unless it is a draft, has an
   older ready loop pull request from the App open here (forks, people and the
   loop's own drafts do not hold the slot, and the older of two wins).

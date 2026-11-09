@@ -30,7 +30,9 @@ A name is the marketplace's `name`, a plugin's `name` in
 .claude-plugin/marketplace.json, or `<plugin>/<skill>` for a skill that has
 `plugins/<plugin>/skills/<skill>/SKILL.md` and, when that SKILL.md changed, a
 frontmatter `name` equal to `<skill>` that Claude Code reads the same way (no
-`---` inside a line, duplicate key or key-shaped line inside a value). A local plugin counts only while it is
+`---` inside a line, duplicate key, key-shaped line inside a value, or other
+line at column 0 that is not a key). A SKILL.md counts only as a regular
+file, not a symlink or gitlink. A local plugin counts only while it is
 listed once, its `source` is `./plugins/<plugin>` and both manifests name it,
 and no `metadata.pluginRoot` moves it: a renamed bundle directory or manifest
 `name` is a rename too (round 2 on #134). A name present at the base and absent
@@ -71,17 +73,18 @@ plus a Bot author. So here it must be:
   docs/skill-impact.md, README.md, skills.lock, the plugin's two manifests
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
-- unless it is a draft (so whenever it could merge, armed or not), text
-  only: no added or changed `hooks` or `allowed-tools` in the skill's
+- text only, draft or not (a draft marked ready and armed at once could
+  merge on its old green result): no added or changed `hooks` or `allowed-tools` in the skill's
   frontmatter, no change to a frontmatter Claude Code could read differently
   from this check, and nothing in the skill directory but regular Markdown
   files (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
   auto-merge in any plugin; plugin-runtime-review gates only a plugin's own
   hooks/ and bin/ and does not read frontmatter, #135). A person who wants
   such a change takes it to a branch outside the loop's prefixes;
-- when it changes skills.lock, pinning a commit in its own history whose
-  locked bundles' skills are exactly the merge result's, with nothing else in
-  the lock changed (the bootstrap installs from the lock's ref, not main);
+- when it changes skills.lock, changing only its own skill's entry and
+  pinning a commit in its own history where that skill and every
+  .gitattributes match the merge result (the bootstrap installs from the
+  lock's ref, not main);
 - a create or removal appending nothing to scripts/shipped_names.json but
   its own `<plugin>/<skill>`;
 - unless it is a draft, the oldest ready loop pull request the App has open
@@ -216,11 +219,13 @@ def _tree(rev: str, path: str) -> Optional[str]:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
-def _lock_matches_merge(base: str, merged: str, head: Optional[str]) -> List[str]:
+def _lock_matches_merge(base: str, merged: str, head: Optional[str], key: str,
+                        removed: bool) -> List[str]:
     """A loop pull request re-pins skills.lock to its own content commit, and
-    the bootstrap installs from that ref, not from main. So the ref must hold
-    exactly what the merge result holds under every locked bundle, and nothing
-    else in the lock may change."""
+    the bootstrap installs from that ref, not from main. So only its own skill's
+    entry may change, that skill must be the same at the ref as in the merge
+    result, and the ref must apply the same .gitattributes (which `git archive`
+    follows) as the merge result."""
     old, new = _json_at(base, "skills.lock"), _json_at(merged, "skills.lock")
     if not isinstance(old, dict) or not isinstance(new, dict):
         return ["skills.lock is not a JSON object at the base and in the merge result."]
@@ -230,19 +235,41 @@ def _lock_matches_merge(base: str, merged: str, head: Optional[str]) -> List[str
         return ["skills.lock may change only its `ref`, `generated_from` and `skills` in "
                 "an evals-loop pull request."]
     ref = new.get("ref")
-    if "generated_from" in new and new["generated_from"] != ref:
-        return ["skills.lock's `generated_from` must equal its `ref`."]
     if not isinstance(ref, str) or not re.fullmatch(r"[0-9a-f]{40}", ref):
         return ["skills.lock's `ref` is not a full commit sha."]
+    if "generated_from" in new and new["generated_from"] != ref:
+        return ["skills.lock's `generated_from` must equal its `ref`."]
     if head is None or _git("merge-base", "--is-ancestor", ref, head).returncode != 0:
         return [f"skills.lock's `ref` {ref[:12]} is not in this pull request's history."]
+    old_skills, new_skills = old.get("skills"), new.get("skills")
+    if not isinstance(old_skills, dict) or not isinstance(new_skills, dict):
+        return ["skills.lock has no `skills` map."]
     errors = []
-    for bundle in new.get("bundles") or []:
-        path = f"plugins/{bundle}/skills"
-        if _tree(ref, path) != _tree(merged, path):
+    others = sorted(k for k in set(old_skills) | set(new_skills)
+                    if k != key and old_skills.get(k) != new_skills.get(k))
+    if others:
+        errors.append(f"skills.lock changes entries other than {_q(key)}: {others}.")
+    if removed:
+        if key in new_skills:
+            errors.append(f"skills.lock still locks {_q(key)}, which this pull request removes.")
+    elif key in new_skills or key in old_skills:
+        plugin, _, skill = key.partition("/")
+        path = f"plugins/{plugin}/skills/{skill}"
+        if key not in new_skills or _tree(ref, path) != _tree(merged, path):
             errors.append(f"skills.lock pins {ref[:12]}, whose {_q(path)} differs from the "
                           "merge result's; the lock must pin the content that merges.")
+    attrs = lambda rev: {p: _tree(rev, p) for p in _gitattributes(rev)}  # noqa: E731
+    if attrs(ref) != attrs(merged):
+        errors.append(f"skills.lock pins {ref[:12]}, whose .gitattributes differ from the "
+                      "merge result's, so `git archive` would export something else.")
     return errors
+
+
+def _gitattributes(rev: str) -> List[str]:
+    proc = _git("ls-tree", "-r", "-z", "--name-only", "--full-tree", rev)
+    if proc.returncode != 0:
+        raise CheckError(f"git ls-tree {rev[:12]} failed: {proc.stderr.strip()}")
+    return [p for p in proc.stdout.split("\0") if posixpath.basename(p) == ".gitattributes"]
 
 
 def changed_paths(base: str, merged: str) -> List[str]:
@@ -355,8 +382,12 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     # scalar continued at column 0) and then repairs the text line by line, so
     # a line that looks like a top-level key is one to it. Every such line must
     # be a top-level key here too, once each.
-    shaped = [m.group(1) for m in (_KEY_LINE_RE.match(line) for line in region.split("\n"))
-              if m]
+    # Any other line at column 0 (a comment, a quoted key) can end a value for
+    # one parser and not the other, so it is ambiguous too.
+    lines = region.split("\n")
+    if any(line[:1].strip() and not _KEY_LINE_RE.match(line) for line in lines):
+        return True
+    shaped = [m.group(1) for m in (_KEY_LINE_RE.match(line) for line in lines) if m]
     return not isinstance(data, dict) or sorted(shaped) != sorted(map(str, data))
 
 
@@ -402,6 +433,8 @@ def present_names(rev: str, verify_against: Optional[str] = None,
             skill, _, leaf = rest.partition("/")
             if leaf != "SKILL.md" or not skill:
                 continue
+            if _mode(rev, path) not in ("100644", "100755"):
+                continue  # a symlink or gitlink: no SKILL.md on a consumer's disk
             if verify_against is not None:
                 if blob_id(rev, path) != blob_id(verify_against, path):
                     text = show(rev, path) or ""
@@ -692,14 +725,14 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
     head_fm = frontmatter(head_text) if at_head else {}
     changed_keys = [k for k in SKILL_RUNTIME_KEYS
                     if k in head_fm and head_fm.get(k) != base_fm.get(k)]
-    # Held whenever the pull request could merge: armed, or ready for review
-    # (arming a ready pull request whose checks are green merges it before a
-    # new run of this check registers). The loop lowers such a change to a
-    # draft; a person who wants it takes it to a branch outside the loop.
-    held = bool(pr.get("auto_merge")) or not pr.get("draft")
+    # Held in every state: arming a green pull request merges it before a new
+    # run of this check registers, and a draft can be marked ready and armed
+    # within seconds. A person who wants such a change takes it to a branch
+    # outside the loop's prefixes.
+    held = True
     hold = ("ADR 0021 Decision 4 never merges a change in what a skill runs or may run "
-            "automatically. Leave it a draft, or take it to a branch outside the loop's "
-            "prefixes for a person to review.")
+            "automatically. Take it to a branch outside the loop's prefixes for a "
+            "person to review.")
     if held and changed_keys:
         errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys}. {hold}")
     elif held and at_head and at_base != at_head and frontmatter_is_ambiguous(head_text):
@@ -721,7 +754,8 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                 errors.append(f"{_q(path)} is not a plain Markdown file (mode {mode}); "
                               f"only text auto-merges. {hold}")
     if "skills.lock" in changed:
-        errors += _lock_matches_merge(base, merged, head)
+        errors += _lock_matches_merge(base, merged, head,
+                                      f"{plugin}/{skill}", kind == "remove")
 
     # A draft is never auto-merged, and Decision 5 lets the draft-skill gate
     # open one while another loop PR is open, so the slot rule skips drafts;

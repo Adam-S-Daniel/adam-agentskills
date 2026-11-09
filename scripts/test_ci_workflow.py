@@ -32,7 +32,9 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 # step by hand because the two repos cannot read each other — and that is the
 # job of the first test below: it is what fails when this list and the workflow
 # drift apart, instead of a PR queue silently wedging.
-REQUIRED_CONTEXTS = ["pytest-windows"]
+# `pytest` too: the live ruleset requires it (read 2026-11-09), and the
+# one-way-door check in it is enforcement only while it stays required.
+REQUIRED_CONTEXTS = ["pytest", "pytest-windows"]
 
 
 def load_ci() -> dict:
@@ -733,6 +735,42 @@ def test_the_pytest_job_runs_the_skill_gates_on_pull_requests():
     assert "continue-on-error" not in step
 
 
+ONE_WAY_DOORS_STEP = "Shipped names and loop pull requests pass the one-way-door check"
+
+
+def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
+    """Issue #133: the check guards one-way doors only from a REQUIRED job, on
+    every pull request (not just salient ones), with the body read from the API
+    so a re-run sees an edited body, and with nothing interpolated into run:."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    names = [s.get("name") for s in steps]
+    matches = [s for s in steps if s.get("name") == ONE_WAY_DOORS_STEP]
+    assert len(matches) == 1, f"job `pytest` must carry exactly one `{ONE_WAY_DOORS_STEP}` step"
+    step = matches[0]
+    assert names.index(SKILL_GATES_STEP) < names.index(ONE_WAY_DOORS_STEP) \
+        < names.index("Run every test suite in the repo")
+    assert step["if"] == "github.event_name == 'pull_request'"
+    assert step["env"] == {"HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+                           "GH_TOKEN": "${{ github.token }}"}
+    # The base comes from the API's current base.ref, so a retargeted PR is
+    # judged against its new base, and the trigger re-runs on that edit.
+    assert 'base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"' in step["run"]
+    assert '--base "$base"' in step["run"]
+    # The base branch's copy runs, so a PR cannot loosen its own judge.
+    assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
+    assert 'python3 -I "$d/check.py"' in step["run"]
+    # A loop pull request may not change the packages that judge it.
+    assert "may not change requirements-dev.txt" in step["run"]
+    types = ci_triggers(load_ci())["pull_request"]["types"]
+    assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
+            "auto_merge_enabled", "auto_merge_disabled"} <= set(types)
+    assert "${{" not in step["run"]
+    assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n"' in step["run"]
+    assert "--open-prs" in step["run"]
+    assert "continue-on-error" not in step
+    assert load_ci()["jobs"]["pytest"]["permissions"]["pull-requests"] == "read"
+
+
 AGENT_CHECKS_WORKFLOW = WORKFLOWS_DIR / "agent-checks.yml"
 
 
@@ -765,3 +803,18 @@ def test_agent_checks_reports_on_every_pull_request_and_reruns_on_an_edit():
     narrowing = {"paths", "paths-ignore", "branches", "branches-ignore"}
     assert not (narrowing & set(pull_request)), "a filter would leave the required context unreported"
     assert {"opened", "edited", "reopened", "synchronize"} <= set(pull_request["types"])
+
+
+ONE_WAY_DOORS_RECHECK = "The one-way-door check still passes with the pull request as it is now"
+
+
+def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
+    """Round 9: several runs share a head sha, and the one that reports last
+    must have read the pull request's body, draft state, arming and base late."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    last = steps[-1]
+    assert last.get("name") == ONE_WAY_DOORS_RECHECK
+    assert last["if"] == "github.event_name == 'pull_request'"
+    assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"' in last["run"]
+    assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
+    assert "${{" not in last["run"]

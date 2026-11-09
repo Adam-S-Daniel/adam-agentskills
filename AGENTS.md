@@ -211,27 +211,39 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
 
 ### One-way doors get an adversarial round
 
-- The irreversible surfaces in this repo are plugin names once enabled
-  anywhere (there is no `renames` map to migrate them), skill directory
-  basenames once shipped (they key the consumer `skills.lock` and `setup.sh`
-  symlinks), and the account store's contents, which the owner removes by hand
-  in the claude.ai UI (ADR 0014; ADR 0002 sets what may go there). A change that
-  touches one of them gets an **independent adversarial round before merge**:
-  a separately prompted agent whose job is to break the change, not to
-  approve it, run against the diff and — where the change is one-way — against
-  a live migration in a scratch environment.
-- **One clean-looking fix does not end the gate.** Of the four rounds that
-  hardened `.claude/hooks/skills-bootstrap.sh`, two found defects *introduced
-  by the previous round's fix*, one of them a fresh RCE. Keep going while
-  rounds keep finding things.
-- Depth, including the negative-control rule that keeps "the exploit stopped
-  working" from being mistaken for "the harness stopped working", is in
-  [`docs/experiments/E4-federated-bundle-delivery.md`](docs/experiments/E4-federated-bundle-delivery.md).
-- **The one exception: the evals loop's own pull requests.** A removal
-  (`retire-skill/<skill>`), an accepted improvement (`eval-improve/<skill>`)
-  or a new skill (`draft-skill/<skill>`) from skills-evals merges by auto-merge once required checks pass, with no
-  adversarial round or human review, within the scope limits of
-  [ADR 0021](docs/decisions/0021-automated-skill-changes-merge-without-review.md).
+- **The surface list is [`docs/one-way-doors.md`](docs/one-way-doors.md)**:
+  the marketplace name, plugin names (no `renames` map; owner-enabled plugins
+  on claude.ai and Desktop drop out), skill basenames and plugin membership
+  (lock key `<bundle>/<skill>`, invocation `/<plugin>:<skill>`), the registry's
+  identity and layout, reachability of pinned commits, the bootstrap hook and
+  lock schema, public history, and records elsewhere keyed by a skill's name.
+  [`scripts/shipped_names.json`](scripts/shipped_names.json) is the
+  append-only ledger of shipped and retired names (what it covers is in
+  that page).
+- **A change that touches one gets an adversarial review before merge**, by a
+  fresh-context agent (never a fork of the author) given only the diff and
+  that page. It may be agent-generated: removals stay autonomous. **Done**
+  means two consecutive rounds found nothing new of equal or higher severity;
+  a round's fix restarts the count (two of the four rounds that hardened
+  `.claude/hooks/skills-bootstrap.sh` found defects the previous fix added).
+  Record it in the PR body under `## Adversarial review`, ending with
+  `Adversarial-review: pass <url>` (a github.com or claude.ai link).
+- **CI enforces the name surfaces.** `scripts/check_one_way_doors.py`, in the
+  required `pytest` job, compares the base with the would-be merge result
+  and fails when a shipped marketplace, plugin or `<plugin>/<skill>` name
+  disappears (removal, rename, move between plugins) or a retired name comes
+  back, without that line, and fails an evals-loop PR (`draft-skill/`,
+  `eval-improve/`, `retire-skill/`) outside
+  [ADR 0021](docs/decisions/0021-automated-skill-changes-merge-without-review.md)'s
+  limits or not opened by the App [`scripts/loop_prs.json`](scripts/loop_prs.json)
+  names. The other surfaces rely on the review alone. After a body edit,
+  re-run the job: it reads the body from the API.
+- **Two automatic paths cross these doors.** The evals loop's PRs merge by
+  auto-merge; improvements and new skills lose no name, and a removal carries
+  the review line written by skills-evals' removal reviewer. `_agent-guidance`'s
+  nightly consumer lock bump carries a merged removal or rename to every
+  consumer; once _agent-guidance#488 lands, a bump that drops a skill key
+  waits for the same review.
 
 ### Privacy: invented data only
 

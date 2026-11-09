@@ -1,7 +1,16 @@
 name: CI
 
 on:
+  # The default types plus four for the one-way-door check in `pytest`:
+  # `edited` (a body edit adds the review line; a base change retargets the
+  # PR, which must be re-judged against the new base), `ready_for_review`
+  # (the loop-PR slot rule skips drafts), and `auto_merge_enabled` /
+  # `auto_merge_disabled` (the frontmatter rule applies only while armed).
+  # Several runs on one head sha are safe only because no job here has a
+  # `concurrency` group (see test_no_concurrency_group_governs_a_required_job).
   pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review,
+            auto_merge_enabled, auto_merge_disabled]
   push:
     branches: [main]
   # Only skills-conformance benefits from a schedule. It clones the DEFAULT
@@ -463,6 +472,58 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_skill_gates.py --base "$BASE_SHA" --head "$HEAD_SHA"
+      # AGENTS.md's "One-way doors get an adversarial round" (issue #133): a
+      # shipped marketplace, plugin or skill name that disappears needs
+      # `Adversarial-review: pass <url>` in the PR body, and an evals-loop PR
+      # (draft-skill/, eval-improve/, retire-skill/) must stay inside ADR 0021.
+      # The body, the base branch and the open-PR list come from the API, not
+      # the event payload, so a re-run sees an edited body or a new base (and
+      # the `edited` trigger re-runs it on its own).
+      # Not gated on `salient`: a docs-only PR changes no name, so the check
+      # passes there without needing the dependencies (it imports PyYAML only
+      # when a SKILL.md changed). No `concurrency` group: required job.
+      - name: Shipped names and loop pull requests pass the one-way-door check
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/one-way-doors"
+          mkdir -p "$d"
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+            | jq 'add // []' > "$d/open.json"
+          base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"
+          # Run the BASE branch's copy, so a pull request cannot loosen the
+          # check that judges it. Only the pull request that adds the script
+          # finds none there and runs its own. So a change to the script's
+          # flags takes two pull requests: first the script, accepting both
+          # forms; then this step.
+          if git cat-file -e "$base:scripts/check_one_way_doors.py" 2>/dev/null; then
+            git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"
+          else
+            echo "::notice::The base has no one-way-door check yet; running this pull request's copy."
+            cp scripts/check_one_way_doors.py "$d/check.py"
+          fi
+          # The interpreter's packages come from this pull request's
+          # requirements-dev.txt, so a loop pull request (no person reviews it)
+          # may not change that file: it could install a package that makes
+          # the check pass. The lanes are read from the base's copy.
+          ref="$(jq -r .head.ref "$d/pr.json")"
+          if git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null; then
+            while IFS= read -r prefix; do
+              if [[ "$ref" == "$prefix"* ]] && \
+                 ! git diff --quiet "$base" "$HEAD_SHA" -- requirements-dev.txt; then
+                echo "::error::An evals-loop pull request may not change requirements-dev.txt."
+                exit 1
+              fi
+            done < <(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')
+          fi
+          echo "base=$base" >> "$GITHUB_ENV"
+          python3 -I "$d/check.py" --base "$base" \
+            --head "$HEAD_SHA" --pr-json "$d/pr.json" --open-prs "$d/open.json"
       # DELIBERATELY REPO-WIDE — do not narrow this back to one directory.
       # Three suites (scripts/test_check_skills.py, test_generate_skills_lock.py,
       # test_check_agent_plugins.py — 157 tests) once existed while this job ran
@@ -543,6 +604,30 @@ jobs:
             || rm -f "$d/explorer.json"
           node .eval-protection-gate/scripts/eval-protected.js ci --repo "$GITHUB_REPOSITORY" \
             --pr-json "$d/pr.json" --files "$d/files.json" --explorer "$d/explorer.json"
+      # The first run of the one-way-door check reads the pull request minutes
+      # before this job reports, and several runs share a head sha (edited,
+      # auto_merge_*, ready_for_review), so a run that read an older body,
+      # draft state, arming or base could otherwise report last. This step
+      # reads them again just before the job ends, with the same base copy.
+      - name: The one-way-door check still passes with the pull request as it is now
+        if: github.event_name == 'pull_request'
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/one-way-doors"
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+            | jq 'add // []' > "$d/open.json"
+          now="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"
+          if [ "$now" != "$base" ]; then
+            echo "::error::The base branch changed during this run; the edited run judges the new one."
+            exit 1
+          fi
+          python3 -I "$d/check.py" --base "$base" \
+            --head "$HEAD_SHA" --pr-json "$d/pr.json" --open-prs "$d/open.json"
 
   # The same suites on Windows, because until #98 they could not run there at
   # all — 72 failures, every one of them a platform fault rather than a real

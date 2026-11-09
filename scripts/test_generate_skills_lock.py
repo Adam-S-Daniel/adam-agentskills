@@ -13388,6 +13388,12 @@ def _run_setup_script(tmp_path: Path, apt_exit: int):
         encoding="utf-8",
     )
     apt.chmod(0o755)
+    # The script builds Git when the one on PATH is older than 2.54. A stub
+    # reporting a new enough version keeps the test off the network and its
+    # apt-get calls to the sandbox install.
+    git = stubs / "git"
+    git.write_text('#!/bin/bash\necho "git version 2.56.0"\n', encoding="utf-8")
+    git.chmod(0o755)
     script = tmp_path / "setup.sh"
     script.write_text(_documented_setup_script(project, user_claude),
                       encoding="utf-8")

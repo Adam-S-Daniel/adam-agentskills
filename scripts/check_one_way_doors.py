@@ -11,29 +11,40 @@ edits, so nothing compared the change with what had already shipped. Nothing
 checked that the evals loop's pull requests stay inside ADR 0021's limits
 either. This script is the check for both (issue #133).
 
-Check 1: a shipped name may not disappear unrecorded
-------------------------------------------------------
+What is compared
+-----------------
+The base branch's tip (`--base`, the event's `pull_request.base.sha`) against
+the tree `git merge-tree --write-tree <base> <head>` produces: what `main`
+would hold if the pull request merged now. Not head against a merge-base: a
+branch built across a criss-cross history can make `git merge-base` return
+the commit before a skill existed, so a deletion of it would look like no
+change (adversarial round 1 on #134). A pull request that conflicts has no
+merge result and exits 2 until it is resolved. Every file is read from the
+git object store, never the working tree.
+
+Check 1: shipped names change only with a recorded review
+-----------------------------------------------------------
 A name is the marketplace's `name`, a plugin's `name` in
 .claude-plugin/marketplace.json, or `<plugin>/<skill>` for a skill that has
 `<plugin source>/skills/<skill>/SKILL.md` and, when that SKILL.md changed, a
-frontmatter `name` equal to `<skill>`. A name present at the merge-base and
-absent at head was removed, renamed or moved between plugins. Each one fails
-the check unless the pull request body carries the line
+frontmatter `name` equal to `<skill>`. A name present at the base and absent
+from the merge result was removed, renamed or moved between plugins. A name
+that arrives but is already in the ledger (a skill by basename, in any
+plugin) reuses a retired name. Either fails the check unless the pull request
+body's visible text (not an HTML comment or a code block) has the line
 
-    Adversarial-review: pass <https url>
+    Adversarial-review: pass <https://github.com/... or https://claude.ai/...>
 
-and no `Adversarial-review: block` line. The URL is the recorded review: a
+and no `Adversarial-review: block` line. The link is the recorded review: a
 skills-evals removal reviewer's run (skills-evals#917) or any separately
 prompted agent's report. A person or an agent may write it; removals stay
-autonomous (owner decision 2026-11-09). docs/one-way-doors.md defines what a
-review must cover and when it is done.
+autonomous (owner decision 2026-11-09). The line is a record, not proof:
+docs/one-way-doors.md defines what a review must cover and when it is done.
 
-scripts/shipped_names.json is the ledger of every name that has shipped. It is
-append-only: every name in it at the merge-base must still be in it at head.
-A name that disappears must be in it at head, so a retired name is never
-forgotten (a later skill reusing it would collide with stale locks and records
-downstream). Detection does not depend on the ledger: names present at the
-merge-base count as shipped whether or not the ledger lists them yet.
+scripts/shipped_names.json is the ledger of every name that has shipped. It
+is append-only, and a name that disappears must be in it in the merge result,
+so a retired name stays on record. Detection does not depend on the ledger:
+names present at the base count as shipped whether or not it lists them yet.
 
 Check 2: an evals-loop pull request stays inside ADR 0021
 ----------------------------------------------------------
@@ -50,22 +61,23 @@ plus a Bot author. So here it must be:
   docs/skill-impact.md, README.md, skills.lock, the plugin's two manifests
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
-- in a plugin that runs no code at the merge-base or head (Decision 4): no
-  hooks/ or bin/ directory, no settings.json, package.json or package lock,
-  no `hooks` or `settings` key in a manifest or its marketplace entry;
-- the only open loop pull request (Decision 5).
+- running no code (Decision 4): the plugin has no hooks/ or bin/ directory,
+  no settings.json, package.json or package lock, and no `hooks` or
+  `settings` key in a manifest or its marketplace entry, at the base or in
+  the merge result; and the skill's frontmatter does not add or change
+  `hooks` or `allowed-tools`;
+- the only ready (non-draft) loop pull request the App has open from this
+  repository (Decision 5). Forks and people cannot hold the slot.
 
-Config is read at the merge-base, so a pull request cannot loosen the rules
-it is judged by; a file absent there (the pull request that adds it) is read
-at head.
+Config is read at the base, so a pull request cannot loosen the rules it is
+judged by; a file absent there (the pull request that adds it) is read from
+the merge result.
 
 Inputs and trust
 -----------------
-Every file is read from the git object store (`git show <rev>:<path>`), never
-the working tree, and diffed from `git merge-base <base> <head>` (see
-check_skill_gates.py for why). The pull request's JSON and the open pull
-request list come from the GitHub API through files the workflow writes; all
-of it is untrusted data, parsed with json only. Output names repo-relative
+The pull request's JSON and the open pull request list come from the GitHub
+API through files the workflow writes; all of it is untrusted data, parsed
+with json (and the body with markdown-it-py) only. Output names repo-relative
 paths and names, JSON-quoted, never file contents or the body.
 
 Exit status: 0 pass, 1 a rule failed, 2 the check could not run.
@@ -90,13 +102,17 @@ LOOP_CONFIG = "scripts/loop_prs.json"
 LEDGER_KEYS = ("marketplace", "plugins", "skills")
 MANIFESTS = ("plugin.json", ".claude-plugin/plugin.json")
 RUNTIME_KEYS = ("hooks", "settings")
+SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
 RUNTIME_DIRS = ("hooks/", "bin/")
 RUNTIME_FILES = frozenset({"settings.json", "package.json", "bun.lock", "bun.lockb",
                            "npm-shrinkwrap.json", "package-lock.json"})
 KINDS = ("create", "edit", "remove")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-REVIEW_PASS_RE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+(https://\S+)[ \t]*$",
-                            re.MULTILINE)
+#: The review record must link a page on one of these hosts: a GitHub run,
+#: comment or report, or a claude.ai artifact or session.
+REVIEW_PASS_RE = re.compile(
+    r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+"
+    r"(https://(?:github\.com|claude\.ai)/\S+)[ \t]*$", re.MULTILINE)
 REVIEW_BLOCK_RE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*block\b", re.MULTILINE)
 _GIT_VERBATIM = ("-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.quotepath=off")
 
@@ -114,13 +130,26 @@ def _git(*args: str) -> subprocess.CompletedProcess:
                           capture_output=True, text=True, encoding="utf-8")
 
 
-def merge_base(base: str, head: str) -> str:
-    proc = _git("merge-base", base, head)
+def resolve(rev: str) -> str:
+    proc = _git("rev-parse", "--verify", "-q", f"{rev}^{{commit}}")
     if proc.returncode != 0 or not proc.stdout.strip():
-        why = proc.stderr.strip() or f"exit {proc.returncode}"
-        raise CheckError(f"git merge-base {base} {head} failed: {why}. The checkout may "
-                         "be shallow (CI needs fetch-depth: 0) or a revision is unknown.")
+        raise CheckError(f"{rev} is not a commit here. The checkout may be shallow "
+                         "(CI needs fetch-depth: 0).")
     return proc.stdout.strip()
+
+
+def merge_result(base: str, head: str) -> str:
+    """The tree `main` would have if this pull request merged now. Judging that,
+    not head against a merge-base, is what stops a branch built across a
+    criss-cross history from choosing a merge-base that hides a deletion."""
+    proc = _git("merge-tree", "--write-tree", "--no-messages", base, head)
+    tree = proc.stdout.split("\n", 1)[0].strip()
+    if proc.returncode == 1:
+        raise CheckError("the pull request conflicts with its base branch, so there is "
+                         "no merge result to check. Resolve the conflict and re-run.")
+    if proc.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40,64}", tree):
+        raise CheckError(f"git merge-tree {base} {head} failed: {proc.stderr.strip()}")
+    return tree
 
 
 def show(rev: str, path: str) -> Optional[str]:
@@ -146,10 +175,10 @@ def files_under(rev: str, root: str) -> List[str]:
     return [p for p in proc.stdout.splitlines() if p]
 
 
-def changed_paths(mb: str, head: str) -> List[str]:
-    proc = _git("diff", "--no-renames", "--name-only", mb, head)
+def changed_paths(base: str, merged: str) -> List[str]:
+    proc = _git("diff", "--no-renames", "--name-only", base, merged)
     if proc.returncode != 0:
-        raise CheckError(f"git diff {mb} {head} failed: {proc.stderr.strip()}")
+        raise CheckError(f"git diff {base} {merged} failed: {proc.stderr.strip()}")
     return [p for p in proc.stdout.splitlines() if p]
 
 
@@ -189,22 +218,26 @@ def marketplace_entries(rev: str) -> Tuple[Optional[str], Dict[str, dict]]:
     return name, entries
 
 
-def frontmatter_name(text: str) -> Optional[str]:
-    """The SKILL.md frontmatter `name`, parsed as YAML; None when absent."""
+def frontmatter(text: str) -> dict:
+    """The SKILL.md frontmatter, parsed as YAML; {} when absent or unparsable."""
     import yaml  # third-party; imported only when a SKILL.md changed
 
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
-        return None
+        return {}
     for i in range(1, len(lines)):
         if lines[i].strip() == "---":
             try:
                 data = yaml.safe_load("\n".join(lines[1:i]))
             except yaml.YAMLError:
-                return None
-            value = data.get("name") if isinstance(data, dict) else None
-            return value.strip() if isinstance(value, str) else None
-    return None
+                return {}
+            return data if isinstance(data, dict) else {}
+    return {}
+
+
+def frontmatter_name(text: str) -> Optional[str]:
+    value = frontmatter(text).get("name")
+    return value.strip() if isinstance(value, str) else None
 
 
 def present_names(rev: str, verify_against: Optional[str] = None) -> Dict[str, Set[str]]:
@@ -244,10 +277,15 @@ def ledger(rev: str) -> Optional[Dict[str, List[str]]]:
 
 
 def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
-    """(the pass URL or None, whether a block line is present)."""
-    body = body or ""
-    match = REVIEW_PASS_RE.search(body)
-    return (match.group(1) if match else None), bool(REVIEW_BLOCK_RE.search(body))
+    """(the pass URL or None, whether a block line is present), read only from
+    the body's rendered paragraph text: a line inside an HTML comment or a code
+    block is not a record anyone would see, so it never counts."""
+    from markdown_it import MarkdownIt  # third-party; only when a name is lost
+
+    visible = "\n".join(t.content for t in MarkdownIt("commonmark").parse(body or "")
+                        if t.type == "inline")
+    match = REVIEW_PASS_RE.search(visible)
+    return (match.group(1) if match else None), bool(REVIEW_BLOCK_RE.search(visible))
 
 
 # ---------------------------------------------------------------------------
@@ -258,10 +296,15 @@ def _q(value: str) -> str:
     return json.dumps(value)
 
 
-def check_names(mb: str, head: str, body: Optional[str]) -> List[str]:
+def _basename(key: str, name: str) -> str:
+    return name.split("/", 1)[1] if key == "skills" else name
+
+
+def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
+    """Names at the base tip against names in the merge result."""
     errors = []
-    base_ledger = ledger(mb)
-    head_ledger = ledger(head)
+    base_ledger = ledger(base)
+    head_ledger = ledger(merged)
     if base_ledger is not None and head_ledger is None:
         return [f"{LEDGER} was deleted; it is append-only. Restore it."]
     if base_ledger is not None:
@@ -270,34 +313,45 @@ def check_names(mb: str, head: str, body: Optional[str]) -> List[str]:
                 if name not in head_ledger[key]:
                     errors.append(f"{LEDGER} lost {key} entry {_q(name)}; it is "
                                   "append-only, so a retired name stays listed.")
-    before = present_names(mb)
-    after = present_names(head, verify_against=mb)
+    before = present_names(base)
+    after = present_names(merged, verify_against=base)
     if not after["marketplace"]:
-        errors.append(f"{MARKETPLACE} at head has no readable `name`.")
+        errors.append(f"{MARKETPLACE} in the merge result has no readable `name`.")
     lost = [(key, name) for key in LEDGER_KEYS for name in sorted(before[key] - after[key])]
-    if lost:
+    # A name that arrives but has shipped before (by basename, for a skill, so
+    # a retired skill re-created in another plugin counts) reuses a retired name:
+    # stale locks and records keyed by it would now point at something else.
+    recorded_base = base_ledger or {k: [] for k in LEDGER_KEYS}
+    reused = [(key, name) for key in LEDGER_KEYS for name in sorted(after[key] - before[key])
+              if _basename(key, name) in {_basename(key, n) for n in recorded_base[key]}]
+    doors = [("disappear", lost), ("reuse a retired name", reused)]
+    doors = [(what, items) for what, items in doors if items]
+    if doors:
         url, blocked = review_line(body)
-        names = ", ".join(f"{key[:-1] if key != 'marketplace' else key} {_q(n)}"
-                          for key, n in lost)
+        summary = "; ".join(
+            what + ": " + ", ".join(f"{key[:-1] if key != 'marketplace' else key} {_q(n)}"
+                                    for key, n in items)
+            for what, items in doors)
         if blocked:
-            errors.append(f"Shipped names disappear ({names}) and the pull request body "
+            errors.append(f"Shipped names change ({summary}) and the pull request body "
                           "records `Adversarial-review: block`. Address the findings, "
                           "then record a passing review.")
         elif url is None:
             errors.append(
-                f"Shipped names disappear ({names}): a removal, rename or move between "
-                "plugins is a one-way door. Run the adversarial review in "
-                "docs/one-way-doors.md and put `Adversarial-review: pass <https url>` "
-                "in the pull request body, then re-run this job.")
+                f"Shipped names change ({summary}): a removal, rename, move between "
+                "plugins or reuse of a retired name is a one-way door. Run the "
+                "adversarial review in docs/one-way-doors.md and put "
+                "`Adversarial-review: pass <url>` (a github.com or claude.ai link) in the "
+                "pull request body, outside comments and code blocks, then re-run this job.")
         else:
-            print(f"one-way-doors: shipped names disappear ({names}); the body records "
+            print(f"one-way-doors: shipped names change ({summary}); the body records "
                   f"a passing review at {_q(url)}.")
         recorded = head_ledger or {k: [] for k in LEDGER_KEYS}
         for key, name in lost:
             if name not in recorded[key]:
                 errors.append(f"{_q(name)} disappears but is not in {LEDGER}'s "
-                              f"`{key}` at head. Add it, so the retired name stays on "
-                              "record.")
+                              f"`{key}` in the merge result. Add it, so the retired name "
+                              "stays on record.")
     return errors
 
 
@@ -320,10 +374,10 @@ def _plugin_runs_code(rev: str, plugin: str, root: str) -> List[str]:
     return reasons
 
 
-def check_loop_pr(mb: str, head: str, pr: dict, open_prs: Optional[list]) -> List[str]:
-    config = _json_at(mb, LOOP_CONFIG)
+def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) -> List[str]:
+    config = _json_at(base, LOOP_CONFIG)
     if config is None:
-        config = _json_at(head, LOOP_CONFIG)
+        config = _json_at(merged, LOOP_CONFIG)
     if not isinstance(config, dict) or not isinstance(config.get("author"), str) \
             or not config["author"] or not isinstance(config.get("lanes"), dict) \
             or not all(v in KINDS for v in config["lanes"].values()):
@@ -353,7 +407,7 @@ def check_loop_pr(mb: str, head: str, pr: dict, open_prs: Optional[list]) -> Lis
     if not SKILL_NAME_RE.match(skill):
         return errors + [f"Branch {_q(ref)} does not name one skill after {_q(lane)}."]
 
-    changed = changed_paths(mb, head)
+    changed = changed_paths(base, merged)
     plugins = sorted({p.split("/")[1] for p in changed
                       if re.match(r"^plugins/[^/]+/skills/" + re.escape(skill) + r"/", p)})
     if len(plugins) != 1:
@@ -362,7 +416,7 @@ def check_loop_pr(mb: str, head: str, pr: dict, open_prs: Optional[list]) -> Lis
     plugin = plugins[0]
     root = f"plugins/{plugin}"
     skill_md = f"{root}/skills/{skill}/SKILL.md"
-    at_base, at_head = blob_id(mb, skill_md), blob_id(head, skill_md)
+    at_base, at_head = blob_id(base, skill_md), blob_id(merged, skill_md)
     actual = ("create" if at_base is None and at_head is not None else
               "remove" if at_base is not None and at_head is None else
               "edit" if at_base is not None and at_base != at_head else None)
@@ -383,24 +437,42 @@ def check_loop_pr(mb: str, head: str, pr: dict, open_prs: Optional[list]) -> Lis
         path = f"{root}/{manifest}"
         if path not in changed:
             continue
-        old, new = _json_at(mb, path), _json_at(head, path)
+        old, new = _json_at(base, path), _json_at(merged, path)
         if not isinstance(old, dict) or not isinstance(new, dict) or \
                 {k: v for k, v in old.items() if k != "version"} != \
                 {k: v for k, v in new.items() if k != "version"}:
             errors.append(f"{_q(path)} may change only its `version` in an evals-loop "
                           "pull request.")
 
-    for rev in (mb, head):
+    for rev in (base, merged):
         for reason in _plugin_runs_code(rev, plugin, root):
             errors.append(f"Plugin {_q(plugin)} runs code ({reason}), so ADR 0021 "
                           "Decision 4 never merges its skills automatically.")
 
+    # Decision 4 at the skill level: frontmatter `hooks` run code and
+    # `allowed-tools` skips permission prompts in every consumer.
+    old_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
+    new_fm = frontmatter(show(merged, skill_md) or "") if at_head else {}
+    for key in SKILL_RUNTIME_KEYS:
+        if key in new_fm and new_fm.get(key) != old_fm.get(key):
+            errors.append(f"{_q(skill_md)} adds or changes frontmatter {_q(key)}; ADR 0021 "
+                          "Decision 4 never merges a change in what a skill runs or is "
+                          "allowed to run automatically.")
+
     if open_prs is not None:
         number = pr.get("number")
-        others = sorted(o.get("number") for o in open_prs
-                        if isinstance(o, dict) and o.get("number") != number
-                        and any(((o.get("head") or {}).get("ref") or "").startswith(p)
-                                for p in config["lanes"]))
+        # Only the loop's own ready pull requests hold the slot: a fork or a
+        # person can name a branch `retire-skill/x`, and the loop opens drafts
+        # on purpose (Decisions 4 and 5), so counting those would let anyone
+        # stall the loop and fail the loop's own in-flight pull request.
+        others = sorted(
+            o.get("number") for o in open_prs
+            if isinstance(o, dict) and o.get("number") != number and not o.get("draft")
+            and (o.get("user") or {}).get("login") == config["author"]
+            and (o.get("user") or {}).get("type") == "Bot"
+            and (((o.get("head") or {}).get("repo")) or {}).get("full_name") == base_repo
+            and any(((o.get("head") or {}).get("ref") or "").startswith(p)
+                    for p in config["lanes"]))
         if others:
             errors.append(f"Another evals-loop pull request is open ({others}); ADR 0021 "
                           "Decision 5 allows one at a time. Close one and re-run.")
@@ -408,8 +480,9 @@ def check_loop_pr(mb: str, head: str, pr: dict, open_prs: Optional[list]) -> Lis
 
 
 def run(base: str, head: str, pr: dict, open_prs: Optional[list]) -> List[str]:
-    mb = merge_base(base, head)
-    return check_names(mb, head, pr.get("body")) + check_loop_pr(mb, head, pr, open_prs)
+    base = resolve(base)
+    merged = merge_result(base, resolve(head))
+    return check_names(base, merged, pr.get("body")) + check_loop_pr(base, merged, pr, open_prs)
 
 
 def _escape(message: str) -> str:

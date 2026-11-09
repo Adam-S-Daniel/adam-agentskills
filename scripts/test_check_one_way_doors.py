@@ -24,7 +24,7 @@ CODE_PLUGIN = "adam-coding-local"
 SKILL = "widget-polisher"
 OTHER = "gadget-sorter"
 APP = "skills-evals-improve[bot]"
-PASS = "Adversarial-review: pass https://example.com/review/1"
+PASS = "Adversarial-review: pass https://github.com/Example/registry/actions/runs/1"
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -161,16 +161,20 @@ def test_a_block_line_fails_even_beside_a_pass_line(tmp_path):
     repo = make_repo(tmp_path)
     remove_skill(repo)
     commit(repo)
-    body = f"{PASS}\nAdversarial-review: block https://example.com/review/2\n"
+    body = f"{PASS}\n\nAdversarial-review: block https://github.com/Example/registry/pull/2\n"
     code, out = check(repo, tmp_path, pr_json(body=body))
     assert code == 1 and "block" in out, out
 
 
 @pytest.mark.parametrize("body", [
     "Adversarial-review: pass <url>",
-    "Adversarial-review: pass http://example.com/review/1",
+    "Adversarial-review: pass http://github.com/Example/registry/actions/runs/1",
+    "Adversarial-review: pass https://example.com/review/1",
     "Adversarial-review: pass",
-    "See Adversarial-review: pass https://example.com/review/1 later",
+    "See Adversarial-review: pass https://github.com/Example/registry/actions/runs/1 later",
+    "<!--\nAdversarial-review: pass https://github.com/Example/registry/actions/runs/1\n-->",
+    "```\nAdversarial-review: pass https://github.com/Example/registry/actions/runs/1\n```",
+    "    Adversarial-review: pass https://github.com/Example/registry/actions/runs/1",
     "",
 ])
 def test_a_malformed_review_line_does_not_count(tmp_path, body):
@@ -278,7 +282,7 @@ def test_a_lost_name_missing_from_the_ledger_fails(tmp_path):
     assert code == 0, out
 
 
-def test_unresolvable_merge_base_exits_2(tmp_path):
+def test_an_unknown_revision_exits_2(tmp_path):
     repo = make_repo(tmp_path)
     pr_path = tmp_path / "pr.json"
     pr_path.write_text(json.dumps(pr_json()), encoding="utf-8")
@@ -432,11 +436,102 @@ def test_a_second_open_loop_pr_fails(tmp_path):
     repo = make_repo(tmp_path)
     _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
     commit(repo)
-    open_prs = [{"number": 7, "head": {"ref": f"eval-improve/{SKILL}"}},
-                {"number": 9, "head": {"ref": f"draft-skill/{OTHER}"}},
-                {"number": 10, "head": {"ref": "claude/unrelated"}}]
+    open_prs = [open_pr(7, f"eval-improve/{SKILL}"), open_pr(9, f"draft-skill/{OTHER}"),
+                open_pr(10, "claude/unrelated")]
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=open_prs)
     assert code == 1 and "[9]" in out, out
+
+
+def open_pr(number, ref, login=APP, user_type="Bot", repo="Example/registry", draft=False):
+    return {"number": number, "draft": draft, "user": {"login": login, "type": user_type},
+            "head": {"ref": ref, "repo": {"full_name": repo}}}
+
+
+@pytest.mark.parametrize("other", [
+    open_pr(9, "retire-skill/x", login="someone", user_type="User", repo="Someone/fork"),
+    open_pr(9, "retire-skill/x", login="someone", user_type="User"),
+    open_pr(9, "retire-skill/x", repo="Someone/fork"),
+    open_pr(9, f"draft-skill/{OTHER}", draft=True),
+])
+def test_only_the_apps_ready_loop_prs_hold_the_slot(tmp_path, other):
+    """Round 1 finding: anyone could open a fork PR named retire-skill/x and
+    turn every loop PR red; the loop's own drafts must not count either."""
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[other])
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("extra", [
+    "allowed-tools: Bash(*)\n",
+    "hooks:\n  PreToolUse:\n    - command: ./run.sh\n",
+])
+def test_a_loop_pr_may_not_add_skill_runtime_frontmatter(tmp_path, extra):
+    repo = make_repo(tmp_path)
+    text = f"---\nname: {SKILL}\ndescription: Invented.\n{extra}---\n\n# {SKILL}\n"
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", text)
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    assert code == 1 and "Decision 4" in out, out
+
+
+def test_a_criss_cross_merge_base_cannot_hide_a_deletion(tmp_path):
+    """Round 1 finding: with two merge bases, `git merge-base` may return the
+    one before the skill existed. The check judges the merge result instead."""
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "checkout", "-q", "-b", "add-skill")
+    _write(repo / "plugins" / PLUGIN / "skills" / "new-skill" / "SKILL.md", skill_md("new-skill"))
+    commit(repo, "add")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "checkout", "-q", "-b", "sibling")
+    _write(repo / "README.md", "# readme\n\nsibling\n")
+    sibling = commit(repo, "sibling")
+    _git(repo, "checkout", "-q", "main")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge add", "add-skill")
+    _git(repo, "merge", "-q", "--no-ff", "-m", "merge sibling", "sibling")
+    _git(repo, "checkout", "-q", "-B", "pr", sibling)
+    _git(repo, "merge", "-q", "--no-ff", "-m", "bring in add", "add-skill")
+    _git(repo, "rm", "-rq", f"plugins/{PLUGIN}/skills/new-skill")
+    commit(repo, "delete")
+    assert len(_git(repo, "merge-base", "--all", "main", "pr").split()) == 2
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and f'"{PLUGIN}/new-skill"' in out, out
+
+
+def test_reusing_a_retired_skill_name_in_any_plugin_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    remove_skill(repo)
+    commit(repo, "retire")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / CODE_PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "reuse a retired name" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 0, out
+
+
+def test_a_new_name_never_shipped_needs_no_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / "brand-new" / "SKILL.md", skill_md("brand-new"))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 0, out
+
+
+def test_a_conflicting_pr_exits_2(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "README.md", "# readme\n\npr side\n")
+    commit(repo)
+    _git(repo, "checkout", "-q", "main")
+    _write(repo / "README.md", "# readme\n\nmain side\n")
+    commit(repo)
+    _git(repo, "checkout", "-q", "pr")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 2 and "conflicts" in out, out
 
 
 def test_the_loop_config_is_read_at_the_merge_base(tmp_path):

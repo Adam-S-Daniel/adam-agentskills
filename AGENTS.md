@@ -228,9 +228,10 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   Record it in the PR body under `## Adversarial review`, ending with
   `Adversarial-review: pass <https url>`.
 - **CI enforces the name surfaces.** `scripts/check_one_way_doors.py`, in the
-  required `pytest` job, fails when a shipped marketplace, plugin or
-  `<plugin>/<skill>` name disappears (removal, rename, move between plugins)
-  without that line, and fails an evals-loop PR (`draft-skill/`,
+  required `pytest` job, compares the base with the would-be merge result
+  and fails when a shipped marketplace, plugin or `<plugin>/<skill>` name
+  disappears (removal, rename, move between plugins) or a retired name comes
+  back, without that line, and fails an evals-loop PR (`draft-skill/`,
   `eval-improve/`, `retire-skill/`) outside
   [ADR 0021](docs/decisions/0021-automated-skill-changes-merge-without-review.md)'s
   limits or not opened by the App [`scripts/loop_prs.json`](scripts/loop_prs.json)

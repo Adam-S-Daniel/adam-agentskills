@@ -82,8 +82,11 @@ merge-base, which a criss-cross history can make lie):
   `---` inside a line, a duplicate key, a key-shaped line inside a value, or
   any other line at column 0 that is not a key) counts as losing its name,
   and a SKILL.md that is a symlink or gitlink, sits beside a case variant
-  (`skill.md`, as a file or a directory) or carries a second byte-order mark
-  does not count as present. A `SKILL.md` directly in a plugin's `skills/`
+  (`skill.md`, as a file or a directory), carries a second byte-order mark
+  or is over 1 MiB (Claude Code skips it) does not count as present. A
+  quoted `name` must equal the directory exactly, spaces included. The
+  marketplace and manifests must parse as strictly as Claude Code parses
+  them (no `NaN` or `Infinity`, no duplicate keys), or the check errors. A `SKILL.md` directly in a plugin's `skills/`
   makes Claude Code load only that one, so every skill of the plugin counts
   as gone.
 - **A new path under `plugins/` or `.claude-plugin/` that a
@@ -101,7 +104,8 @@ merge-base, which a criss-cross history can make lie):
   bookkeeping paths (a create or removal may append only its own skill to
   the ledger), a `skills.lock` that changes only its own skill's entry and is
   re-pinned to a commit in its own history where that skill and every
-  `.gitattributes` match the merge result, no change to
+  `.gitattributes` match the merge result and every other locked skill, and
+  each bundle's set of skills, match the base's pinned commit, no change to
   `requirements-dev.txt`, and (unless it is a draft) no older ready loop pull
   request from that App open. Draft or not, it must be text only: in
   SKILL.md's frontmatter only the `description` lines may change (a new skill
@@ -134,7 +138,9 @@ A skill body that runs a shell command on load (an exclamation mark then a
 backtick span, or a fence opened with three backticks and `!`) is refused in
 a loop pull request's SKILL.md by this check, matched the way Claude Code
 matches it (after any Unicode space or a byte-order mark, a fence anywhere in
-a line, and with `$ARGUMENTS`-style placeholders substituted first). The
+a line), in the text as written and again with the placeholders Claude Code
+substitutes (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}` and the like)
+replaced; any other `${...}` stays as written. The
 required `agent-checks` job's `skill-shell` check covers other pull
 requests, with a narrower match, and `disableSkillShellExecution` turns
 execution off where it is set.

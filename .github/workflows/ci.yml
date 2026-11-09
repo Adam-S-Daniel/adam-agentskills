@@ -452,24 +452,34 @@ jobs:
           head="$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")"
           ref="$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")"
           git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null || exit 0
+          # Captured, not read through a process substitution, so a failure
+          # stops the step instead of reading as "no lanes" (round 14).
+          lanes="$(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')"
           loop=false
           while IFS= read -r prefix; do
-            if [[ "$ref" == "$prefix"* ]]; then loop=true; fi
-          done < <(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')
+            if [ -n "$prefix" ] && [[ "$ref" == "$prefix"* ]]; then loop=true; fi
+          done <<< "$lanes"
           [ "$loop" = true ] || exit 0
           # The merge result, so main moving a file does not fail an older
           # loop branch; with a conflict, the head itself.
           merged="$(git merge-tree --write-tree --no-messages "$base" "$head" | head -n1)" \
             || merged="$head"
+          changed="$(mktemp)"
+          git diff -z --no-renames --name-only "$base" "$merged" > "$changed"
           bad=0
           while IFS= read -r -d '' path; do
+            # A regex, not a case glob: a glob's `*` also matches `/`, so
+            # plugins/*/skills/*/* would admit plugins/x/hooks/skills/y/run.sh.
+            if [[ "$path" =~ ^plugins/[^/]+/skills/[^/]+/. ]] \
+              || [[ "$path" =~ ^plugins/[^/]+/(\.claude-plugin/)?plugin\.json$ ]]; then
+              continue
+            fi
             case "$path" in
-              plugins/*/skills/*/*|plugins/*/plugin.json|plugins/*/.claude-plugin/plugin.json) ;;
               docs/skill-impact.md|README.md|skills.lock) ;;
               scripts/plugin_layout.json|scripts/shipped_names.json|scripts/skills_waivers.yml) ;;
               *) echo "::error::An evals-loop pull request may not change this path."; bad=1 ;;
             esac
-          done < <(git diff -z --no-renames --name-only "$base" "$merged")
+          done < "$changed"
           exit "$bad"
       - name: Install Python dependencies
         if: steps.salient.outputs.run == 'true'
@@ -644,6 +654,11 @@ jobs:
           if [ "$now" != "$base" ]; then
             echo "::error::The base branch changed during this run; the edited run judges the new one."
             exit 1
+          fi
+          # Extracted again: the suites ran the pull request's code since the
+          # first copy was written (round 14).
+          if git cat-file -e "$base:scripts/check_one_way_doors.py" 2>/dev/null; then
+            git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"
           fi
           python3 -I "$d/check.py" --base "$base" \
             --head "$HEAD_SHA" --pr-json "$d/pr.json" --open-prs "$d/open.json"

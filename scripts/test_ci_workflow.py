@@ -18,8 +18,10 @@ id from the same word in one of ci.yml's comments — which is most of the file.
 Run: python3 -m pytest scripts/test_ci_workflow.py -q
 """
 
+import os
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -816,6 +818,9 @@ def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
     assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"' in last["run"]
     assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
     assert "${{" not in last["run"]
+    # Round 14: the suites ran the pull request's code since the first copy.
+    assert last["run"].index('git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"') \
+        < last["run"].index('python3 -I "$d/check.py"')
 
 
 LOOP_PATH_GUARD = "Loop pull requests change nothing that runs before their check"
@@ -833,4 +838,58 @@ def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_run
     assert guard["if"] == "github.event_name == 'pull_request'"
     assert "python" not in guard["run"] and "${{" not in guard["run"]
     assert 'git show "$base:scripts/loop_prs.json"' in guard["run"]
-    assert "plugins/*/skills/*/*" in guard["run"] and "scripts/check" not in guard["run"]
+    assert "^plugins/[^/]+/skills/[^/]+/." in guard["run"] and "scripts/check" not in guard["run"]
+
+
+def _run_guard(tmp_path, ref: str, changed: str) -> int:
+    import json
+    import subprocess
+    run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
+               if s.get("name") == LOOP_PATH_GUARD)["run"]
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *a: subprocess.run(["git", "-c", "core.autocrlf=false", "-C", str(repo), *a],  # noqa: E731
+                                    check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "loop_prs.json").write_text(json.dumps(
+        {"lanes": {"draft-skill/": "create", "eval-improve/": "edit"}}), encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    target = repo / changed
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x\n", encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "change")
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {
+        "base": {"ref": "main"}, "head": {"sha": git("rev-parse", "HEAD"), "ref": ref}}}),
+        encoding="utf-8")
+    script = tmp_path / "guard.sh"
+    script.write_text(run, encoding="utf-8", newline="\n")
+    proc = subprocess.run(["bash", str(script)], cwd=repo, capture_output=True, text=True,
+                          env={**os.environ, "GITHUB_EVENT_PATH": str(event)})
+    return proc.returncode
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+@pytest.mark.parametrize("changed, code", [
+    ("plugins/p/skills/s/SKILL.md", 0),
+    ("plugins/p/.claude-plugin/plugin.json", 0),
+    ("plugins/p/hooks/skills/a/run.sh", 1),
+    ("plugins/p/hooks/plugin.json", 1),
+    ("requirements-dev.txt", 1),
+])
+def test_the_loop_path_guard_matches_whole_path_segments(tmp_path, changed, code):
+    """Round 14: a case glob's `*` matches `/`, so it admitted hook paths."""
+    assert _run_guard(tmp_path, "eval-improve/s", changed) == code
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_ignores_other_branches(tmp_path):
+    assert _run_guard(tmp_path, "claude/some-change", "requirements-dev.txt") == 0

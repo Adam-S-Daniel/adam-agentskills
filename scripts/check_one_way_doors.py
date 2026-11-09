@@ -223,6 +223,22 @@ def _mode(rev: str, path: str) -> Optional[str]:
     return entry.split(" ", 1)[0] if entry else None
 
 
+#: Claude Code skips a plugin SKILL.md larger than this (round 14).
+SKILL_MD_MAX_BYTES = 1048576
+
+
+def _size(rev: str, path: str) -> int:
+    proc = _git("cat-file", "-s", f"{rev}:{path}")
+    if proc.returncode != 0:
+        raise CheckError(f"git cat-file -s {rev[:12]}:{path} failed: {proc.stderr.strip()}")
+    return int(proc.stdout.strip())
+
+
+def _skill_dirs(rev: str, bundle: str) -> Set[str]:
+    proc = _git("ls-tree", "-z", "--name-only", f"{rev}:plugins/{bundle}/skills")
+    return set(filter(None, proc.stdout.split("\0"))) if proc.returncode == 0 else set()
+
+
 def _tree(rev: str, path: str) -> Optional[str]:
     proc = _git("rev-parse", "-q", "--verify", f"{rev}:{path}")
     return proc.stdout.strip() if proc.returncode == 0 else None
@@ -267,6 +283,25 @@ def _lock_matches_merge(base: str, merged: str, head: Optional[str], key: str,
         if key not in new_skills or _tree(ref, path) != _tree(merged, path):
             errors.append(f"skills.lock pins {ref[:12]}, whose {_q(path)} differs from the "
                           "merge result's; the lock must pin the content that merges.")
+    # The bootstrap installs every locked skill from `ref`, so every other
+    # skill, and each bundle's set of skills, must be as at the old ref
+    # (round 14: a ref where another skill was deleted).
+    old_ref = old.get("ref")
+    if not isinstance(old_ref, str) or not re.fullmatch(r"[0-9a-f]{40}", old_ref):
+        errors.append("the base's skills.lock `ref` is not a full commit sha.")
+    else:
+        own_plugin, _, own_skill = key.partition("/")
+        for other in sorted(k for k in new_skills if k != key):
+            plugin, _, skill = other.partition("/")
+            path = f"plugins/{plugin}/skills/{skill}"
+            if _tree(old_ref, path) != _tree(ref, path):
+                errors.append(f"skills.lock pins {ref[:12]}, where {_q(path)} differs from "
+                              "the base's pinned commit.")
+        for bundle in sorted({k.partition("/")[0] for k in set(old_skills) | set(new_skills)}):
+            drop = {own_skill} if bundle == own_plugin else set()
+            if _skill_dirs(old_ref, bundle) - drop != _skill_dirs(ref, bundle) - drop:
+                errors.append(f"skills.lock pins {ref[:12]}, where plugins/{bundle}/skills "
+                              "holds other skills than the base's pinned commit.")
     attrs = lambda rev: {p: _tree(rev, p) for p in _gitattributes(rev)}  # noqa: E731
     if attrs(ref) != attrs(merged):
         errors.append(f"skills.lock pins {ref[:12]}, whose .gitattributes differ from the "
@@ -308,12 +343,26 @@ def changed_paths(base: str, merged: str) -> List[str]:
     return [p for p in proc.stdout.splitlines() if p]
 
 
+def _strict_pairs(pairs):
+    keys = [k for k, _ in pairs]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    if dupes:
+        raise ValueError(f"duplicate keys {dupes}")
+    return dict(pairs)
+
+
+def _no_constant(name):
+    raise ValueError(f"{name} is not JSON")
+
+
 def _json_at(rev: str, path: str):
+    """Parsed as strictly as Claude Code's JSON.parse: no NaN or Infinity
+    (round 14), and no duplicate keys (parsers disagree on which one wins)."""
     text = show(rev, path)
     if text is None:
         return None
     try:
-        return json.loads(text)
+        return json.loads(text, parse_constant=_no_constant, object_pairs_hook=_strict_pairs)
     except ValueError as exc:
         raise CheckError(f"{path} at {rev[:12]} is not valid JSON: {exc}") from None
 
@@ -490,7 +539,11 @@ def _description_shape_ok(block: List[str]) -> bool:
 #: a ```! fence anywhere. Matched as Claude Code does, not as a grep would.
 _SKILL_SHELL_RES = (re.compile(r"(?:^|(?<=[\s\ufeff]))!`[^`]+`", re.MULTILINE),
                     re.compile(r"```!"))
-_PLACEHOLDER_RE = re.compile(r"\$ARGUMENTS(?:\[\d+\])?|\$\d+|\$\{[^}\n]*\}")
+#: Only the placeholders Claude Code substitutes. A made-up `${...}` stays as
+#: written, so removing it would hide what it encloses (round 14).
+_PLACEHOLDER_RE = re.compile(
+    r"\$ARGUMENTS(?:\[\d+\])?|\$\d+|\$\{(?:CLAUDE_SKILL_DIR|CLAUDE_SESSION_ID|CLAUDE_EFFORT"
+    r"|CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|user_config\.[\w.-]+)\}")
 #: Names Windows will not create, whatever the extension (git refuses them).
 _WINDOWS_RESERVED_RE = re.compile(r"^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$",
                                   re.IGNORECASE)
@@ -516,7 +569,9 @@ def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[st
                       "line, or a `>`/`|` block of indented lines")
     # Claude Code substitutes arguments before it looks, so try the body with
     # each placeholder empty and as a space (round 13: `$ARGUMENTS!` + a span).
-    bodies = [_PLACEHOLDER_RE.sub(sub, head_text) for sub in ("", " ")]
+    # The text as written is checked too, so nothing a substitution removes
+    # can hide a command (round 14).
+    bodies = [head_text] + [_PLACEHOLDER_RE.sub(sub, head_text) for sub in ("", " ")]
     if any(r.search(body) for r in _SKILL_SHELL_RES for body in bodies):
         errors.append("a shell command Claude Code would run on load (`!` and a backtick "
                       "span, or a ```! fence)")
@@ -556,7 +611,8 @@ _LOOP_SKILL_PATH_RE = re.compile(
 
 def frontmatter_name(text: str) -> Optional[str]:
     value = frontmatter(text).get("name")
-    return value.strip() if isinstance(value, str) else None
+    # Exact: Claude Code keeps a quoted name's spaces (round 14).
+    return value if isinstance(value, str) else None
 
 
 def present_names(rev: str, verify_against: Optional[str] = None,
@@ -614,6 +670,8 @@ def present_names(rev: str, verify_against: Optional[str] = None,
                 continue
             if _mode(rev, path) not in ("100644", "100755"):
                 continue  # a symlink or gitlink: no SKILL.md on a consumer's disk
+            if _size(rev, path) > SKILL_MD_MAX_BYTES:
+                continue  # Claude Code skips a plugin skill this large
             if verify_against is not None and (folded.get(_fold(path), 0) > 1
                                                or _fold(path) in dirs):
                 # Another file with the same name to a case-insensitive file

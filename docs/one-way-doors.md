@@ -110,7 +110,10 @@ merge-base, which a criss-cross history can make lie):
   `working-tree-encoding` rules, directly or through a macro) needs the same
   line.
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
-  `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
+  `retire-skill/`) fails unless it targets the default branch and stays
+  inside ADR 0021 (the loop's App may open pull requests only from those
+  branches, and the lanes and the check itself are read from the default
+  branch, never from a base the pull request chose): opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
   the ledger), manifests whose `version` stays a semantic version string, a `skills.lock` that changes only its own skill's entry and is
@@ -137,7 +140,7 @@ pull request's run uses its own `ci.yml`, so a branch that could change
 workflows could remove these steps) and no `statuses` or `checks` write
 permission (the required `pytest` context is not tied to GitHub Actions, so
 such a credential could report it green), and no `actions` write permission
-(a re-run keeps an old event's workspace). Verify both whenever the App
+(a re-run keeps an old event's workspace). Verify all three whenever the App
 changes.
 
 Before anything in the job runs a pull request's code (the pip install
@@ -175,7 +178,10 @@ crosses a door fails. Only the removal lane's reviewer writes a line that
 counts. A frontmatter Claude Code could read differently is an error no
 line overrides; fix the frontmatter.
 
-Not checked mechanically: a skill folder that is a symlink (the required
+Not checked mechanically: a plugin hooks file Claude Code cannot load
+(it can stop the whole plugin; `plugin-runtime-review` puts the owner in front
+of every such change), a Codex-only manifest such as
+`.codex-plugin/plugin.json`, a skill folder that is a symlink (the required
 `pytest` suite's `check_no_symlinks` refuses one), skills a plugin would load from anywhere other than
 `plugins/<plugin>/skills/<skill>/SKILL.md` (a `commands/` file, or a `skills`
 or `commands` path in a manifest or marketplace entry; nothing here uses

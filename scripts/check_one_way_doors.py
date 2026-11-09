@@ -331,7 +331,8 @@ def _path_hazards(rev: str) -> Set[str]:
     # such as `fan out-triage` takes over `fan-out-triage` (round 17).
     hazards |= {f"skill folder {n}" for n in names
                 if re.fullmatch(r"plugins/[^/]+/skills/[^/]+", n)
-                and not SKILL_NAME_RE.match(n.rsplit("/", 1)[1])}
+                and (not SKILL_NAME_RE.match(n.rsplit("/", 1)[1])
+                     or _WINDOWS_RESERVED_RE.match(n.rsplit("/", 1)[1]))}
     return hazards
 
 
@@ -397,7 +398,7 @@ _ENTRY_TYPES = {"description": str, "version": str, "category": str, "homepage":
                 "strict": bool, "defaultEnabled": bool, "author": dict}
 
 
-_SEMVER_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+_SEMVER_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
 
 
 def _remote_pin_ok(source: dict) -> bool:
@@ -428,7 +429,8 @@ def _config_shape(data, is_marketplace: bool):
     def strip(d):
         return {k: v for k, v in d.items() if k not in routine}
     if not is_marketplace:
-        return strip(data) if _routine_fields_ok(data) else None
+        # Serialized, so `true` and `1` differ as they do to Claude Code.
+        return json.dumps(strip(data), sort_keys=True) if _routine_fields_ok(data) else None
     if not _routine_fields_ok(data):
         return None  # a root field Claude Code refuses refuses the marketplace (round 18)
     plugins = data.get("plugins")
@@ -993,8 +995,22 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                          f"{list(KINDS)} under `lanes`.")
     ref = ((pr.get("head") or {}).get("ref")) or ""
     lane = next((p for p in config["lanes"] if ref.startswith(p)), None)
-    if lane is None:
+    by_app = ((pr.get("user") or {}).get("login")) == config["author"]
+    if lane is None and not by_app:
         return []
+    if lane is None:
+        # The loop's App on a branch no lane names would escape every limit
+        # (round 19), so its pull requests must use a lane.
+        return [f"The loop's App {_q(config['author'])} opened this pull request from "
+                f"{_q(ref)}, which no lane in {_q(LOOP_CONFIG)} names. Its pull requests "
+                "must come from a lane's branch."]
+    base_info = pr.get("base") or {}
+    default = (base_info.get("repo") or {}).get("default_branch")
+    if not isinstance(default, str) or not default or base_info.get("ref") != default:
+        # A loop pull request into another branch is judged by that branch's
+        # copy of this check, which the App can write (round 19).
+        return [f"An evals-loop pull request must target the default branch; this one "
+                f"targets {_q(str(base_info.get('ref')))}."]
     kind = config["lanes"][lane]
     skill = ref[len(lane):]
     errors = []

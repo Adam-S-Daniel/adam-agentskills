@@ -96,7 +96,8 @@ def pr_json(ref: str = "claude/some-change", body: str = "", login: str = "Adam-
             user_type: str = "User", head_repo: str = "Example/registry", number: int = 7) -> dict:
     return {"number": number, "body": body, "user": {"login": login, "type": user_type},
             "head": {"ref": ref, "repo": {"full_name": head_repo}},
-            "base": {"repo": {"full_name": "Example/registry"}}}
+            "base": {"ref": "main",
+                     "repo": {"full_name": "Example/registry", "default_branch": "main"}}}
 
 
 def loop_pr(ref: str, body: str = "", auto_merge: bool = False, draft: bool = False,
@@ -1607,3 +1608,36 @@ def test_a_pass_line_in_a_draft_body_cannot_reuse_a_retired_name(tmp_path):
     commit(repo)
     code, out = check(repo, tmp_path, loop_pr(f"draft-skill/{SKILL}", body=PASS), open_prs=[])
     assert code == 1 and "reuse a retired name" in out, out
+
+
+# Round 19.
+
+def test_the_loop_app_on_a_branch_no_lane_names_fails(tmp_path):
+    repo = make_repo(tmp_path)
+    remove_skill(repo)
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"improve/{SKILL}", body=PASS), open_prs=[])
+    assert code == 1 and "no lane" in out, out
+
+
+def test_a_loop_pr_into_another_base_fails(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    commit(repo)
+    pr = loop_pr(f"eval-improve/{SKILL}", auto_merge=True)
+    pr["base"]["ref"] = "base-x"
+    code, out = check(repo, tmp_path, pr, open_prs=[])
+    assert code == 1 and "default branch" in out, out
+
+
+def test_a_skill_folder_named_like_a_windows_device_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _base_blob_dir = f"plugins/{PLUGIN}/skills/aux/SKILL.md"
+    _stage(repo, _base_blob_dir, skill_md("aux"))
+    _git(repo, "commit", "-q", "-m", "c")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "skill folder" in out, out
+
+
+def test_a_version_with_non_ascii_digits_is_not_semantic():
+    assert not owd._SEMVER_RE.fullmatch("1.3.1\u0669")

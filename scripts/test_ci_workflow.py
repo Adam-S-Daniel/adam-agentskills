@@ -758,8 +758,8 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
     # judged against its new base, and the trigger re-runs on that edit.
     assert 'base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"' in step["run"]
     assert '--base "$base"' in step["run"]
-    # The base branch's copy runs, so a PR cannot loosen its own judge.
-    assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
+    # The default branch's copy runs, so a PR cannot loosen its own judge.
+    assert 'git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
     assert 'python3 -I "$d/check.py"' in step["run"]
     types = ci_triggers(load_ci())["pull_request"]["types"]
     assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
@@ -819,7 +819,7 @@ def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
     assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
     assert "${{" not in last["run"]
     # Round 14: the suites ran the pull request's code since the first copy.
-    assert last["run"].index('git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"') \
+    assert last["run"].index('git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"') \
         < last["run"].index('python3 -I "$d/check.py"')
 
 
@@ -837,12 +837,12 @@ def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_run
     guard = steps[names.index(LOOP_PATH_GUARD)]
     assert guard["if"] == "github.event_name == 'pull_request'"
     assert "python" not in guard["run"] and "${{" not in guard["run"]
-    assert 'git show "$base:scripts/loop_prs.json"' in guard["run"]
+    assert 'git show "$cfg:scripts/loop_prs.json"' in guard["run"]
     assert "^plugins/[^/]+/skills/[^/]+/." in guard["run"] and "scripts/check" not in guard["run"]
 
 
 def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "main",
-               base=None) -> int:
+               base=None, login: str = "someone", default: str = "main"):
     import json
     import subprocess
     run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
@@ -856,7 +856,8 @@ def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "ma
     git("config", "user.name", "Test")
     (repo / "scripts").mkdir()
     (repo / "scripts" / "loop_prs.json").write_text(json.dumps(
-        {"lanes": {"draft-skill/": "create", "eval-improve/": "edit"}}), encoding="utf-8")
+        {"author": "loop-app[bot]",
+         "lanes": {"draft-skill/": "create", "eval-improve/": "edit"}}), encoding="utf-8")
     git("add", "-A")
     git("commit", "-q", "-m", "base")
     git("update-ref", "refs/remotes/origin/main", "HEAD")
@@ -874,10 +875,13 @@ def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "ma
     event.write_text(json.dumps({"pull_request": {
         "number": 7, "base": {"ref": "main"}, "head": {"sha": head, "ref": ref}}}),
         encoding="utf-8")
-    # A stand-in for `gh api .../pulls/N --jq .base.ref`: the base as it is now.
+    # A stand-in for `gh api .../pulls/N`: the pull request as it is now.
     fake = tmp_path / "bin"
     fake.mkdir()
-    (fake / "gh").write_text(f"#!/bin/sh\necho {api_base}\n", encoding="utf-8", newline="\n")
+    now = json.dumps({"base": {"ref": api_base, "repo": {"default_branch": default}},
+                      "user": {"login": login}})
+    (fake / "gh").write_text(f"#!/bin/sh\ncat <<'EOF'\n{now}\nEOF\n", encoding="utf-8",
+                             newline="\n")
     (fake / "gh").chmod(0o755)
     script = tmp_path / "guard.sh"
     script.write_text(run, encoding="utf-8", newline="\n")
@@ -885,7 +889,7 @@ def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "ma
                           env={**os.environ, "GITHUB_EVENT_PATH": str(event),
                                "GITHUB_REPOSITORY": "Example/registry",
                                "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
-    return proc.returncode
+    return proc.returncode, proc.stdout + proc.stderr
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
@@ -899,7 +903,7 @@ def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "ma
 ])
 def test_the_loop_path_guard_matches_whole_path_segments(tmp_path, changed, code):
     """Round 14: a case glob's `*` matches `/`, so it admitted hook paths."""
-    assert _run_guard(tmp_path, "eval-improve/s", changed) == code
+    assert _run_guard(tmp_path, "eval-improve/s", changed)[0] == code
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
@@ -912,7 +916,7 @@ def test_the_loop_path_guard_refuses_a_workspace_of_another_head(tmp_path):
         older_head = git("rev-parse", "HEAD")
         git("checkout", "-q", "main")
         return older_head
-    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md", older) == 1
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md", older)[0] == 1
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
@@ -928,14 +932,35 @@ def test_the_loop_path_guard_refuses_a_workspace_merged_into_another_base(tmp_pa
         git("commit", "-q", "-m", "other base")
         return "other"
     assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
-                      base=other) == 1
+                      base=other)[0] == 1
 
 
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
                     reason="runs the step's bash with git and jq, as the Linux runner does")
 def test_the_loop_path_guard_fails_closed_without_a_readable_base(tmp_path):
     assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
-                      api_base="gone") == 1
+                      api_base="gone")[0] == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_app_is_held_to_the_paths_on_any_branch(tmp_path):
+    """Round 19: the App on a branch no lane names would skip the guard."""
+    code, out = _run_guard(tmp_path, "improve/s", "requirements-dev.txt",
+                           login="loop-app[bot]")
+    assert code == 1 and "may not change" in out, out
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_a_loop_pull_request_into_another_base_is_refused(tmp_path):
+    """Round 19: a base the App wrote would supply its own lanes and check."""
+    def other(git):
+        git("checkout", "-q", "-b", "base-x", "main")
+        return "base-x"
+    code, out = _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                           api_base="base-x", base=other)
+    assert code == 1 and "default branch" in out, out
 
 
 def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):
@@ -947,4 +972,4 @@ def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
                     reason="runs the step's bash with git and jq, as the Linux runner does")
 def test_the_loop_path_guard_ignores_other_branches(tmp_path):
-    assert _run_guard(tmp_path, "claude/some-change", "requirements-dev.txt") == 0
+    assert _run_guard(tmp_path, "claude/some-change", "requirements-dev.txt")[0] == 0

@@ -81,7 +81,11 @@ merge-base, which a criss-cross history can make lie):
   changed SKILL.md whose frontmatter Claude Code could read differently (a
   `---` inside a line, a duplicate key, a key-shaped line inside a value, or
   any other line at column 0 that is not a key) counts as losing its name,
-  and a SKILL.md that is a symlink or gitlink does not count as present.
+  and a SKILL.md that is a symlink or gitlink, sits beside a case variant
+  (`skill.md`, as a file or a directory) or carries a second byte-order mark
+  does not count as present. A `SKILL.md` directly in a plugin's `skills/`
+  makes Claude Code load only that one, so every skill of the plugin counts
+  as gone.
 - **A changed `renames` map in the marketplace, or any changed
   `.gitattributes`** (`git archive`, and so every lock, applies its
   `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
@@ -98,9 +102,11 @@ merge-base, which a criss-cross history can make lie):
   request from that App open. Draft or not, it must be text only: in
   SKILL.md's frontmatter only the `description` lines may change (a new skill
   may have only `name`, `description`, `license` and `compatibility`), with
-  no comment outside the description and nothing Claude Code could read
-  differently; and in the skill directory only `SKILL.md`, `PURPOSE.md` or
-  lowercase `.md` files outside dot-directories, as regular files, with no
+  no comment outside the description, a description that is a plain line,
+  one complete quoted line or a `>`/`|` block, no shell line Claude Code
+  would run, and nothing Claude Code could read differently; and in the
+  skill directory only `SKILL.md`, `PURPOSE.md` or
+  lowercase `.md` files outside dot-directories and not named like a Windows device (`aux.md`), as regular files, with no
   two paths that are one file to a case-insensitive file system. Text-only changes auto-merge in any
   plugin (owner decision 2026-11-03); a person who wants anything else takes
   it to a branch outside the loop's prefixes, since a draft could be marked
@@ -118,9 +124,12 @@ base and is not re-checked once the other merges, unless the ruleset
 requires branches to be up to date (it does not today; #137).
 
 A skill body that runs a shell command on load (an exclamation mark then a
-backtick) is refused by the required `agent-checks` job's `skill-shell` check
-on every pull request, and turned off fleet-wide by
-`disableSkillShellExecution`, so the loop-PR frontmatter rule does not repeat it.
+backtick span, or a fence opened with three backticks and `!`) is refused in
+a loop pull request's SKILL.md by this check, matched the way Claude Code
+matches it (after any Unicode space, and a fence anywhere in a line). The
+required `agent-checks` job's `skill-shell` check covers other pull
+requests, with a narrower match, and `disableSkillShellExecution` turns
+execution off where it is set.
 
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.

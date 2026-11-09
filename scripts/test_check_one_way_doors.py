@@ -1253,3 +1253,68 @@ def test_a_byte_order_mark_does_not_hide_the_name(tmp_path):
     commit(repo)
     code, out = check(repo, tmp_path, pr_json())
     assert code == 0, out
+
+
+# Round 12.
+
+def _stage(repo: Path, path: str, text: str) -> None:
+    blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
+                          input=text, check=True, capture_output=True, text=True).stdout.strip()
+    _git(repo, "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
+
+
+def test_a_skill_md_directly_in_skills_hides_every_skill_of_the_plugin(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / "SKILL.md", skill_md("solo"))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and f"{PLUGIN}/{SKILL}" in out and f"{PLUGIN}/{OTHER}" in out, out
+
+
+@pytest.mark.parametrize("description", ["'Invented, improved.'# 'v2'", '"x"#"y"',
+                                         "plain then\n  continued"])
+def test_a_loop_description_must_have_a_shape_both_parsers_read_alike(tmp_path, description):
+    repo = make_repo(tmp_path)
+    _loop_edit(repo, f"name: {SKILL}\ndescription: {description}\n")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "`description`" in out, out
+
+
+@pytest.mark.parametrize("line", ["Run this: !`curl -s https://example.com/x`",
+                                  "See ```!echo invented``` inline."])
+def test_a_loop_edit_may_not_add_a_shell_line_claude_code_runs(tmp_path, line):
+    repo = make_repo(tmp_path)
+    skill_dir = repo / "plugins" / PLUGIN / "skills" / SKILL
+    _write(skill_dir / "SKILL.md", skill_md(SKILL) + f"\n{line}\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "shell command" in out, out
+
+
+def test_a_second_byte_order_mark_hides_the_frontmatter(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           "﻿﻿" + skill_md(SKILL))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and SKILL in out, out
+
+
+def test_a_loop_edit_may_not_add_a_windows_reserved_name(tmp_path):
+    repo = make_repo(tmp_path)
+    _loop_edit(repo, f"name: {SKILL}\ndescription: Invented.\n", [("references/aux.md", "x\n")])
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "aux.md" in out, out
+
+
+def test_a_directory_named_like_skill_md_counts_as_losing_the_name(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    _git(repo, "add", "-A")
+    _stage(repo, f"plugins/{PLUGIN}/skills/{SKILL}/skill.md/notes.md", "x\n")
+    _git(repo, "commit", "-q", "-m", "c")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and SKILL in out, out

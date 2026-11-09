@@ -329,7 +329,7 @@ def frontmatter(text: str) -> dict:
     """The SKILL.md frontmatter, parsed as YAML; {} when absent or unparsable."""
     import yaml  # third-party; imported only when a SKILL.md changed
 
-    text = text.lstrip("\ufeff")  # Claude Code strips a byte-order mark too
+    text = text[1:] if text.startswith("\ufeff") else text  # Claude Code strips one
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return {}
@@ -357,7 +357,9 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     Claude Code's early end can resolve to the first)."""
     import yaml
 
-    text = text.lstrip("\ufeff")
+    text = text[1:] if text.startswith("\ufeff") else text
+    if text.startswith("\ufeff"):
+        return True  # a second mark: Claude Code then finds no frontmatter
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return _CC_FRONTMATTER_RE.match(text) is not None
@@ -400,7 +402,7 @@ def frontmatter_is_ambiguous(text: str) -> bool:
 def frontmatter_blocks(text: str) -> Dict[str, List[str]]:
     """{top-level key: its raw lines}, for frontmatter that is not ambiguous
     (so every column-0 line starts a key, once)."""
-    lines = text.lstrip("\ufeff").split("\n")
+    lines = (text[1:] if text.startswith("\ufeff") else text).split("\n")
     end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
     blocks: Dict[str, List[str]] = {}
     current = None
@@ -423,6 +425,40 @@ _BLOCK_HEADER_RE = re.compile(r"^[>|][+-]?$")
 LOOP_NEW_SKILL_KEYS = ("name", "description", "license", "compatibility")
 
 
+def _description_shape_ok(block: List[str]) -> bool:
+    """The description in a shape Bun's YAML (Claude Code's) and PyYAML read
+    alike: a block header with nothing after it and indented lines, a quoted
+    scalar complete on its line with nothing after the closing quote, or a
+    one-line plain scalar (round 12: `'x'# y` drops Claude Code's whole
+    frontmatter)."""
+    import json as _json
+    value = block[0].split(":", 1)[1].strip()
+    rest = block[1:]
+    if _BLOCK_HEADER_RE.match(value):
+        return all(not line.strip() or line.startswith("  ") for line in rest)
+    if any(line.strip() for line in rest):
+        return False
+    if value.startswith('"'):
+        try:
+            return isinstance(_json.loads(value), str)
+        except ValueError:
+            return False
+    if value.startswith("'"):
+        return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
+    return bool(value) and value[0] not in "[]{}&*!|>%@`#,?:-" and " #" not in value \
+        and ": " not in value
+
+
+#: What Claude Code runs from a skill body when skill shell execution is on:
+#: `!` then a backtick span after any (Unicode) space or at a line start, and
+#: a ```! fence anywhere. Matched as Claude Code does, not as a grep would.
+_SKILL_SHELL_RES = (re.compile(r"(?:^|(?<=\s))!`[^`]+`", re.MULTILINE),
+                    re.compile(r"```!"))
+#: Names Windows will not create, whatever the extension (git refuses them).
+_WINDOWS_RESERVED_RE = re.compile(r"^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$",
+                                  re.IGNORECASE)
+
+
 def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[str]:
     """What an evals-loop pull request may do to a SKILL.md's frontmatter:
     rewrite the description and nothing else (a new skill: a few keys only),
@@ -438,6 +474,12 @@ def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[st
     except StopIteration:
         return ["no frontmatter"]
     errors = []
+    if "description" not in head or not _description_shape_ok(head["description"]):
+        errors.append("a `description` that is not a plain line, one complete quoted "
+                      "line, or a `>`/`|` block of indented lines")
+    if any(r.search(head_text) for r in _SKILL_SHELL_RES):
+        errors.append("a shell command Claude Code would run on load (`!` and a backtick "
+                      "span, or a ```! fence)")
     commented = sorted(k for k, block in head.items() if k != "description"
                        and any(_COMMENT_RE.search(line.split(":", 1)[1] if i == 0 else line)
                                for i, line in enumerate(block)))
@@ -513,6 +555,18 @@ def present_names(rev: str, verify_against: Optional[str] = None,
         folded: Dict[str, int] = {}
         for path in all_files:
             folded[_fold(path)] = folded.get(_fold(path), 0) + 1
+        # Every folded directory prefix too: `skill.md/notes.md` makes a
+        # directory that replaces SKILL.md on a case-insensitive checkout.
+        dirs = {_fold(path).rsplit("/", i)[0] for path in all_files
+                for i in range(1, path.count("/") + 1)}
+        # A SKILL.md directly in skills/ makes Claude Code load that one skill
+        # and never read the subdirectories: every other skill disappears.
+        top = [p for p in all_files if "/" not in p[len(prefix):]
+               and _fold(p[len(prefix):]) == "skill.md"]
+        if top:
+            if verify_against is not None and bad is not None:
+                bad.extend(top)
+            continue
         for path in all_files:
             rest = path[len(prefix):] if path.startswith(prefix) else ""
             skill, _, leaf = rest.partition("/")
@@ -520,7 +574,8 @@ def present_names(rev: str, verify_against: Optional[str] = None,
                 continue
             if _mode(rev, path) not in ("100644", "100755"):
                 continue  # a symlink or gitlink: no SKILL.md on a consumer's disk
-            if verify_against is not None and folded.get(_fold(path), 0) > 1:
+            if verify_against is not None and (folded.get(_fold(path), 0) > 1
+                                               or _fold(path) in dirs):
                 # Another file with the same name to a case-insensitive file
                 # system (skill.md) overwrites this one on checkout there.
                 if bad is not None:
@@ -809,8 +864,8 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
     # in any plugin. plugin-runtime-review gates a plugin's own hooks/ and
     # bin/ only, so what it does not see is held here: the skill's frontmatter
     # (#135; `hooks` run code and `allowed-tools` skips permission prompts) and
-    # the skill's own hooks/ and bin/. A pull request armed to auto-merge may
-    # not add or change them; a person may still merge one by hand.
+    # the skill's own hooks/ and bin/. A loop pull request may not change
+    # them in any state; a person takes such a change to another branch.
     base_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
     head_text = (show(merged, skill_md) or "") if at_head else ""
     head_fm = frontmatter(head_text) if at_head else {}
@@ -843,7 +898,8 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                 continue  # deleted
             rel = path[len(f"{root}/skills/{skill}/"):]
             if mode != "100644" or not _LOOP_SKILL_PATH_RE.match(rel) or (
-                    rel != "SKILL.md" and posixpath.basename(rel).casefold() == "skill.md"):
+                    rel != "SKILL.md" and posixpath.basename(rel).casefold() == "skill.md") \
+                    or any(_WINDOWS_RESERVED_RE.match(part) for part in rel.split("/")):
                 errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
                               "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "
                               f"dot-directories, mode 100644; this is {mode}). {hold}")
@@ -851,6 +907,11 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
         seen: Dict[str, str] = {}
         for path in in_skill:
             other = seen.setdefault(_fold(path), path)
+            folded_dirs = {_fold(path).rsplit("/", i)[0] for i in range(1, path.count("/") + 1)}
+            clash = next((seen[d] for d in folded_dirs if d in seen and seen[d] != path), None)
+            if clash:
+                errors.append(f"{_q(clash)} and a directory of {_q(path)} are one name on a "
+                              f"case-insensitive file system. {hold}")
             if other != path:
                 errors.append(f"{_q(other)} and {_q(path)} are one file on a "
                               f"case-insensitive file system. {hold}")

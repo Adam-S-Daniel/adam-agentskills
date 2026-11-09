@@ -18,8 +18,10 @@ id from the same word in one of ci.yml's comments — which is most of the file.
 Run: python3 -m pytest scripts/test_ci_workflow.py -q
 """
 
+import os
 import re
 import shlex
+import shutil
 from pathlib import Path
 
 import pytest
@@ -756,11 +758,9 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
     # judged against its new base, and the trigger re-runs on that edit.
     assert 'base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"' in step["run"]
     assert '--base "$base"' in step["run"]
-    # The base branch's copy runs, so a PR cannot loosen its own judge.
-    assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
+    # The default branch's copy runs, so a PR cannot loosen its own judge.
+    assert 'git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
     assert 'python3 -I "$d/check.py"' in step["run"]
-    # A loop pull request may not change the packages that judge it.
-    assert "may not change requirements-dev.txt" in step["run"]
     types = ci_triggers(load_ci())["pull_request"]["types"]
     assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
             "auto_merge_enabled", "auto_merge_disabled"} <= set(types)
@@ -818,3 +818,158 @@ def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
     assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"' in last["run"]
     assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
     assert "${{" not in last["run"]
+    # Round 14: the suites ran the pull request's code since the first copy.
+    assert last["run"].index('git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"') \
+        < last["run"].index('python3 -I "$d/check.py"')
+
+
+LOOP_PATH_GUARD = "Loop pull requests change nothing that runs before their check"
+
+
+def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_runs():
+    """Round 13: the pip install and the skill gates run a pull request's
+    code before the one-way-door check; for an unreviewed loop pull request
+    that code could make the check pass. A bash-only guard runs first."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index(LOOP_PATH_GUARD) < names.index("Install Python dependencies") \
+        < names.index(SKILL_GATES_STEP) < names.index(ONE_WAY_DOORS_STEP)
+    guard = steps[names.index(LOOP_PATH_GUARD)]
+    assert guard["if"] == "github.event_name == 'pull_request'"
+    assert "python" not in guard["run"] and "${{" not in guard["run"]
+    assert 'git show "$cfg:scripts/loop_prs.json"' in guard["run"]
+    assert "^plugins/[^/]+/skills/[^/]+/." in guard["run"] and "scripts/check" not in guard["run"]
+
+
+def _run_guard(tmp_path, ref: str, changed: str, stale=None, api_base: str = "main",
+               base=None, login: str = "someone", default: str = "main"):
+    import json
+    import subprocess
+    run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
+               if s.get("name") == LOOP_PATH_GUARD)["run"]
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git = lambda *a: subprocess.run(["git", "-c", "core.autocrlf=false", "-C", str(repo), *a],  # noqa: E731
+                                    check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q", "-b", "main")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (repo / "scripts").mkdir()
+    (repo / "scripts" / "loop_prs.json").write_text(json.dumps(
+        {"author": "loop-app[bot]",
+         "lanes": {"draft-skill/": "create", "eval-improve/": "edit"}}), encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("update-ref", "refs/remotes/origin/main", "HEAD")
+    target = repo / changed
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("x\n", encoding="utf-8")
+    git("checkout", "-q", "-b", "head")
+    git("add", "-A")
+    git("commit", "-q", "-m", "change")
+    head = git("rev-parse", "HEAD")
+    # The workspace is the merge commit, as actions/checkout leaves it.
+    git("checkout", "-q", "main" if base is None else base(git))
+    git("merge", "-q", "--no-ff", "-m", "merge", head if stale is None else stale(git, head))
+    event = tmp_path / "event.json"
+    event.write_text(json.dumps({"pull_request": {
+        "number": 7, "base": {"ref": "main"}, "head": {"sha": head, "ref": ref}}}),
+        encoding="utf-8")
+    # A stand-in for `gh api .../pulls/N`: the pull request as it is now.
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    now = json.dumps({"base": {"ref": api_base, "repo": {"default_branch": default}},
+                      "user": {"login": login}})
+    (fake / "gh").write_text(f"#!/bin/sh\ncat <<'EOF'\n{now}\nEOF\n", encoding="utf-8",
+                             newline="\n")
+    (fake / "gh").chmod(0o755)
+    script = tmp_path / "guard.sh"
+    script.write_text(run, encoding="utf-8", newline="\n")
+    proc = subprocess.run(["bash", str(script)], cwd=repo, capture_output=True, text=True,
+                          env={**os.environ, "GITHUB_EVENT_PATH": str(event),
+                               "GITHUB_REPOSITORY": "Example/registry",
+                               "PATH": f"{fake}{os.pathsep}{os.environ['PATH']}"})
+    return proc.returncode, proc.stdout + proc.stderr
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+@pytest.mark.parametrize("changed, code", [
+    ("plugins/p/skills/s/SKILL.md", 0),
+    ("plugins/p/.claude-plugin/plugin.json", 0),
+    ("plugins/p/hooks/skills/a/run.sh", 1),
+    ("plugins/p/hooks/plugin.json", 1),
+    ("requirements-dev.txt", 1),
+])
+def test_the_loop_path_guard_matches_whole_path_segments(tmp_path, changed, code):
+    """Round 14: a case glob's `*` matches `/`, so it admitted hook paths."""
+    assert _run_guard(tmp_path, "eval-improve/s", changed)[0] == code
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_refuses_a_workspace_of_another_head(tmp_path):
+    """Round 16: a merge ref lagging a push would install an older head's files."""
+    def older(git, head):
+        git("checkout", "-q", "-b", "older", "main")
+        git("commit", "-q", "--allow-empty", "-m", "older head")
+        older_head = git("rev-parse", "HEAD")
+        git("checkout", "-q", "main")
+        return older_head
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md", older)[0] == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_refuses_a_workspace_merged_into_another_base(tmp_path):
+    """Round 17: a re-run keeps a workspace merged into the base from before
+    a retarget, whose requirements-dev.txt nobody judged."""
+    def other(git):
+        git("checkout", "-q", "-b", "other", "main")
+        (Path(git("rev-parse", "--show-toplevel")) / "requirements-dev.txt").write_text(
+            "./invented\n", encoding="utf-8")
+        git("add", "-A")
+        git("commit", "-q", "-m", "other base")
+        return "other"
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                      base=other)[0] == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_fails_closed_without_a_readable_base(tmp_path):
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                      api_base="gone")[0] == 1
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_app_is_held_to_the_paths_on_any_branch(tmp_path):
+    """Round 19: the App on a branch no lane names would skip the guard."""
+    code, out = _run_guard(tmp_path, "improve/s", "requirements-dev.txt",
+                           login="loop-app[bot]")
+    assert code == 1 and "may not change" in out, out
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_a_loop_pull_request_into_another_base_is_refused(tmp_path):
+    """Round 19: a base the App wrote would supply its own lanes and check."""
+    def other(git):
+        git("checkout", "-q", "-b", "base-x", "main")
+        return "base-x"
+    code, out = _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md",
+                           api_base="base-x", base=other)
+    assert code == 1 and "default branch" in out, out
+
+
+def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):
+    run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
+               if s.get("name") == LOOP_PATH_GUARD)["run"]
+    assert '"$path"' in run.split("*)", 1)[1].split(";;", 1)[0]
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_ignores_other_branches(tmp_path):
+    assert _run_guard(tmp_path, "claude/some-change", "requirements-dev.txt")[0] == 0

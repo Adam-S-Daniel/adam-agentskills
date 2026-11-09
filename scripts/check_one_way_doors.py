@@ -32,7 +32,8 @@ A name is the marketplace's `name`, a plugin's `name` in
 frontmatter `name` equal to `<skill>` that Claude Code reads the same way (no
 `---` inside a line, duplicate key, key-shaped line inside a value, or other
 line at column 0 that is not a key). A SKILL.md counts only as a regular
-file, not a symlink or gitlink. A local plugin counts only while it is
+file, not a symlink or gitlink, and not beside a case variant (skill.md)
+that overwrites it on a case-insensitive file system. A local plugin counts only while it is
 listed once, its `source` is `./plugins/<plugin>` and both manifests name it,
 and no `metadata.pluginRoot` moves it: a renamed bundle directory or manifest
 `name` is a rename too (round 2 on #134). A name present at the base and absent
@@ -66,7 +67,10 @@ A pull request whose head branch starts with a prefix in scripts/loop_prs.json
 plus a Bot author. So here it must be:
 
 - opened by the App login scripts/loop_prs.json names (user type `Bot`), from
-  a branch in this repository, never a fork;
+  a branch in this repository, never a fork; and any pull request that App
+  opens is held to these rules, from a lane's branch only;
+- into the default branch (a base the App wrote would supply its own copy of
+  this check and of the lanes);
 - about the one skill its branch names, in exactly one plugin, with the
   lane's kind: a create, an edit, or a removal of that SKILL.md;
 - inside ADR 0021 Decision 3's paths: the skill's directory,
@@ -74,10 +78,13 @@ plus a Bot author. So here it must be:
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
 - text only, draft or not (a draft marked ready and armed at once could
-  merge on its old green result): no added or changed `hooks` or `allowed-tools` in the skill's
-  frontmatter, no change to a frontmatter Claude Code could read differently
-  from this check, and nothing in the skill directory but regular Markdown
-  files (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
+  merge on its old green result): in SKILL.md's frontmatter only the
+  `description` lines change (a new skill: only name, description, license
+  and compatibility), with no comment elsewhere in it and nothing Claude Code
+  could read differently from this check; in the skill directory only
+  SKILL.md, PURPOSE.md or lowercase .md files outside dot-directories, as
+  regular files, no two of them one file to a case-insensitive file system
+  (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
   auto-merge in any plugin; plugin-runtime-review gates only a plugin's own
   hooks/ and bin/ and does not read frontmatter, #135). A person who wants
   such a change takes it to a branch outside the loop's prefixes;
@@ -91,12 +98,13 @@ plus a Bot author. So here it must be:
   from this repository (Decision 5). Forks and people cannot hold the slot,
   and two opened in the same seconds cannot block each other.
 
-Config is read at the base, and CI runs the base branch's copy of this
-script, so a pull request cannot loosen the rules it is judged by by editing
-them; a file
-absent there (the pull request that adds it) is read from the merge result.
-A loop pull request may not change requirements-dev.txt (the CI step
-refuses it before the check runs, since those packages are imported here). A
+Config is read at the base, and CI runs the default branch's copy of this
+script and reads the lanes from the default branch, so a pull request cannot
+loosen the rules it is judged by by editing them; a file absent there (the
+pull request that adds it) is read from the merge result.
+A loop pull request may change only the paths its lanes write; a bash-only
+CI step refuses anything else before the job runs any of its code (the pip
+install, the skill gates), since that code could make this check pass. A
 pull request can still edit ci.yml to drop the step, as it can for every
 check in that job; the loop's App has no `workflows` permission to push one.
 
@@ -141,7 +149,7 @@ REVIEW_PASS_RE = re.compile(
 #: comments, as the Markdown parser finds them, hide it. It must
 #: start its line, as skills-evals' removal reviewer writes it, so a finding
 #: that merely quotes the phrase mid-sentence does not fail a passing review.
-REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)#|]*Adversarial-review\W*block\b",
+REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)#|\[\]xX]*Adversarial-review\W*block\b",
                              re.MULTILINE | re.IGNORECASE)
 WAIVERS = "scripts/skills_waivers.yml"
 LENGTH_WAIVER_CLASS = "length-limit"
@@ -187,10 +195,14 @@ def show(rev: str, path: str) -> Optional[str]:
     """File content at rev, or None when the path is not a file there."""
     if _git("cat-file", "-e", f"{rev}:{path}").returncode != 0:
         return None
-    proc = _git("show", f"{rev}:{path}")
+    # Bytes, decoded without newline translation: a `\r` must reach the
+    # ambiguity test as itself (round 13).
+    proc = subprocess.run(["git", *_GIT_VERBATIM, "show", f"{rev}:{path}"],
+                          capture_output=True)
     if proc.returncode != 0:
-        raise CheckError(f"git show {rev}:{path} failed: {proc.stderr.strip()}")
-    return proc.stdout
+        raise CheckError(f"git show {rev}:{path} failed: "
+                         f"{proc.stderr.decode('utf-8', 'replace').strip()}")
+    return proc.stdout.decode("utf-8", "replace")
 
 
 def blob_id(rev: str, path: str) -> Optional[str]:
@@ -212,6 +224,22 @@ def _mode(rev: str, path: str) -> Optional[str]:
         raise CheckError(f"git ls-tree {rev[:12]} {path} failed: {proc.stderr.strip()}")
     entry = proc.stdout.split("\0")[0]
     return entry.split(" ", 1)[0] if entry else None
+
+
+#: Claude Code skips a plugin SKILL.md larger than this (round 14).
+SKILL_MD_MAX_BYTES = 1048576
+
+
+def _size(rev: str, path: str) -> int:
+    proc = _git("cat-file", "-s", f"{rev}:{path}")
+    if proc.returncode != 0:
+        raise CheckError(f"git cat-file -s {rev[:12]}:{path} failed: {proc.stderr.strip()}")
+    return int(proc.stdout.strip())
+
+
+def _skill_dirs(rev: str, bundle: str) -> Set[str]:
+    proc = _git("ls-tree", "-z", "--name-only", f"{rev}:plugins/{bundle}/skills")
+    return set(filter(None, proc.stdout.split("\0"))) if proc.returncode == 0 else set()
 
 
 def _tree(rev: str, path: str) -> Optional[str]:
@@ -258,11 +286,57 @@ def _lock_matches_merge(base: str, merged: str, head: Optional[str], key: str,
         if key not in new_skills or _tree(ref, path) != _tree(merged, path):
             errors.append(f"skills.lock pins {ref[:12]}, whose {_q(path)} differs from the "
                           "merge result's; the lock must pin the content that merges.")
+    # The bootstrap installs every locked skill from `ref`, so every other
+    # skill, and each bundle's set of skills, must be as at the old ref
+    # (round 14: a ref where another skill was deleted).
+    old_ref = old.get("ref")
+    if not isinstance(old_ref, str) or not re.fullmatch(r"[0-9a-f]{40}", old_ref):
+        errors.append("the base's skills.lock `ref` is not a full commit sha.")
+    else:
+        own_plugin, _, own_skill = key.partition("/")
+        for other in sorted(k for k in new_skills if k != key):
+            plugin, _, skill = other.partition("/")
+            path = f"plugins/{plugin}/skills/{skill}"
+            if _tree(old_ref, path) != _tree(ref, path):
+                errors.append(f"skills.lock pins {ref[:12]}, where {_q(path)} differs from "
+                              "the base's pinned commit.")
+        for bundle in sorted({k.partition("/")[0] for k in set(old_skills) | set(new_skills)}):
+            drop = {own_skill} if bundle == own_plugin else set()
+            if _skill_dirs(old_ref, bundle) - drop != _skill_dirs(ref, bundle) - drop:
+                errors.append(f"skills.lock pins {ref[:12]}, where plugins/{bundle}/skills "
+                              "holds other skills than the base's pinned commit.")
     attrs = lambda rev: {p: _tree(rev, p) for p in _gitattributes(rev)}  # noqa: E731
     if attrs(ref) != attrs(merged):
         errors.append(f"skills.lock pins {ref[:12]}, whose .gitattributes differ from the "
                       "merge result's, so `git archive` would export something else.")
     return errors
+
+
+def _path_hazards(rev: str) -> Set[str]:
+    """Under plugins/ and .claude-plugin/: each non-ASCII path, and each pair
+    of distinct paths or directories that fold to one name."""
+    proc = _git("ls-tree", "-r", "-z", "--name-only", "--full-tree", rev)
+    if proc.returncode != 0:
+        raise CheckError(f"git ls-tree {rev[:12]} failed: {proc.stderr.strip()}")
+    paths = [p for p in proc.stdout.split("\0")
+             if p.startswith("plugins/") or p.startswith(".claude-plugin/")]
+    names = set(paths)
+    for path in paths:
+        parts = path.split("/")
+        names.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    hazards = {f"non-ASCII {n}" for n in names if not n.isascii()}
+    by_fold: Dict[str, Set[str]] = {}
+    for name in names:
+        by_fold.setdefault(_fold(name), set()).add(name)
+    hazards |= {" = ".join(sorted(group)) for group in by_fold.values() if len(group) > 1}
+    # Claude Code names a plugin skill by its folder with every character
+    # outside [a-zA-Z0-9_-] turned into `-`, and keeps duplicates, so a folder
+    # such as `fan out-triage` takes over `fan-out-triage` (round 17).
+    hazards |= {f"skill folder {n}" for n in names
+                if re.fullmatch(r"plugins/[^/]+/skills/[^/]+", n)
+                and (not SKILL_NAME_RE.match(n.rsplit("/", 1)[1])
+                     or _WINDOWS_RESERVED_RE.match(n.rsplit("/", 1)[1]))}
+    return hazards
 
 
 def _gitattributes(rev: str) -> List[str]:
@@ -279,12 +353,26 @@ def changed_paths(base: str, merged: str) -> List[str]:
     return [p for p in proc.stdout.splitlines() if p]
 
 
+def _strict_pairs(pairs):
+    keys = [k for k, _ in pairs]
+    dupes = sorted({k for k in keys if keys.count(k) > 1})
+    if dupes:
+        raise ValueError(f"duplicate keys {dupes}")
+    return dict(pairs)
+
+
+def _no_constant(name):
+    raise ValueError(f"{name} is not JSON")
+
+
 def _json_at(rev: str, path: str):
+    """Parsed as strictly as Claude Code's JSON.parse: no NaN or Infinity
+    (round 14), and no duplicate keys (parsers disagree on which one wins)."""
     text = show(rev, path)
     if text is None:
         return None
     try:
-        return json.loads(text)
+        return json.loads(text, parse_constant=_no_constant, object_pairs_hook=_strict_pairs)
     except ValueError as exc:
         raise CheckError(f"{path} at {rev[:12]} is not valid JSON: {exc}") from None
 
@@ -294,13 +382,84 @@ def _json_at(rev: str, path: str):
 # ---------------------------------------------------------------------------
 
 def _local_root(source) -> Optional[str]:
-    """`./plugins/x` -> `plugins/x`; None for a remote source or anything odd."""
-    if not isinstance(source, str):
+    """`./plugins/x` -> `plugins/x`; None for a remote source or anything odd.
+    Claude Code accepts a relative source only when it starts with `./`; any
+    other string makes the entry unsupported (round 16)."""
+    if not isinstance(source, str) or not source.startswith("./"):
         return None
     norm = posixpath.normpath(source)
     if norm.startswith("/") or norm == ".." or norm.startswith("../") or norm == ".":
         return None
     return norm
+
+
+#: Marketplace entry fields Claude Code types strictly; an entry with any of
+#: them mistyped is stubbed as unsupported, so its plugin will not install
+#: (round 16).
+_ENTRY_TYPES = {"description": str, "version": str, "category": str, "homepage": str,
+                "repository": str, "license": str, "keywords": list, "tags": list,
+                "strict": bool, "defaultEnabled": bool, "author": dict}
+
+
+_SEMVER_RE = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+
+
+def _remote_pin_ok(source: dict) -> bool:
+    """A remote source's pin as Claude Code's schema takes it (round 18)."""
+    return (("ref" not in source or isinstance(source["ref"], str))
+            and ("sha" not in source or (isinstance(source["sha"], str)
+                                         and bool(re.fullmatch(r"[a-f0-9]{40}", source["sha"])))))
+
+
+def _routine_fields_ok(d: dict) -> bool:
+    """The fields a routine change may touch, in the shapes Claude Code takes."""
+    return (("version" not in d
+             or (isinstance(d["version"], str) and bool(_SEMVER_RE.fullmatch(d["version"]))))
+            and ("description" not in d
+                 or (isinstance(d["description"], str) and d["description"].strip() != ""))
+            and ("keywords" not in d or (isinstance(d["keywords"], list) and all(
+                isinstance(k, str) and k.strip() for k in d["keywords"]))))
+
+
+def _config_shape(data, is_marketplace: bool):
+    """A marketplace or manifest with the routinely edited fields taken out
+    (a version, a description, keywords, a remote plugin's pin), or None when
+    one of those has a shape Claude Code would refuse. Two configs with equal
+    shapes differ only in routine edits (round 17)."""
+    if not isinstance(data, dict):
+        return ("unreadable", repr(data))
+    routine = ("version", "description", "keywords")
+    def strip(d):
+        return {k: v for k, v in d.items() if k not in routine}
+    if not is_marketplace:
+        # Serialized, so `true` and `1` differ as they do to Claude Code.
+        return json.dumps(strip(data), sort_keys=True) if _routine_fields_ok(data) else None
+    if not _routine_fields_ok(data):
+        return None  # a root field Claude Code refuses refuses the marketplace (round 18)
+    plugins = data.get("plugins")
+    if not isinstance(plugins, list):
+        return json.dumps(data, sort_keys=True)
+    shaped = []
+    for entry in plugins:
+        if not isinstance(entry, dict):
+            shaped.append(entry)
+            continue
+        if not _routine_fields_ok(entry):
+            return None
+        entry = strip(entry)
+        if isinstance(entry.get("source"), dict):
+            if not _remote_pin_ok(entry["source"]):
+                return None
+            entry["source"] = {k: v for k, v in entry["source"].items() if k not in ("ref", "sha")}
+        shaped.append(entry)
+    return json.dumps({**strip(data), "plugins": shaped}, sort_keys=True)
+
+
+def _entry_types_ok(entry: dict) -> bool:
+    for key, kind in _ENTRY_TYPES.items():
+        if key in entry and not isinstance(entry[key], kind):
+            return False
+    return all(isinstance(v, str) for key in ("keywords", "tags") for v in entry.get(key) or [])
 
 
 def marketplace_entries(rev: str) -> Tuple[Optional[str], Dict[str, dict], Set[str], object]:
@@ -325,6 +484,7 @@ def frontmatter(text: str) -> dict:
     """The SKILL.md frontmatter, parsed as YAML; {} when absent or unparsable."""
     import yaml  # third-party; imported only when a SKILL.md changed
 
+    text = text[1:] if text.startswith("\ufeff") else text  # Claude Code strips one
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return {}
@@ -338,10 +498,14 @@ def frontmatter(text: str) -> dict:
     return {}
 
 
+#: Control characters (C0 except tab and newline, DEL, C1), the Unicode line
+#: and paragraph separators, and the byte-order mark. Every range is
+#: deliberate: each is a run of control characters.
+_ODD_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f\u2028\u2029\ufeff]")
+_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 #: How Claude Code finds a SKILL.md's frontmatter: it stops at the first
 #: `---` anywhere, even mid-line, where frontmatter() stops at a line that is
 #: only `---`. A file the two read differently can hide a key from this check.
-_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 _CC_FRONTMATTER_RE = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
 
 
@@ -352,6 +516,14 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     Claude Code's early end can resolve to the first)."""
     import yaml
 
+    text = text[1:] if text.startswith("\ufeff") else text
+    if text.startswith("\ufeff"):
+        return True  # a second mark: Claude Code then finds no frontmatter
+    head = _CC_FRONTMATTER_RE.match(text)
+    if head and _ODD_CHAR_RE.search(head.group(0)):
+        # PyYAML breaks lines at U+0085, U+2028 and U+2029 and strips other
+        # controls where Bun's YAML (Claude Code's) rejects the whole block.
+        return True
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return _CC_FRONTMATTER_RE.match(text) is not None
@@ -391,9 +563,150 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     return not isinstance(data, dict) or sorted(shaped) != sorted(map(str, data))
 
 
+def frontmatter_blocks(text: str) -> Dict[str, List[str]]:
+    """{top-level key: its raw lines}, for frontmatter that is not ambiguous
+    (so every column-0 line starts a key, once)."""
+    lines = (text[1:] if text.startswith("\ufeff") else text).split("\n")
+    end = next(i for i in range(1, len(lines)) if lines[i].strip() == "---")
+    blocks: Dict[str, List[str]] = {}
+    current = None
+    for line in lines[1:end]:
+        match = _KEY_LINE_RE.match(line)
+        if match:
+            current = match.group(1)
+            blocks[current] = []
+        if current is not None:
+            blocks[current].append(line)
+    return blocks
+
+
+#: A comment after a value: Claude Code's YAML repair (run only when its
+#: first parse fails, which a change elsewhere can cause) quotes a value whole,
+#: comment included, so `allowed-tools: Bash # *` would become `*` to it.
+_COMMENT_RE = re.compile(r"""(?:^|[\s'"])#""")
+_BLOCK_HEADER_RE = re.compile(r"^[>|][+-]?$")
+#: Keys a new skill from the loop may have.
+LOOP_NEW_SKILL_KEYS = ("name", "description", "license", "compatibility")
+
+
+def _description_shape_ok(block: List[str]) -> bool:
+    """The description in a shape Bun's YAML (Claude Code's) and PyYAML read
+    alike: a block header with nothing after it and indented lines, a quoted
+    scalar complete on its line with nothing after the closing quote, or a
+    one-line plain scalar (round 12: `'x'# y` drops Claude Code's whole
+    frontmatter)."""
+    import json as _json
+    value = block[0].split(":", 1)[1].strip(" \t")
+    rest = block[1:]
+    if _BLOCK_HEADER_RE.match(value):
+        return all(not line.strip() or line.startswith("  ") for line in rest)
+    if any(line.strip() for line in rest):
+        return False
+    if value.startswith('"'):
+        try:
+            return isinstance(_json.loads(value), str)
+        except ValueError:
+            return False
+    if value.startswith("'"):
+        return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
+    leading_ok = value[:1] not in "-?:" or (len(value) > 1 and not value[1].isspace())
+    return bool(value) and value[0] not in "[]{}&*!|>%@`#," and leading_ok \
+        and " #" not in value \
+        and ": " not in value
+
+
+#: What Claude Code runs from a skill body when skill shell execution is on:
+#: `!` then a backtick span after any (Unicode) space or at a line start, and
+#: a ```! fence anywhere. Matched as Claude Code does, not as a grep would.
+#: Any `!` and backtick not inside a code span's opening backtick is refused,
+#: closed or not: Claude Code appends the arguments to the body, and a
+#: backtick in them closes an open span (round 15).
+_SKILL_SHELL_RES = (re.compile(r"(?<!`)!`"), re.compile(r"```!"))
+#: Only the placeholders Claude Code substitutes. A made-up `${...}` stays as
+#: written, so removing it would hide what it encloses (round 14).
+_PLACEHOLDER_RE = re.compile(
+    r"\$ARGUMENTS(?:\[\d+\])?|\$\d+|\$\{(?:CLAUDE_SKILL_DIR|CLAUDE_SESSION_ID|CLAUDE_EFFORT"
+    r"|CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|CLAUDE_PROJECT_DIR|user_config\.[\w.-]+)\}")
+#: Files Claude Code or Codex may load as project memory from a directory
+#: they read (round 15), whatever the case on a case-insensitive checkout.
+_MEMORY_FILE_NAMES = {"claude.md", "claude.local.md", "agents.md"}
+#: Names Windows will not create, whatever the extension (git refuses them).
+_WINDOWS_RESERVED_RE = re.compile(r"^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$",
+                                  re.IGNORECASE)
+
+
+def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[str]:
+    """What an evals-loop pull request may do to a SKILL.md's frontmatter:
+    rewrite the description and nothing else (a new skill: a few keys only),
+    with no comment outside the description that Claude Code's repair step
+    could fold into a value. Comparing raw lines, not parsed values, is what
+    catches a quoting or comment change PyYAML and Claude Code read
+    differently (round 11)."""
+    if frontmatter_is_ambiguous(head_text):
+        return ["frontmatter Claude Code could read differently (a `---` inside a line, "
+                "a duplicate key, or a non-key line at column 0)"]
+    try:
+        head = frontmatter_blocks(head_text)
+    except StopIteration:
+        return ["no frontmatter"]
+    errors = []
+    if "description" not in head or not _description_shape_ok(head["description"]):
+        errors.append("a `description` that is not a plain line, one complete quoted "
+                      "line, or a `>`/`|` block of indented lines")
+    # Claude Code substitutes arguments before it looks, so try the body with
+    # each placeholder empty and as a space (round 13: `$ARGUMENTS!` + a span).
+    # The text as written is checked too, so nothing a substitution removes
+    # can hide a command (round 14).
+    # Arguments are escaped for `!` but not for backticks, so a placeholder may
+    # also become a backtick, a fence or a closed span (round 16).
+    bodies = [head_text] + [_PLACEHOLDER_RE.sub(sub, head_text)
+                            for sub in ("", " ", "`", "```", "`x`")]
+    if any(r.search(body) for r in _SKILL_SHELL_RES for body in bodies):
+        errors.append("a shell command Claude Code would run on load (`!` and a backtick "
+                      "span, or a ```! fence)")
+    if "arguments" in head:
+        # Claude Code fills in `$<name>` for each named argument, which this
+        # scan does not model (round 17).
+        errors.append("named `arguments` in the frontmatter, whose placeholders this check "
+                      "does not model")
+    commented = sorted(k for k, block in head.items() if k != "description"
+                       and any(_COMMENT_RE.search(line.split(":", 1)[1] if i == 0 else line)
+                               for i, line in enumerate(block)))
+    if commented:
+        errors.append(f"a comment in frontmatter {commented}")
+    if base_text is not None:
+        try:
+            base = frontmatter_blocks(base_text)
+        except StopIteration:
+            base = {}
+        others = sorted(k for k in set(base) | set(head)
+                        if k != "description" and base.get(k) != head.get(k))
+        if others:
+            errors.append(f"frontmatter lines other than `description` changed: {others}")
+    else:
+        extra = sorted(set(head) - set(LOOP_NEW_SKILL_KEYS))
+        if extra:
+            errors.append(f"frontmatter keys a new skill from the loop may not have: {extra}")
+    return errors
+
+
+def _fold(name: str) -> str:
+    """A path as a case-insensitive file system sees it."""
+    import unicodedata
+    return "/".join(unicodedata.normalize("NFC", part).rstrip(". ").casefold()
+                    for part in name.split("/"))
+
+
+#: A file an evals-loop pull request may add or change in its skill: SKILL.md,
+#: PURPOSE.md, or a lowercase Markdown file in plain (not dot) directories.
+_LOOP_SKILL_PATH_RE = re.compile(
+    r"^(?:SKILL\.md|PURPOSE\.md|(?:[a-z0-9_-]+/)*[a-z0-9_-][a-z0-9._-]*\.md)$")
+
+
 def frontmatter_name(text: str) -> Optional[str]:
     value = frontmatter(text).get("name")
-    return value.strip() if isinstance(value, str) else None
+    # Exact: Claude Code keeps a quoted name's spaces (round 14).
+    return value if isinstance(value, str) else None
 
 
 def present_names(rev: str, verify_against: Optional[str] = None,
@@ -414,11 +727,12 @@ def present_names(rev: str, verify_against: Optional[str] = None,
     names = {"marketplace": {name} if name else set(), "plugins": set(), "skills": set()}
     moved = plugin_root not in (None, "", ".", "./")
     for plugin, entry in entries.items():
-        if plugin in dupes:
+        if plugin in dupes or not _entry_types_ok(entry):
             continue
         source = entry.get("source")
         if not isinstance(source, str):
-            names["plugins"].add(plugin)  # a remote plugin: its name is all we own
+            if isinstance(source, dict) and _remote_pin_ok(source):
+                names["plugins"].add(plugin)  # a remote plugin: its name is all we own
             continue
         root = _local_root(source)
         if moved or root != f"plugins/{plugin}":
@@ -428,13 +742,38 @@ def present_names(rev: str, verify_against: Optional[str] = None,
             continue
         names["plugins"].add(plugin)
         prefix = root + "/skills/"
-        for path in files_under(rev, root + "/skills"):
+        all_files = files_under(rev, root + "/skills")
+        folded: Dict[str, int] = {}
+        for path in all_files:
+            folded[_fold(path)] = folded.get(_fold(path), 0) + 1
+        # Every folded directory prefix too: `skill.md/notes.md` makes a
+        # directory that replaces SKILL.md on a case-insensitive checkout.
+        dirs = {_fold(path).rsplit("/", i)[0] for path in all_files
+                for i in range(1, path.count("/") + 1)}
+        # A SKILL.md directly in skills/ makes Claude Code load that one skill
+        # and never read the subdirectories: every other skill disappears.
+        top = [p for p in all_files if "/" not in p[len(prefix):]
+               and _fold(p[len(prefix):]) == "skill.md"]
+        if top:
+            if verify_against is not None and bad is not None:
+                bad.extend(top)
+            continue
+        for path in all_files:
             rest = path[len(prefix):] if path.startswith(prefix) else ""
             skill, _, leaf = rest.partition("/")
             if leaf != "SKILL.md" or not skill:
                 continue
             if _mode(rev, path) not in ("100644", "100755"):
                 continue  # a symlink or gitlink: no SKILL.md on a consumer's disk
+            if _size(rev, path) > SKILL_MD_MAX_BYTES:
+                continue  # Claude Code skips a plugin skill this large
+            if verify_against is not None and (folded.get(_fold(path), 0) > 1
+                                               or _fold(path) in dirs):
+                # Another file with the same name to a case-insensitive file
+                # system (skill.md) overwrites this one on checkout there.
+                if bad is not None:
+                    bad.append(path)
+                continue
             if verify_against is not None:
                 if blob_id(rev, path) != blob_id(verify_against, path):
                     text = show(rev, path) or ""
@@ -483,6 +822,10 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
     shown = [visible] + [t.content for t in tokens if t.type in ("fence", "code_block")
                          or (t.type == "html_block"
                              and not t.content.lstrip().startswith("<!--"))]
+    # Text after a comment's close in the same HTML block is shown (round 20).
+    shown += [t.content.rsplit("-->", 1)[1] for t in tokens
+              if t.type == "html_block" and t.content.lstrip().startswith("<!--")
+              and "-->" in t.content]
     # Tags are markup, not text: `<summary>Adversarial-review: block` starts a
     # visible line.
     shown = [re.sub(r"<[^>\n]*>", "", text) for text in shown]
@@ -564,11 +907,33 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     # export-ignore drops a file, export-subst, ident, text/eol, filter and
     # working-tree-encoding rewrite one, and a macro can set any of them. So
     # any changed .gitattributes is a door, whatever it says.
-    attr_files = [p for p in changed_paths(base, merged)
-                  if posixpath.basename(p) == ".gitattributes"]
+    changed = changed_paths(base, merged)
+    attr_files = [p for p in changed if posixpath.basename(p) == ".gitattributes"]
     if attr_files:
         doors.append(("change what `git archive` exports",
                       [("marketplace", p) for p in attr_files]))
+    # Paths a case-insensitive checkout (NTFS, APFS) merges into one: on a
+    # consumer's disk one replaces the other, and a SKILL.md or a skills/
+    # directory can go. Any new collision, or any new non-ASCII name (whose
+    # case folding differs between file systems), is a door.
+    hazards = sorted(_path_hazards(merged) - _path_hazards(base))
+    if hazards:
+        doors.append(("add a path a case-insensitive file system could merge",
+                      [("marketplace", h) for h in hazards]))
+    # Claude Code validates the marketplace and each manifest against a schema
+    # this check does not model (required owner and author names, URL-shaped
+    # homepages, ...), and one that fails drops the plugin or every plugin
+    # (round 17). So any change but a manifest's `version`, kept a semantic
+    # version string, is a door.
+    configs = [p for p in changed if p == MARKETPLACE
+               or re.fullmatch(r"plugins/[^/]+/(?:\.claude-plugin/)?plugin\.json", p)]
+    touched = [("marketplace", path) for path in configs
+               if _config_shape(_json_at(base, path), path == MARKETPLACE)
+               != _config_shape(_json_at(merged, path), path == MARKETPLACE)
+               or _config_shape(_json_at(merged, path), path == MARKETPLACE) is None]
+    if touched:
+        doors.append(("change the marketplace or a plugin manifest beyond a `version`, "
+                      "`description`, `keywords` or remote pin", touched))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
@@ -637,8 +1002,22 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                          f"{list(KINDS)} under `lanes`.")
     ref = ((pr.get("head") or {}).get("ref")) or ""
     lane = next((p for p in config["lanes"] if ref.startswith(p)), None)
-    if lane is None:
+    by_app = ((pr.get("user") or {}).get("login")) == config["author"]
+    if lane is None and not by_app:
         return []
+    if lane is None:
+        # The loop's App on a branch no lane names would escape every limit
+        # (round 19), so its pull requests must use a lane.
+        return [f"The loop's App {_q(config['author'])} opened this pull request from "
+                f"{_q(ref)}, which no lane in {_q(LOOP_CONFIG)} names. Its pull requests "
+                "must come from a lane's branch."]
+    base_info = pr.get("base") or {}
+    default = (base_info.get("repo") or {}).get("default_branch")
+    if not isinstance(default, str) or not default or base_info.get("ref") != default:
+        # A loop pull request into another branch is judged by that branch's
+        # copy of this check, which the App can write (round 19).
+        return [f"An evals-loop pull request must target the default branch; this one "
+                f"targets {_q(str(base_info.get('ref')))}."]
     kind = config["lanes"][lane]
     skill = ref[len(lane):]
     errors = []
@@ -712,14 +1091,19 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                 {k: v for k, v in new.items() if k != "version"}:
             errors.append(f"{_q(path)} may change only its `version` in an evals-loop "
                           "pull request.")
+        elif not (isinstance(new.get("version"), str)
+                  and _SEMVER_RE.fullmatch(new["version"])):
+            # Claude Code's schema wants a string; anything else unloads the
+            # whole plugin (round 16).
+            errors.append(f"{_q(path)}'s `version` must be a semantic version string.")
 
     # Decision 4, as the owner narrowed it on 2026-11-03 (skills-evals ADR
     # 0005, "Text-only skill changes addendum"): a text-only change auto-merges
     # in any plugin. plugin-runtime-review gates a plugin's own hooks/ and
     # bin/ only, so what it does not see is held here: the skill's frontmatter
     # (#135; `hooks` run code and `allowed-tools` skips permission prompts) and
-    # the skill's own hooks/ and bin/. A pull request armed to auto-merge may
-    # not add or change them; a person may still merge one by hand.
+    # the skill's own hooks/ and bin/. A loop pull request may not change
+    # them in any state; a person takes such a change to another branch.
     base_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
     head_text = (show(merged, skill_md) or "") if at_head else ""
     head_fm = frontmatter(head_text) if at_head else {}
@@ -750,9 +1134,30 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
             mode = _mode(merged, path)
             if mode is None:
                 continue  # deleted
-            if not path.endswith(".md") or mode != "100644":
-                errors.append(f"{_q(path)} is not a plain Markdown file (mode {mode}); "
-                              f"only text auto-merges. {hold}")
+            rel = path[len(f"{root}/skills/{skill}/"):]
+            if mode != "100644" or not _LOOP_SKILL_PATH_RE.match(rel) or (
+                    rel != "SKILL.md" and posixpath.basename(rel).casefold() == "skill.md") \
+                    or posixpath.basename(rel).casefold() in _MEMORY_FILE_NAMES \
+                    or any(_WINDOWS_RESERVED_RE.match(part) for part in rel.split("/")):
+                errors.append(f"{_q(path)} is not a plain Markdown file a loop pull request "
+                              "may change (SKILL.md, PURPOSE.md, or a lowercase .md outside "
+                              f"dot-directories, as a regular file). {hold}")
+        in_skill = files_under(merged, f"{root}/skills/{skill}")
+        seen: Dict[str, str] = {}
+        for path in in_skill:
+            other = seen.setdefault(_fold(path), path)
+            folded_dirs = {_fold(path).rsplit("/", i)[0] for i in range(1, path.count("/") + 1)}
+            clash = next((seen[d] for d in folded_dirs if d in seen and seen[d] != path), None)
+            if clash:
+                errors.append(f"{_q(clash)} and a directory of {_q(path)} are one name on a "
+                              f"case-insensitive file system. {hold}")
+            if other != path:
+                errors.append(f"{_q(other)} and {_q(path)} are one file on a "
+                              f"case-insensitive file system. {hold}")
+        if at_head:
+            for problem in loop_frontmatter_errors(
+                    (show(base, skill_md) or "") if at_base else None, head_text):
+                errors.append(f"{_q(skill_md)}: {problem}. {hold}")
     if "skills.lock" in changed:
         errors += _lock_matches_merge(base, merged, head,
                                       f"{plugin}/{skill}", kind == "remove")
@@ -787,8 +1192,25 @@ def run(base: str, head: str, pr: dict, open_prs: Optional[list]) -> List[str]:
     base = resolve(base)
     head = resolve(head)
     merged = merge_result(base, head)
-    return check_names(base, merged, pr.get("body")) + check_loop_pr(base, merged, pr,
-                                                                     open_prs, head)
+    # A create or edit lane's body is model-written (skills-evals pastes its
+    # report), so a pass line there opens no door; only the removal lane's
+    # reviewer writes one (round 18).
+    body = pr.get("body")
+    if _loop_kind(base, merged, pr) in ("create", "edit"):
+        body = None
+    return check_names(base, merged, body) + check_loop_pr(base, merged, pr, open_prs, head)
+
+
+def _loop_kind(base: str, merged: str, pr: dict) -> Optional[str]:
+    config = _json_at(base, LOOP_CONFIG)
+    if config is None:
+        config = _json_at(merged, LOOP_CONFIG)
+    lanes = config.get("lanes") if isinstance(config, dict) else None
+    if not isinstance(lanes, dict):
+        return None
+    ref = ((pr.get("head") or {}).get("ref")) or ""
+    lane = next((p for p in lanes if isinstance(p, str) and ref.startswith(p)), None)
+    return lanes.get(lane) if lane is not None else None
 
 
 def _escape(message: str) -> str:

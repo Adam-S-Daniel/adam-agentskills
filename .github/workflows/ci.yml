@@ -5,7 +5,7 @@ on:
   # `edited` (a body edit adds the review line; a base change retargets the
   # PR, which must be re-judged against the new base), `ready_for_review`
   # (the loop-PR slot rule skips drafts), and `auto_merge_enabled` /
-  # `auto_merge_disabled` (the frontmatter rule applies only while armed).
+  # `auto_merge_disabled` (the PR's state is re-read on each).
   # Several runs on one head sha are safe only because no job here has a
   # `concurrency` group (see test_no_concurrency_group_governs_a_required_job).
   pull_request:
@@ -438,6 +438,82 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      # An evals-loop pull request merges with no person reading it, and the
+      # steps below run its code before the one-way-door check judges it: the
+      # pip install reads its requirements-dev.txt, the skill gates run its
+      # scripts/. Either could make the check report a pass. So before any of
+      # that, with git, jq and bash only, a loop pull request may change only
+      # the paths its lanes write; the check then holds it to the rest.
+      - name: Loop pull requests change nothing that runs before their check
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          n="$(jq -r .pull_request.number "$GITHUB_EVENT_PATH")"
+          # The base as it is now, from the API, as the check reads it: a
+          # re-run keeps the event's base from before a retarget (round 17).
+          pr="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$n")"
+          base_ref="$(jq -r .base.ref <<< "$pr")"
+          default="$(jq -r .base.repo.default_branch <<< "$pr")"
+          login="$(jq -r .user.login <<< "$pr")"
+          base="refs/remotes/origin/$base_ref"
+          # The loop's lanes come from the default branch, never from a base
+          # the pull request chose (round 19).
+          cfg="refs/remotes/origin/$default"
+          head="$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")"
+          ref="$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")"
+          if ! git rev-parse -q --verify "$base^{commit}" >/dev/null \
+            || ! git rev-parse -q --verify "$cfg^{commit}" >/dev/null; then
+            echo "::error::Cannot read the base or default branch; nothing can be judged."
+            exit 1
+          fi
+          git cat-file -e "$cfg:scripts/loop_prs.json" 2>/dev/null || exit 0
+          # Captured, not read through a process substitution, so a failure
+          # stops the step instead of reading as "no lanes" (round 14).
+          config="$(git show "$cfg:scripts/loop_prs.json")"
+          lanes="$(jq -r '.lanes | keys[]' <<< "$config")"
+          author="$(jq -r .author <<< "$config")"
+          loop=false
+          while IFS= read -r prefix; do
+            if [ -n "$prefix" ] && [[ "$ref" == "$prefix"* ]]; then loop=true; fi
+          done <<< "$lanes"
+          # The loop's App counts as the loop on any branch (round 19).
+          if [ "$login" = "$author" ]; then loop=true; fi
+          [ "$loop" = true ] || exit 0
+          if [ "$base_ref" != "$default" ]; then
+            echo "::error::An evals-loop pull request must target the default branch."
+            exit 1
+          fi
+          # The workspace must be the merge of the head checked below into
+          # this base: a merge ref that lags a push (round 16) or a retarget
+          # (round 17) would install files nobody judged.
+          if [ "$(git rev-parse -q --verify 'HEAD^2' || true)" != "$head" ] \
+            || ! git merge-base --is-ancestor HEAD^1 "$base"; then
+            echo "::error::The checked-out merge commit is not of this head and base; push again or wait for the next run (a re-run keeps the same workspace)."
+            exit 1
+          fi
+          # The merge result, so main moving a file does not fail an older
+          # loop branch; with a conflict, the head itself.
+          merged="$(git merge-tree --write-tree --no-messages "$base" "$head" | head -n1)" \
+            || merged="$head"
+          changed="$(mktemp)"
+          git diff -z --no-renames --name-only "$base" "$merged" > "$changed"
+          bad=0
+          while IFS= read -r -d '' path; do
+            # A regex, not a case glob: a glob's `*` also matches `/`, so
+            # plugins/*/skills/*/* would admit plugins/x/hooks/skills/y/run.sh.
+            if [[ "$path" =~ ^plugins/[^/]+/skills/[^/]+/. ]] \
+              || [[ "$path" =~ ^plugins/[^/]+/(\.claude-plugin/)?plugin\.json$ ]]; then
+              continue
+            fi
+            case "$path" in
+              docs/skill-impact.md|README.md|skills.lock) ;;
+              scripts/plugin_layout.json|scripts/shipped_names.json|scripts/skills_waivers.yml) ;;
+              *) printf '::error::An evals-loop pull request may not change %q.\n' "$path"; bad=1 ;;
+            esac
+          done < "$changed"
+          exit "$bad"
       - name: Install Python dependencies
         if: steps.salient.outputs.run == 'true'
         # The scripts/ suites import the modules under test, so this job needs
@@ -496,30 +572,19 @@ jobs:
           gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
             | jq 'add // []' > "$d/open.json"
           base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"
-          # Run the BASE branch's copy, so a pull request cannot loosen the
-          # check that judges it. Only the pull request that adds the script
+          # Run the DEFAULT branch's copy, so a pull request cannot loosen the
+          # check that judges it, not even through a base branch it wrote
+          # (round 19). Only the pull request that adds the script
           # finds none there and runs its own. So a change to the script's
           # flags takes two pull requests: first the script, accepting both
           # forms; then this step.
-          if git cat-file -e "$base:scripts/check_one_way_doors.py" 2>/dev/null; then
-            git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"
+          src="refs/remotes/origin/$(jq -r .base.repo.default_branch "$d/pr.json")"
+          echo "src=$src" >> "$GITHUB_ENV"
+          if git cat-file -e "$src:scripts/check_one_way_doors.py" 2>/dev/null; then
+            git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"
           else
             echo "::notice::The base has no one-way-door check yet; running this pull request's copy."
             cp scripts/check_one_way_doors.py "$d/check.py"
-          fi
-          # The interpreter's packages come from this pull request's
-          # requirements-dev.txt, so a loop pull request (no person reviews it)
-          # may not change that file: it could install a package that makes
-          # the check pass. The lanes are read from the base's copy.
-          ref="$(jq -r .head.ref "$d/pr.json")"
-          if git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null; then
-            while IFS= read -r prefix; do
-              if [[ "$ref" == "$prefix"* ]] && \
-                 ! git diff --quiet "$base" "$HEAD_SHA" -- requirements-dev.txt; then
-                echo "::error::An evals-loop pull request may not change requirements-dev.txt."
-                exit 1
-              fi
-            done < <(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')
           fi
           echo "base=$base" >> "$GITHUB_ENV"
           python3 -I "$d/check.py" --base "$base" \
@@ -625,6 +690,11 @@ jobs:
           if [ "$now" != "$base" ]; then
             echo "::error::The base branch changed during this run; the edited run judges the new one."
             exit 1
+          fi
+          # Extracted again: the suites ran the pull request's code since the
+          # first copy was written (round 14).
+          if git cat-file -e "$src:scripts/check_one_way_doors.py" 2>/dev/null; then
+            git show "$src:scripts/check_one_way_doors.py" > "$d/check.py"
           fi
           python3 -I "$d/check.py" --base "$base" \
             --head "$HEAD_SHA" --pr-json "$d/pr.json" --open-prs "$d/open.json"

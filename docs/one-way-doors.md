@@ -68,8 +68,10 @@ merge-base, which a criss-cross history can make lie):
 
 - **A shipped name that disappears** (items 1 to 3: a removal, a rename or a
   move between plugins; a plugin also counts as renamed when its directory
-  stops being `plugins/<name>`, a manifest `name` changes, it is listed twice
-  or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
+  stops being `./plugins/<name>`, a manifest `name` changes, it is listed twice,
+  `metadata.pluginRoot` is set (Claude Code applies it only to bare sources,
+  but the check does not model it and fails closed), or its marketplace entry
+  has a field of a type Claude Code refuses, such as `keywords` as a string), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
   `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
   The pass line must be visible paragraph text, not inside an HTML comment
@@ -80,32 +82,79 @@ merge-base, which a criss-cross history can make lie):
   name that disappears must also be in `scripts/shipped_names.json`. A
   changed SKILL.md whose frontmatter Claude Code could read differently (a
   `---` inside a line, a duplicate key, a key-shaped line inside a value, or
-  any other line at column 0 that is not a key) counts as losing its name,
-  and a SKILL.md that is a symlink or gitlink does not count as present.
+  any other line at column 0 that is not a key) fails outright,
+  and a SKILL.md that is a symlink or gitlink, sits beside a case variant
+  (`skill.md`, as a file or a directory), carries a second byte-order mark
+  or is over 1 MiB (Claude Code skips it) does not count as present. A
+  quoted `name` must equal the directory exactly, spaces included. The
+  marketplace and manifests must parse as strictly as Claude Code parses
+  them (no `NaN` or `Infinity`, no duplicate keys), or the check errors. A `SKILL.md` directly in a plugin's `skills/`
+  makes Claude Code load only that one, so every skill of the plugin counts
+  as gone.
+- **A new path under `plugins/` or `.claude-plugin/` that a
+  case-insensitive file system could merge with another** (two names, or a
+  name and a directory, that fold to one; or any non-ASCII name) needs the
+  same line: on a Windows or macOS checkout one replaces the other.
+- **A change to the marketplace or a plugin manifest other than a `version`
+  (a semantic version string), a non-empty `description`, `keywords` (a list
+  of non-empty strings) or a remote plugin's `ref`/`sha`** (a string, and 40
+  lowercase hex characters) needs the same
+  line: Claude Code validates both files against a schema this check does not
+  model, and a file that fails it drops a plugin or every plugin.
+- **A skill folder whose name is not lowercase letters, digits and hyphens**
+  needs the same line: Claude Code turns other characters into `-`, so
+  `fan out-triage` would register as `fan-out-triage` beside the shipped one.
 - **A changed `renames` map in the marketplace, or any changed
   `.gitattributes`** (`git archive`, and so every lock, applies its
   `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
   `working-tree-encoding` rules, directly or through a macro) needs the same
   line.
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
-  `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
+  `retire-skill/`) fails unless it targets the default branch and stays
+  inside ADR 0021 (the loop's App may open pull requests only from those
+  branches; CI reads the lanes and the check itself from the default branch,
+  never from a base the pull request chose): opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
-  the ledger), a `skills.lock` that changes only its own skill's entry and is
+  the ledger), manifests whose `version` stays a semantic version string, a `skills.lock` that changes only its own skill's entry and is
   re-pinned to a commit in its own history where that skill and every
-  `.gitattributes` match the merge result, no change to
+  `.gitattributes` match the merge result and every other locked skill, and
+  each bundle's set of skills, match the base's pinned commit, no change to
   `requirements-dev.txt`, and (unless it is a draft) no older ready loop pull
-  request from that App open. Draft or not, it must be text only: no
-  added or changed `hooks` or `allowed-tools` in the skill's frontmatter, no
-  frontmatter Claude Code could read differently, and nothing in the skill
-  directory but regular Markdown files. Text-only changes auto-merge in any
+  request from that App open. Draft or not, it must be text only: in
+  SKILL.md's frontmatter only the `description` lines may change (a new skill
+  may have only `name`, `description`, `license` and `compatibility`), with
+  no comment outside the description, a description that is a plain line,
+  one complete quoted line or a `>`/`|` block, no named `arguments`, no shell line Claude Code
+  would run, and nothing Claude Code could read differently; and in the
+  skill directory only `SKILL.md`, `PURPOSE.md` or
+  lowercase `.md` files outside dot-directories and not named like a Windows device (`aux.md`) or a memory file (`claude.md`, `agents.md`), as regular files, with no
+  two paths that are one file to a case-insensitive file system. Text-only changes auto-merge in any
   plugin (owner decision 2026-11-03); a person who wants anything else takes
   it to a branch outside the loop's prefixes, since a draft could be marked
   ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and
   `bin/`, so it does not hold these.
 
-The check runs twice in the job: before the test suites, and again as the
-job's last step with the pull request's body, draft state, arming and base
+All of this rests on the loop's App having no `workflows` permission (a
+pull request's run uses its own `ci.yml`, so a branch that could change
+workflows could remove these steps) and no `statuses` or `checks` write
+permission (the required `pytest` context is not tied to GitHub Actions, so
+such a credential could report it green), and no `actions` write permission
+(a re-run keeps an old event's workspace). Verify all three whenever the App
+changes. One gap remains that no permission closes: required checks belong
+to a head commit, not to one pull request, so a second pull request from the
+same head into a branch whose `ci.yml` predates these steps can report
+`pytest` green for the pull request into the default branch. Requiring
+branches to be up to date before merging (#137) closes it, since the head
+then carries the current `ci.yml`; until then, keep no long-lived branch
+besides the default one.
+
+Before anything in the job runs a pull request's code (the pip install
+reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
+step refuses a loop pull request that changes any path outside the ones its
+lanes write, or whose checked-out merge commit is not of the head it read and
+the base the API reports now. It fails closed when that base cannot be read. The check runs twice in the job: before the test suites, and again as the
+job's last step with the pull request's body, draft state and base
 read afresh, so the run that reports last has read them last. A pull
 request retargeted to a new base is checked again by the `edited` run;
 until that run registers (seconds), the previous result still shows.
@@ -114,15 +163,32 @@ on another one (it deletes a skill the other adds) passes against the old
 base and is not re-checked once the other merges, unless the ruleset
 requires branches to be up to date (it does not today; #137).
 
-A skill body that runs a shell command on load (an exclamation mark then a
-backtick) is refused by the required `agent-checks` job's `skill-shell` check
-on every pull request, and turned off fleet-wide by
-`disableSkillShellExecution`, so the loop-PR frontmatter rule does not repeat it.
+A skill body that could run a shell command on load is refused in a loop
+pull request's SKILL.md by this check: any exclamation mark followed by a
+backtick (unless a backtick comes just before it, as in a code span showing
+`!`), closed or not, because Claude Code appends the arguments to the body
+and a backtick in them closes an open span; and a fence opened with three
+backticks and `!` anywhere in a line. It looks in the text as written and again with the placeholders Claude Code
+substitutes (`$ARGUMENTS`, `$1`, `${CLAUDE_SKILL_DIR}`, `${CLAUDE_PROJECT_DIR}` and the like)
+replaced; any other `${...}` stays as written. The
+required `agent-checks` job's `skill-shell` check covers other pull
+requests, with a narrower match, and `disableSkillShellExecution` turns
+execution off where it is set.
 
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.
 
-Not checked mechanically: skills a plugin would load from anywhere other than
+In a `draft-skill/` or `eval-improve/` pull request the body is written by
+the loop's model, so a pass line there opens nothing: a create or edit that
+crosses a door fails. Only the removal lane's reviewer writes a line that
+counts. A frontmatter Claude Code could read differently is an error no
+line overrides; fix the frontmatter.
+
+Not checked mechanically: a plugin hooks file Claude Code cannot load
+(it can stop the whole plugin; `plugin-runtime-review` puts the owner in front
+of every such change), a Codex-only manifest such as
+`.codex-plugin/plugin.json`, a skill folder that is a symlink (the required
+`pytest` suite's `check_no_symlinks` refuses one), skills a plugin would load from anywhere other than
 `plugins/<plugin>/skills/<skill>/SKILL.md` (a `commands/` file, or a `skills`
 or `commands` path in a manifest or marketplace entry; nothing here uses
 them today), and the skills inside a remote plugin such as `cms-platform`

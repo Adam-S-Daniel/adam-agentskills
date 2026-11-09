@@ -156,8 +156,8 @@ adversarial review found both were prose only.
   anything outside its one skill and the bookkeeping, changes a manifest
   beyond `version`, changes `requirements-dev.txt`, re-pins `skills.lock`
   to content other than what merges or changes another skill's entry in it,
-  changes more than text, draft or not (frontmatter `hooks` or `allowed-tools`, a frontmatter Claude Code
-  could read differently, or any file in the skill but regular Markdown), or, unless it is a draft, has an
+  changes more than text, draft or not (any frontmatter line but the `description`'s, a frontmatter Claude
+  Code could read differently, or any file in the skill but plain Markdown), or, unless it is a draft, has an
   older ready loop pull request from the App open here (forks, people and the
   loop's own drafts do not hold the slot, and the older of two wins).
 - **Decision 4 is as the owner narrowed it on 2026-11-03**, not as written

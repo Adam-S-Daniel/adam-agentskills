@@ -217,8 +217,9 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   (lock key `<bundle>/<skill>`, invocation `/<plugin>:<skill>`), the registry's
   identity and layout, reachability of pinned commits, the bootstrap hook and
   lock schema, public history, and records elsewhere keyed by a skill's name.
-  [`scripts/shipped_names.json`](scripts/shipped_names.json) lists every name
-  that has shipped and is append-only.
+  [`scripts/shipped_names.json`](scripts/shipped_names.json) is the
+  append-only ledger of retired names and of every name present on
+  2026-11-09.
 - **A change that touches one gets an adversarial review before merge**, by a
   fresh-context agent (never a fork of the author) given only the diff and
   that page. It may be agent-generated: removals stay autonomous. **Done**

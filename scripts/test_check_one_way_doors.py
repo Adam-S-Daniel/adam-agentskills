@@ -822,3 +822,56 @@ def test_adding_a_renames_map_needs_a_review(tmp_path):
     assert code == 1 and "renames" in out, out
     code, out = check(repo, tmp_path, pr_json(body=PASS))
     assert code == 0, out
+
+
+# ---------------------------------------------------------------------------
+# Round 7 findings
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("path,rule", [
+    (".gitattributes", f"plugins/{PLUGIN}/skills/{SKILL} export-ignore\n"),
+    (f"plugins/{PLUGIN}/.gitattributes", "skills/** export-subst\n"),
+])
+def test_an_export_rule_that_git_archive_follows_needs_a_review(tmp_path, path, rule):
+    """Round 7: locks are built from `git archive`, which honours these."""
+    repo = make_repo(tmp_path)
+    _write(repo / path, rule)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "git archive" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 0, out
+
+
+def test_a_loop_pr_may_not_add_gitattributes_in_its_skill(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / ".gitattributes", "*.md text\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True), open_prs=[])
+    assert code == 1 and ".gitattributes" in out, out
+
+
+@pytest.mark.parametrize("variant", ["Widget-Polisher", "widget-polisher."])
+def test_a_retired_name_cannot_return_with_another_case_or_a_trailing_dot(tmp_path, variant):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    remove_skill(repo)
+    commit(repo, "retire")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / CODE_PLUGIN / "skills" / variant / "SKILL.md", skill_md(variant))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "reuse a retired name" in out, out
+
+
+def test_a_finding_that_quotes_the_block_phrase_mid_line_does_not_block(tmp_path):
+    """Round 7: skills-evals' reviewer arms on a line-start pass; a finding
+    that quotes the phrase must not turn that passing review red here."""
+    repo = make_repo(tmp_path)
+    remove_skill(repo)
+    commit(repo)
+    body = ("## Adversarial review\n\n- **low** (references): the docs mention "
+            "Adversarial-review: block lines.\n\n" + PASS + "\n")
+    code, out = check(repo, tmp_path, pr_json(body=body))
+    assert code == 0, out

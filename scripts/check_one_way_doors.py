@@ -76,10 +76,12 @@ plus a Bot author. So here it must be:
   and two opened in the same seconds cannot block each other.
 
 Config is read at the base, and CI runs the base branch's copy of this
-script, so a pull request cannot loosen the rules it is judged by; a file
+script, so a pull request cannot loosen the rules it is judged by by editing
+them; a file
 absent there (the pull request that adds it) is read from the merge result.
-A pull request can still edit ci.yml to drop the step, as it can for every
-check in that job.
+A pull request can still edit ci.yml to drop the step, or change the
+dependencies the job installs before it, as it can for every check in that
+job.
 
 Inputs and trust
 -----------------
@@ -117,10 +119,12 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REVIEW_PASS_RE = re.compile(
     r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+"
     r"(https://(?:github\.com|claude\.ai)/\S+)[ \t]*$", re.MULTILINE)
-#: A block counts wherever a reader could see it (in a list, a quote, bold
-#: text or <details>), in any case: only HTML comments hide it. Too strict is
-#: the safe direction.
-REVIEW_BLOCK_RE = re.compile(r"Adversarial-review\W*block\b", re.IGNORECASE)
+#: A block line counts wherever a reader could see it (a list item, a quote,
+#: bold text, <details>), in any case; only HTML comments hide it. It must
+#: start its line, as skills-evals' removal reviewer writes it, so a finding
+#: that merely quotes the phrase mid-sentence does not fail a passing review.
+REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)]*Adversarial-review\W*block\b",
+                             re.MULTILINE | re.IGNORECASE)
 _HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 WAIVERS = "scripts/skills_waivers.yml"
 LENGTH_WAIVER_CLASS = "length-limit"
@@ -347,7 +351,11 @@ def _q(value: str) -> str:
 
 
 def _basename(key: str, name: str) -> str:
-    return name.split("/", 1)[1] if key == "skills" else name
+    """The name as a case-insensitive file system sees it (APFS and NTFS fold
+    case and drop trailing dots and spaces), so `Sync-Skills` or
+    `sync-skills.` is the retired `sync-skills` on a consumer's disk."""
+    base = name.split("/", 1)[1] if key == "skills" else name
+    return base.rstrip(". ").lower()
 
 
 def _source_identity(source):
@@ -402,6 +410,15 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     reused = [(key, name) for key in LEDGER_KEYS for name in sorted(after[key] - before[key])
               if _basename(key, name) in {_basename(key, n) for n in recorded_base[key]}]
     doors = [("disappear", lost), ("reuse a retired name", reused)]
+    # `git archive`, which builds every lock, honours export-ignore and
+    # export-subst from .gitattributes, so a rule there can drop or rewrite a
+    # skill in every lock while the object store (what this check reads)
+    # still has it. Any changed .gitattributes that uses either is a door.
+    for path in changed_paths(base, merged):
+        if posixpath.basename(path) == ".gitattributes":
+            text = show(merged, path) or ""
+            if re.search(r"\bexport-(ignore|subst)\b", text):
+                doors.append(("change what `git archive` exports", [("marketplace", path)]))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
@@ -508,6 +525,8 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
                       f"{'leaves it unchanged' if actual is None else 'does a ' + actual}.")
 
     allowed = {"docs/skill-impact.md", "README.md", "skills.lock"}
+    # (A .gitattributes inside the skill directory is refused below: it can
+    # make `git archive`, and so every lock, drop the skill.)
     allowed |= {f"{root}/{m}" for m in MANIFESTS}
     if kind in ("create", "remove"):
         allowed |= {"scripts/plugin_layout.json", LEDGER}
@@ -517,7 +536,8 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
         # stale waiver. Nothing else in the file may change.
         allowed.add(WAIVERS)
     outside = [p for p in changed
-               if p not in allowed and not p.startswith(f"{root}/skills/{skill}/")]
+               if p not in allowed and (not p.startswith(f"{root}/skills/{skill}/")
+                                        or posixpath.basename(p) == ".gitattributes")]
     for path in outside:
         errors.append(f"{_q(path)} is outside ADR 0021 Decision 3's scope for a "
                       f"{_q(lane)} pull request.")

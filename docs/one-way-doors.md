@@ -49,9 +49,11 @@ Each item says what breaks downstream when it changes.
    `<plugin>/<skill>` or the basename. A rename or removal orphans them
    unless the change cleans them up or keeps them on purpose.
 
-`scripts/shipped_names.json` lists every marketplace, plugin and
-`<plugin>/<skill>` name that has shipped. It is append-only: a retired name
-stays listed, so it is never reused by accident.
+`scripts/shipped_names.json` is the ledger: every marketplace, plugin and
+`<plugin>/<skill>` name present on 2026-11-09, every name retired before or
+since, and any new name a pull request chose to append. It is append-only,
+so a retired name is never reused by accident. Names present on `main` count
+as shipped whether or not the ledger lists them yet.
 
 Not one-way doors: hook handler names in `hooks/hooks.json`, the
 `persistent/*` branches (protected by a ruleset already), and the claude.ai
@@ -74,6 +76,9 @@ merge-base, which a criss-cross history can make lie):
   The link must be on github.com or claude.ai, and the line must be visible
   text, not inside an HTML comment or a code block. A name that disappears
   must also be in `scripts/shipped_names.json`.
+- **A changed `renames` map in the marketplace, or a changed
+  `.gitattributes` that uses `export-ignore` or `export-subst`** (which
+  `git archive`, and so every lock, follows) needs the same line.
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the

@@ -267,10 +267,6 @@ the script encodes them:
 
 ## Manual one-liners (fallback if the script isn't available)
 
-The WSL one-liners below do not inject the login `PATH` (see the PATH gotcha above), so
-the launched agent's own subprocesses may not find `pwsh`, `bun` or `dotnet`. When that
-matters, add `"PATH=<login-path>"` after `env`, with the value captured from `bash -lic 'echo $PATH'`.
-
 Native Windows tab (PowerShell) — the tab's shell clears the marker itself:
 
 ```powershell

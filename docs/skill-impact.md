@@ -61,13 +61,6 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea` (with 13/13, without 1/13); post-merge routine run to follow in a correcting entry. One-line wording fix; no fixture asserts it.
 - Outcome: pending review.
 
-## 2026-11-09 — adam-coding-local/launch-top-level-claude-session — edit
-
-- Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the skill says resolving the binary is not enough and the scripts inject the login PATH, but the WSL fallback one-liners omit it without saying so.
-- Change: added a caveat under "Manual one-liners" that they do not inject PATH and how to add it; bundle `adam-coding-local` 2.2.5 -> 2.2.6 (PR pending).
-- Eval: exempt (skills-evals `evals/non-coverage.yml`)
-- Outcome: pending review.
-
 ## 2026-11-07 — adam-coding-anywhere/fan-out-triage — edit
 
 - Motivation: skills-evals description trim run `20261107T093508Z-09fa20`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).

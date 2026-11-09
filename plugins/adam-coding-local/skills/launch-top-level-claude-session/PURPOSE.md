@@ -70,4 +70,3 @@ in a hosted session. It is a machine-bound coding skill;
 - Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
   the frontmatter description was trimmed to what the skill does and when to
   use it; merge rules and launch quirks it repeated are stated in the body.
-- Issue #128 sweep: the manual one-liners carry a caveat that they omit the login PATH injection the scripts perform; see docs/skill-impact.md.

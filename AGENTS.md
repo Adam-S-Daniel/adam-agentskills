@@ -241,7 +241,8 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   auto-merge; improvements and new skills lose no name, and a removal carries
   the review line written by skills-evals' removal reviewer. `_agent-guidance`'s
   nightly consumer lock bump carries a merged removal or rename to every
-  consumer; a bump that drops a skill key waits for the same review.
+  consumer; once _agent-guidance#488 lands, a bump that drops a skill key
+  waits for the same review.
 
 ### Privacy: invented data only
 

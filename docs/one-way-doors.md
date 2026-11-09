@@ -13,7 +13,9 @@ Each item says what breaks downstream when it changes.
 1. **The marketplace name** (`adam-agentskills` in
    `.claude-plugin/marketplace.json`). Every machine and claude.ai account
    that added the marketplace, and every `<plugin>@adam-agentskills`
-   install, is keyed by it.
+   install, is keyed by it. So is a `renames` map, if one is ever added:
+   Claude Code follows it for good and migrates users' settings, so an
+   entry can never be taken back.
 2. **Plugin names.** There is no `renames` map, so Claude Code cannot follow
    a rename. Plugins the owner enabled on claude.ai and in the Desktop app
    (the account's skills come from this repo-synced marketplace, ADR 0014)
@@ -83,6 +85,15 @@ merge-base, which a criss-cross history can make lie):
 
 A pull request retargeted to a new base is checked again by the `edited`
 run; until that run registers (seconds), the previous result still shows.
+The check is not re-run when the base branch moves: a pull request stacked
+on another one (it deletes a skill the other adds) passes against the old
+base and is not re-checked once the other merges, unless the ruleset
+requires branches to be up to date (it does not today; #137).
+
+A skill body that runs a shell command on load (an exclamation mark then a
+backtick) is refused by the required `agent-checks` job's `skill-shell` check
+on every pull request, and turned off fleet-wide by
+`disableSkillShellExecution`, so the loop-PR frontmatter rule does not repeat it.
 
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.
@@ -131,6 +142,7 @@ them needs the same review and the same line, by the rule below.
   (skills-evals#917).
 - **The consumer lock bumper** (`_agent-guidance`'s nightly bump of every
   consumer `skills.lock`) carries a merged rename or removal into every
-  consumer. A lock that loses a skill key is a one-way door downstream;
-  _agent-guidance#488 holds such a bump for the same review instead of
-  auto-merging it.
+  consumer. A lock that loses a skill key is a one-way door downstream.
+  Today the bumper refuses only a lock or bundle that loses every skill;
+  once _agent-guidance#488 lands it will hold any bump that drops a skill
+  key for the same review instead of auto-merging it.

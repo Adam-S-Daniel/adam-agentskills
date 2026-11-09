@@ -498,7 +498,9 @@ jobs:
           base="refs/remotes/origin/$(jq -r .base.ref "$d/pr.json")"
           # Run the BASE branch's copy, so a pull request cannot loosen the
           # check that judges it. Only the pull request that adds the script
-          # finds none there and runs its own.
+          # finds none there and runs its own. So a change to the script's
+          # flags takes two pull requests: first the script, accepting both
+          # forms; then this step.
           if git cat-file -e "$base:scripts/check_one_way_doors.py" 2>/dev/null; then
             git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"
           else

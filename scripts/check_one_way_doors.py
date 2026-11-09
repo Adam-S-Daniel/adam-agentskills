@@ -350,6 +350,19 @@ def _basename(key: str, name: str) -> str:
     return name.split("/", 1)[1] if key == "skills" else name
 
 
+def _source_identity(source):
+    """Where a remote plugin lives, without the ref or sha it is pinned to:
+    moving a pin is an ordinary release, moving the repository is a rename."""
+    if not isinstance(source, dict):
+        return source
+    return {k: v for k, v in source.items() if k not in ("ref", "sha")}
+
+
+def _marketplace_key(rev: str, key: str):
+    data = _json_at(rev, MARKETPLACE)
+    return data.get(key) if isinstance(data, dict) else None
+
+
 def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     """Names at the base tip against names in the merge result."""
     errors = []
@@ -380,7 +393,7 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     for plugin in sorted(before["plugins"] & after["plugins"]):
         old_src = base_entries.get(plugin, {}).get("source")
         new_src = merged_entries.get(plugin, {}).get("source")
-        if not isinstance(old_src, str) and old_src != new_src:
+        if not isinstance(old_src, str) and _source_identity(old_src) != _source_identity(new_src):
             lost.append(("plugins", plugin))
     # A name that arrives but has shipped before (by basename, for a skill, so
     # a retired skill re-created in another plugin counts) reuses a retired name:
@@ -389,6 +402,10 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     reused = [(key, name) for key in LEDGER_KEYS for name in sorted(after[key] - before[key])
               if _basename(key, name) in {_basename(key, n) for n in recorded_base[key]}]
     doors = [("disappear", lost), ("reuse a retired name", reused)]
+    # A `renames` map is followed by Claude Code for good and migrates users'
+    # settings (append-only), so adding or changing one is a one-way door.
+    if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
+        doors.append(("change the marketplace `renames` map", [("marketplace", "renames")]))
     doors = [(what, items) for what, items in doors if items]
     if doors:
         url, blocked = review_line(body)

@@ -784,3 +784,41 @@ def test_the_ledger_lists_every_skill_the_impact_log_records_as_removed():
     missing = sorted(removed - on_disk - set(ledger["skills"]))
     assert removed, "the impact log parsed to no removals; the parser drifted"
     assert not missing, f"retired names missing from the ledger: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Round 6 findings
+# ---------------------------------------------------------------------------
+
+def _remote_repo(tmp_path: Path, source: dict) -> Path:
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["plugins"].append({"name": "remote-one", "source": source})
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo, "remote")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    return repo
+
+
+def test_moving_a_remote_plugins_pin_is_not_a_rename(tmp_path):
+    repo = _remote_repo(tmp_path, {"source": "github", "repo": "Example/one", "ref": "v1.0.0"})
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["plugins"][-1]["source"]["ref"] = "v1.1.0"
+    data["plugins"][-1]["source"]["sha"] = "0" * 40
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 0, out
+
+
+def test_adding_a_renames_map_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["renames"] = {"old-plugin": PLUGIN}
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "renames" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 0, out

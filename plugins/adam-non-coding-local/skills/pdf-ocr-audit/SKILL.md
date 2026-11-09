@@ -58,7 +58,7 @@ python scripts/check_ocr.py /path/to/folder > /tmp/ocr_audit.csv
 
 If a folder has >500 PDFs, warn the user that a full run may take a while and offer:
 - Run only a representative sample (e.g., one per subfolder)
-- Categorize by filename pattern first (files named "Scan", "scan_", "QuickScan", iOS scanner naming like `YYYYMMDD_*_iOS.pdf`, etc. are usually raw scans that need OCR, while iOS-named files usually already have text; confirm either with the text layer check)
+- Categorize by filename pattern first (files named "Scan", "scan_", "QuickScan", etc. are usually raw scans that need OCR, while iOS scanner names like `YYYYMMDD_*_iOS.pdf` usually already have text; confirm either with the text layer check)
 - Run the full audit as a background job
 
 ## Filename heuristics (supplemental, not definitive)

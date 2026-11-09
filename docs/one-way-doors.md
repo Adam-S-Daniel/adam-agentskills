@@ -71,30 +71,42 @@ merge-base, which a criss-cross history can make lie):
   stops being `plugins/<name>`, a manifest `name` changes, it is listed twice
   or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
-  `Adversarial-review: pass <link>` and no `Adversarial-review: block` line
-  (a block line counts at the start of any line, after list, quote or
-  emphasis markers, in any case; one quoted mid-sentence does not).
-  The link must be on github.com or claude.ai, and the line must be visible
-  text, not inside an HTML comment or a code block. A name that disappears
-  must also be in `scripts/shipped_names.json`.
-- **A changed `renames` map in the marketplace, or a changed
-  `.gitattributes` that changes which file or directory is `export-ignore`
-  or `export-subst`** (which `git archive`, and so every lock, follows;
-  asked of git, so a macro counts) needs the same line.
+  `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
+  The pass line must be visible paragraph text, not inside an HTML comment
+  or a code block, and its link must be on github.com or claude.ai. A block
+  line counts anywhere but an HTML comment (code, headings, tables and HTML
+  blocks included), in any case, at the start of a line after list, quote,
+  heading, table or emphasis markers; one quoted mid-sentence does not. A
+  name that disappears must also be in `scripts/shipped_names.json`. A
+  changed SKILL.md whose frontmatter Claude Code could read differently (a
+  `---` inside a line, a duplicate key, a key-shaped line inside a value)
+  counts as losing its name.
+- **A changed `renames` map in the marketplace, or any changed
+  `.gitattributes`** (`git archive`, and so every lock, applies its
+  `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
+  `working-tree-encoding` rules, directly or through a macro) needs the same
+  line.
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
-  the ledger), and (unless it is a draft) no older ready loop pull request
-  from that App open. While armed to auto-merge it may not add or change
-  `hooks` or `allowed-tools` in the skill's frontmatter, change a frontmatter
-  Claude Code could read differently (a `---` inside a line, a duplicate key),
-  or touch the skill's own `hooks/` or `bin/`. Text-only changes auto-merge in
-  any plugin (owner decision 2026-11-03). `plugin-runtime-review` gates only a
-  plugin's own `hooks/` and `bin/`, so it does not hold these.
+  the ledger), a `skills.lock` re-pinned only to a commit in its own history
+  whose locked skills match the merge result, no change to
+  `requirements-dev.txt`, and (unless it is a draft) no older ready loop pull
+  request from that App open. Unless it is a draft it must be text only: no
+  added or changed `hooks` or `allowed-tools` in the skill's frontmatter, no
+  frontmatter Claude Code could read differently, and nothing in the skill
+  directory but regular Markdown files. Text-only changes auto-merge in any
+  plugin (owner decision 2026-11-03); the loop lowers anything else to a
+  draft, and a person who wants it takes it to a branch outside the loop's
+  prefixes. `plugin-runtime-review` gates only a plugin's own `hooks/` and
+  `bin/`, so it does not hold these.
 
-A pull request retargeted to a new base is checked again by the `edited`
-run; until that run registers (seconds), the previous result still shows.
+The check runs twice in the job: before the test suites, and again as the
+job's last step with the pull request's body, draft state, arming and base
+read afresh, so the run that reports last has read them last. A pull
+request retargeted to a new base is checked again by the `edited` run;
+until that run registers (seconds), the previous result still shows.
 The check is not re-run when the base branch moves: a pull request stacked
 on another one (it deletes a skill the other adds) passes against the old
 base and is not re-checked once the other merges, unless the ruleset

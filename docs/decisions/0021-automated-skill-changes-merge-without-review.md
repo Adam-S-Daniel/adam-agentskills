@@ -154,10 +154,10 @@ adversarial review found both were prose only.
   `retire-skill/` pull request that is not opened by the App
   `scripts/loop_prs.json` names (from a branch here, not a fork), changes
   anything outside its one skill and the bookkeeping, changes a manifest
-  beyond `version`, is armed to auto-merge while adding or changing `hooks`
-  or `allowed-tools` in the skill's frontmatter (or changing a frontmatter
-  Claude Code could read differently) or touching the skill's own `hooks/` or
-  `bin/`, or, unless it is a draft, has an
+  beyond `version`, changes `requirements-dev.txt`, re-pins `skills.lock`
+  to content other than what merges, is not a draft while it changes more
+  than text (frontmatter `hooks` or `allowed-tools`, a frontmatter Claude Code
+  could read differently, or any file in the skill but regular Markdown), or, unless it is a draft, has an
   older ready loop pull request from the App open here (forks, people and the
   loop's own drafts do not hold the slot, and the older of two wins).
 - **Decision 4 is as the owner narrowed it on 2026-11-03**, not as written

@@ -99,9 +99,11 @@ def pr_json(ref: str = "claude/some-change", body: str = "", login: str = "Adam-
             "base": {"repo": {"full_name": "Example/registry"}}}
 
 
-def loop_pr(ref: str, body: str = "", auto_merge: bool = False, **kw) -> dict:
+def loop_pr(ref: str, body: str = "", auto_merge: bool = False, draft: bool = False,
+            **kw) -> dict:
     pr = pr_json(ref=ref, body=body, login=APP, user_type="Bot", **kw)
     pr["auto_merge"] = {"merge_method": "merge"} if auto_merge else None
+    pr["draft"] = draft
     return pr
 
 
@@ -502,8 +504,13 @@ def test_a_loop_pr_may_not_add_skill_runtime_frontmatter(tmp_path, extra):
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
                       open_prs=[])
     assert code == 1 and "Decision 4" in out, out
-    # Unarmed, it waits for a person, who may merge it by hand.
+    # Ready but unarmed, it is held too: arming a green pull request merges it
+    # before a new run of this check registers (round 9).
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    assert code == 1 and "Decision 4" in out, out
+    # As a draft it waits; a person takes it to a branch outside the loop.
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", draft=True),
+                      open_prs=[])
     assert code == 0, out
 
 
@@ -902,8 +909,6 @@ def test_an_armed_loop_edit_with_frontmatter_claude_code_reads_differently_fails
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
                       open_prs=[])
     assert code == 1 and "could read differently" in out, out
-    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
-    assert code == 0, out
 
 
 def test_every_shipped_skill_has_unambiguous_frontmatter():
@@ -922,7 +927,7 @@ def test_an_armed_loop_edit_may_not_add_code_under_the_skill(tmp_path, sub):
     commit(repo)
     code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
                       open_prs=[])
-    assert code == 1 and "code the skill runs" in out, out
+    assert code == 1 and "not a plain Markdown file" in out, out
 
 
 def test_export_ignore_through_a_macro_needs_a_review(tmp_path):
@@ -937,11 +942,16 @@ def test_export_ignore_through_a_macro_needs_a_review(tmp_path):
     assert code == 1 and "git archive" in out, out
 
 
-def test_a_gitattributes_change_that_exports_the_same_needs_no_review(tmp_path):
+def test_any_gitattributes_change_needs_a_review(tmp_path):
+    """Round 9: `git archive` also applies working-tree-encoding, ident,
+    text/eol and filter, so no attribute is safe to ignore."""
     repo = make_repo(tmp_path)
-    _write(repo / ".gitattributes", "*.md text eol=lf\n")
+    _write(repo / ".gitattributes",
+           "plugins/*/skills/*/SKILL.md ident\n")
     commit(repo)
     code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "git archive" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
     assert code == 0, out
 
 
@@ -953,3 +963,112 @@ def test_a_loop_removal_may_append_only_its_own_skill_to_the_ledger(tmp_path):
     loop_removal(repo)
     code, out = check(repo, tmp_path, loop_pr(f"retire-skill/{SKILL}", body=PASS), open_prs=[])
     assert code == 1 and "future-name" in out, out
+
+
+# Round 9.
+
+def test_a_quoted_value_continued_at_column_zero_is_ambiguous():
+    text = ('---\nname: widget-polisher\ndescription: "Invented thous*\n'
+            'allowed-tools: Bash\nnote: more*"\n---\n\n# body\n')
+    assert owd.frontmatter_is_ambiguous(text)
+    assert not owd.frontmatter_is_ambiguous(
+        "---\nname: a\ndescription: |\n  note: indented is fine\n---\n")
+
+
+def test_a_duplicate_name_with_a_mid_line_dash_run_counts_as_a_rename(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           f"---\nname: widget-pol  # renamed --- see below\ndescription: Invented.\n"
+           f"name: {SKILL}\n---\n\n# {SKILL}\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "read differently" in out, out
+
+
+@pytest.mark.parametrize("sub,mode", [("scripts/run.py", None), ("notes.md", "symlink")])
+def test_a_ready_loop_edit_may_change_only_plain_markdown(tmp_path, sub, mode):
+    repo = make_repo(tmp_path)
+    skill_dir = repo / "plugins" / PLUGIN / "skills" / SKILL
+    _write(skill_dir / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    if mode == "symlink":
+        blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w",
+                               "--stdin"], input="SKILL.md", check=True, capture_output=True,
+                              text=True).stdout.strip()
+        _git(repo, "add", "-A")
+        _git(repo, "update-index", "--add", "--cacheinfo",
+             f"120000,{blob},plugins/{PLUGIN}/skills/{SKILL}/{sub}")
+        _git(repo, "commit", "-q", "-m", "c")
+    else:
+        _write(skill_dir / sub, "print('hi')\n")
+        commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    assert code == 1 and "not a plain Markdown file" in out, out
+
+
+def test_a_plain_markdown_loop_edit_passes(tmp_path):
+    repo = make_repo(tmp_path)
+    skill_dir = repo / "plugins" / PLUGIN / "skills" / SKILL
+    _write(skill_dir / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    _write(skill_dir / "references" / "more.md", "# more\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 0, out
+
+
+def _lock(repo: Path, ref: str) -> None:
+    _json(repo / "skills.lock", {"registry": "Example/registry", "ref": ref,
+                                 "bundles": [PLUGIN], "skills": {}})
+
+
+def test_a_loop_lock_must_pin_the_content_that_merges(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _lock(repo, _git(repo, "rev-parse", "HEAD"))
+    commit(repo, "lock")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    md = repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md"
+    _write(md, f"---\nname: {SKILL}\ndescription: Invented.\nhooks: x\n---\n")
+    sneaky = commit(repo, "content with hooks")
+    _write(md, skill_md(SKILL) + "\nv2\n")
+    _lock(repo, sneaky)
+    commit(repo, "repin to the intermediate commit")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "must pin the content that merges" in out, out
+
+
+def test_a_loop_lock_pinned_to_its_content_commit_passes(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _lock(repo, _git(repo, "rev-parse", "HEAD"))
+    commit(repo, "lock")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    content = commit(repo, "content")
+    _lock(repo, content)
+    commit(repo, "repin")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("body", [
+    "Checked that `<!--` is ignored.\n\nAdversarial-review: pass https://github.com/x/y\n\n"
+    "Adversarial-review: block https://github.com/x/z\n",
+    "```html\n<!-- unclosed\n```\n\nAdversarial-review: pass https://github.com/x/y\n\n"
+    "Adversarial-review: block https://github.com/x/z\n",
+    "Adversarial-review: pass https://github.com/x/y\n\n### Adversarial-review: block x\n",
+    "Adversarial-review: pass https://github.com/x/y\n\n| Adversarial-review: block |\n",
+    "Adversarial-review: pass https://github.com/x/y\n\n"
+    "<details>\n<summary>Adversarial-review: block x</summary>\n</details>\n",
+])
+def test_a_visible_block_line_is_never_missed(body):
+    url, blocked = owd.review_line(body)
+    assert url and blocked
+
+
+def test_a_block_line_inside_a_real_comment_is_hidden():
+    url, blocked = owd.review_line("Adversarial-review: pass https://github.com/x/y\n\n"
+                                   "<!--\nAdversarial-review: block x\n-->\n")
+    assert url and not blocked

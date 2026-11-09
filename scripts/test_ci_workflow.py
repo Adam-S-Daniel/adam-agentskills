@@ -758,7 +758,9 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
     assert '--base "$base"' in step["run"]
     # The base branch's copy runs, so a PR cannot loosen its own judge.
     assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
-    assert 'python3 "$d/check.py"' in step["run"]
+    assert 'python3 -I "$d/check.py"' in step["run"]
+    # A loop pull request may not change the packages that judge it.
+    assert "may not change requirements-dev.txt" in step["run"]
     types = ci_triggers(load_ci())["pull_request"]["types"]
     assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
             "auto_merge_enabled", "auto_merge_disabled"} <= set(types)
@@ -801,3 +803,18 @@ def test_agent_checks_reports_on_every_pull_request_and_reruns_on_an_edit():
     narrowing = {"paths", "paths-ignore", "branches", "branches-ignore"}
     assert not (narrowing & set(pull_request)), "a filter would leave the required context unreported"
     assert {"opened", "edited", "reopened", "synchronize"} <= set(pull_request["types"])
+
+
+ONE_WAY_DOORS_RECHECK = "The one-way-door check still passes with the pull request as it is now"
+
+
+def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
+    """Round 9: several runs share a head sha, and the one that reports last
+    must have read the pull request's body, draft state, arming and base late."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    last = steps[-1]
+    assert last.get("name") == ONE_WAY_DOORS_RECHECK
+    assert last["if"] == "github.event_name == 'pull_request'"
+    assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"' in last["run"]
+    assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
+    assert "${{" not in last["run"]

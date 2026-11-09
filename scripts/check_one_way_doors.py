@@ -29,18 +29,23 @@ Check 1: shipped names change only with a recorded review
 A name is the marketplace's `name`, a plugin's `name` in
 .claude-plugin/marketplace.json, or `<plugin>/<skill>` for a skill that has
 `plugins/<plugin>/skills/<skill>/SKILL.md` and, when that SKILL.md changed, a
-frontmatter `name` equal to `<skill>`. A local plugin counts only while it is
+frontmatter `name` equal to `<skill>` that Claude Code reads the same way (no
+`---` inside a line, duplicate key or key-shaped line inside a value). A local plugin counts only while it is
 listed once, its `source` is `./plugins/<plugin>` and both manifests name it,
 and no `metadata.pluginRoot` moves it: a renamed bundle directory or manifest
 `name` is a rename too (round 2 on #134). A name present at the base and absent
 from the merge result was removed, renamed or moved between plugins. A name
 that arrives but is already in the ledger (a skill by basename, in any
 plugin) reuses a retired name. Either fails the check unless the pull request
-body's visible text (not an HTML comment or a code block) has the line
+body's visible paragraph text (not an HTML comment or a code block) has the
+line
 
     Adversarial-review: pass <https://github.com/... or https://claude.ai/...>
 
-and no `Adversarial-review: block` line. The link is the recorded review: a
+and no `Adversarial-review: block` line anywhere but an HTML comment (code,
+headings, tables and HTML blocks included). A changed marketplace `renames`
+map or any changed .gitattributes (git archive applies its rules) needs the
+same line. The link is the recorded review: a
 skills-evals removal reviewer's run (skills-evals#917) or any separately
 prompted agent's report. A person or an agent may write it; removals stay
 autonomous (owner decision 2026-11-09). The line is a record, not proof:
@@ -66,13 +71,17 @@ plus a Bot author. So here it must be:
   docs/skill-impact.md, README.md, skills.lock, the plugin's two manifests
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
-- when armed to auto-merge, not adding or changing `hooks` or
-  `allowed-tools` in the skill's frontmatter, not changing a frontmatter that
-  Claude Code could read differently from this check, and not touching the
-  skill's own hooks/ or bin/ (Decision 4 as the owner narrowed it on
-  2026-11-03: text-only changes auto-merge in any plugin; plugin-runtime-review
-  gates only a plugin's own hooks/ and bin/ and does not read frontmatter,
-  #135);
+- unless it is a draft (so whenever it could merge, armed or not), text
+  only: no added or changed `hooks` or `allowed-tools` in the skill's
+  frontmatter, no change to a frontmatter Claude Code could read differently
+  from this check, and nothing in the skill directory but regular Markdown
+  files (Decision 4 as the owner narrowed it on 2026-11-03: text-only changes
+  auto-merge in any plugin; plugin-runtime-review gates only a plugin's own
+  hooks/ and bin/ and does not read frontmatter, #135). A person who wants
+  such a change takes it to a branch outside the loop's prefixes;
+- when it changes skills.lock, pinning a commit in its own history whose
+  locked bundles' skills are exactly the merge result's, with nothing else in
+  the lock changed (the bootstrap installs from the lock's ref, not main);
 - a create or removal appending nothing to scripts/shipped_names.json but
   its own `<plugin>/<skill>`;
 - unless it is a draft, the oldest ready loop pull request the App has open
@@ -83,9 +92,10 @@ Config is read at the base, and CI runs the base branch's copy of this
 script, so a pull request cannot loosen the rules it is judged by by editing
 them; a file
 absent there (the pull request that adds it) is read from the merge result.
-A pull request can still edit ci.yml to drop the step, or change the
-dependencies the job installs before it, as it can for every check in that
-job.
+A loop pull request may not change requirements-dev.txt (the CI step
+refuses it before the check runs, since those packages are imported here). A
+pull request can still edit ci.yml to drop the step, as it can for every
+check in that job; the loop's App has no `workflows` permission to push one.
 
 Inputs and trust
 -----------------
@@ -124,12 +134,12 @@ REVIEW_PASS_RE = re.compile(
     r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+"
     r"(https://(?:github\.com|claude\.ai)/\S+)[ \t]*$", re.MULTILINE)
 #: A block line counts wherever a reader could see it (a list item, a quote,
-#: bold text, <details>), in any case; only HTML comments hide it. It must
+#: a heading, a table row, bold text, code, <details>), in any case; only HTML
+#: comments, as the Markdown parser finds them, hide it. It must
 #: start its line, as skills-evals' removal reviewer writes it, so a finding
 #: that merely quotes the phrase mid-sentence does not fail a passing review.
-REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)]*Adversarial-review\W*block\b",
+REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)#|]*Adversarial-review\W*block\b",
                              re.MULTILINE | re.IGNORECASE)
-_HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
 WAIVERS = "scripts/skills_waivers.yml"
 LENGTH_WAIVER_CLASS = "length-limit"
 _GIT_VERBATIM = ("-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.quotepath=off")
@@ -193,27 +203,46 @@ def files_under(rev: str, root: str) -> List[str]:
     return [p for p in proc.stdout.splitlines() if p]
 
 
-def _all_files(rev: str) -> List[str]:
-    proc = _git("ls-tree", "-r", "-z", "--name-only", "--full-tree", rev)
+def _mode(rev: str, path: str) -> Optional[str]:
+    proc = _git("ls-tree", "-z", rev, "--", path)
     if proc.returncode != 0:
-        raise CheckError(f"git ls-tree {rev[:12]} failed: {proc.stderr.strip()}")
-    return [p for p in proc.stdout.split("\0") if p]
+        raise CheckError(f"git ls-tree {rev[:12]} {path} failed: {proc.stderr.strip()}")
+    entry = proc.stdout.split("\0")[0]
+    return entry.split(" ", 1)[0] if entry else None
 
 
-def export_attrs(rev: str, paths: List[str]) -> Dict[str, Tuple[str, str]]:
-    """{path: (export-ignore, export-subst)} as `git archive rev` would see
-    them, from the .gitattributes files in rev's tree."""
-    proc = subprocess.run(
-        ["git", *_GIT_VERBATIM, "check-attr", "-z", "--stdin", "--source", rev,
-         "export-ignore", "export-subst"],
-        input="\0".join(paths) + "\0", capture_output=True, text=True, encoding="utf-8")
-    if proc.returncode != 0:
-        raise CheckError(f"git check-attr --source {rev[:12]} failed: {proc.stderr.strip()}")
-    fields = proc.stdout.split("\0")
-    out: Dict[str, Dict[str, str]] = {}
-    for i in range(0, len(fields) - 2, 3):
-        out.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
-    return {p: (v.get("export-ignore", ""), v.get("export-subst", "")) for p, v in out.items()}
+def _tree(rev: str, path: str) -> Optional[str]:
+    proc = _git("rev-parse", "-q", "--verify", f"{rev}:{path}")
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _lock_matches_merge(base: str, merged: str, head: Optional[str]) -> List[str]:
+    """A loop pull request re-pins skills.lock to its own content commit, and
+    the bootstrap installs from that ref, not from main. So the ref must hold
+    exactly what the merge result holds under every locked bundle, and nothing
+    else in the lock may change."""
+    old, new = _json_at(base, "skills.lock"), _json_at(merged, "skills.lock")
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return ["skills.lock is not a JSON object at the base and in the merge result."]
+    moving = ("ref", "generated_from", "skills")
+    keep = lambda d: {k: v for k, v in d.items() if k not in moving}  # noqa: E731
+    if keep(old) != keep(new):
+        return ["skills.lock may change only its `ref`, `generated_from` and `skills` in "
+                "an evals-loop pull request."]
+    ref = new.get("ref")
+    if "generated_from" in new and new["generated_from"] != ref:
+        return ["skills.lock's `generated_from` must equal its `ref`."]
+    if not isinstance(ref, str) or not re.fullmatch(r"[0-9a-f]{40}", ref):
+        return ["skills.lock's `ref` is not a full commit sha."]
+    if head is None or _git("merge-base", "--is-ancestor", ref, head).returncode != 0:
+        return [f"skills.lock's `ref` {ref[:12]} is not in this pull request's history."]
+    errors = []
+    for bundle in new.get("bundles") or []:
+        path = f"plugins/{bundle}/skills"
+        if _tree(ref, path) != _tree(merged, path):
+            errors.append(f"skills.lock pins {ref[:12]}, whose {_q(path)} differs from the "
+                          "merge result's; the lock must pin the content that merges.")
+    return errors
 
 
 def changed_paths(base: str, merged: str) -> List[str]:
@@ -285,6 +314,7 @@ def frontmatter(text: str) -> dict:
 #: How Claude Code finds a SKILL.md's frontmatter: it stops at the first
 #: `---` anywhere, even mid-line, where frontmatter() stops at a line that is
 #: only `---`. A file the two read differently can hide a key from this check.
+_KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 _CC_FRONTMATTER_RE = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
 
 
@@ -318,10 +348,16 @@ def frontmatter_is_ambiguous(text: str) -> bool:
 
     _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
     try:
-        yaml.load(region, Loader=_Strict)  # noqa: S506 - SafeLoader subclass
+        data = yaml.load(region, Loader=_Strict)  # noqa: S506 - SafeLoader subclass
     except yaml.YAMLError:
         return True
-    return False
+    # Claude Code's YAML parser is stricter than PyYAML (it rejects a quoted
+    # scalar continued at column 0) and then repairs the text line by line, so
+    # a line that looks like a top-level key is one to it. Every such line must
+    # be a top-level key here too, once each.
+    shaped = [m.group(1) for m in (_KEY_LINE_RE.match(line) for line in region.split("\n"))
+              if m]
+    return not isinstance(data, dict) or sorted(shaped) != sorted(map(str, data))
 
 
 def frontmatter_name(text: str) -> Optional[str]:
@@ -368,7 +404,8 @@ def present_names(rev: str, verify_against: Optional[str] = None,
                 continue
             if verify_against is not None:
                 if blob_id(rev, path) != blob_id(verify_against, path):
-                    if frontmatter_name(show(rev, path) or "") != skill:
+                    text = show(rev, path) or ""
+                    if frontmatter_name(text) != skill or frontmatter_is_ambiguous(text):
                         if bad is not None:
                             bad.append(path)
                         continue
@@ -395,7 +432,8 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
     from markdown_it import MarkdownIt  # third-party; only when a name is lost
 
     parts = []
-    for token in MarkdownIt("commonmark").parse(body or ""):
+    tokens = MarkdownIt("commonmark").parse(body or "")
+    for token in tokens:
         if token.type != "inline":
             continue
         for child in token.children or []:
@@ -407,7 +445,15 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
         parts.append("\n")
     visible = "".join(parts)
     match = REVIEW_PASS_RE.search(visible)
-    blocked = bool(REVIEW_BLOCK_RE.search(_HTML_COMMENT_RE.sub("", body or "")))
+    # A block line counts in code too (a reader sees it), and comments are
+    # found by the parser, not a regex an unclosed `<!--` in code could fool.
+    shown = [visible] + [t.content for t in tokens if t.type in ("fence", "code_block")
+                         or (t.type == "html_block"
+                             and not t.content.lstrip().startswith("<!--"))]
+    # Tags are markup, not text: `<summary>Adversarial-review: block` starts a
+    # visible line.
+    shown = [re.sub(r"<[^>\n]*>", "", text) for text in shown]
+    blocked = any(REVIEW_BLOCK_RE.search(text) for text in shown)
     return (match.group(1) if match else None), blocked
 
 
@@ -458,7 +504,9 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     after = present_names(merged, verify_against=base, bad=bad)
     for path in bad:
         errors.append(f"{_q(path)} has no parsable frontmatter `name` equal to its "
-                      "directory. A skill's name is its directory name; fix the "
+                      "directory, or frontmatter Claude Code could read differently (a "
+                      "`---` inside a line, a duplicate key, or a key-shaped line inside "
+                      "a value). A skill's name is its directory name; fix the "
                       "frontmatter (or rename both, which is a one-way door).")
     if not after["marketplace"]:
         errors.append(f"{MARKETPLACE} in the merge result has no readable `name`.")
@@ -479,24 +527,15 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     reused = [(key, name) for key in LEDGER_KEYS for name in sorted(after[key] - before[key])
               if _basename(key, name) in {_basename(key, n) for n in recorded_base[key]}]
     doors = [("disappear", lost), ("reuse a retired name", reused)]
-    # `git archive`, which builds every lock, honours export-ignore and
-    # export-subst from .gitattributes, so a rule there can drop or rewrite a
-    # skill in every lock while the object store (what this check reads)
-    # still has it. Any changed .gitattributes that uses either is a door.
-    # Ask git rather than read the text: a macro (`[attr]x export-ignore`)
-    # sets the attribute without naming it where it is used.
+    # `git archive`, which builds every lock, applies .gitattributes:
+    # export-ignore drops a file, export-subst, ident, text/eol, filter and
+    # working-tree-encoding rewrite one, and a macro can set any of them. So
+    # any changed .gitattributes is a door, whatever it says.
     attr_files = [p for p in changed_paths(base, merged)
                   if posixpath.basename(p) == ".gitattributes"]
     if attr_files:
-        # Directories too: `git archive` drops a directory whose own path is
-        # export-ignore, and that attribute does not show on the files in it.
-        files = set(_all_files(base)) | set(_all_files(merged))
-        paths = sorted(files | {posixpath.dirname(f)[:i] for f in files
-                                for i, c in enumerate(posixpath.dirname(f) + "/")
-                                if c == "/" and i})
-        if export_attrs(base, paths) != export_attrs(merged, paths):
-            doors.append(("change what `git archive` exports",
-                          [("marketplace", p) for p in attr_files]))
+        doors.append(("change what `git archive` exports",
+                      [("marketplace", p) for p in attr_files]))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
@@ -552,7 +591,8 @@ def _only_drops_length_waiver(base: str, merged: str, skill_md: str) -> bool:
     return len(target) == 1 and new_w == [w for w in old_w if w is not target[0]]
 
 
-def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) -> List[str]:
+def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
+                  head: Optional[str] = None) -> List[str]:
     config = _json_at(base, LOOP_CONFIG)
     if config is None:
         config = _json_at(merged, LOOP_CONFIG)
@@ -652,25 +692,36 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
     head_fm = frontmatter(head_text) if at_head else {}
     changed_keys = [k for k in SKILL_RUNTIME_KEYS
                     if k in head_fm and head_fm.get(k) != base_fm.get(k)]
-    if pr.get("auto_merge"):
-        if changed_keys:
-            errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys} and "
-                          "the pull request is armed to auto-merge; ADR 0021 Decision 4 "
-                          "never merges a change in what a skill runs or may run "
-                          "automatically. Disarm it for a person to review.")
-        elif at_head and at_base != at_head and frontmatter_is_ambiguous(head_text):
-            errors.append(f"{_q(skill_md)}'s frontmatter could read differently to Claude "
-                          "Code (a `---` inside a line, or a duplicate key), so this check "
-                          "cannot tell whether it adds `hooks` or `allowed-tools`. Fix the "
-                          "frontmatter, or disarm auto-merge for a person to review.")
-        # plugin-runtime-review gates a plugin's own hooks/ and bin/, not a
-        # skill's, so a skill-level hooks/ or bin/ is held here instead.
-        runtime = [p for p in changed if p.startswith(f"{root}/skills/{skill}/hooks/")
-                   or p.startswith(f"{root}/skills/{skill}/bin/")]
-        for path in runtime:
-            errors.append(f"{_q(path)} is code the skill runs, and the pull request is "
-                          "armed to auto-merge; ADR 0021 Decision 4 holds it for a person. "
-                          "Disarm auto-merge.")
+    # Held whenever the pull request could merge: armed, or ready for review
+    # (arming a ready pull request whose checks are green merges it before a
+    # new run of this check registers). The loop lowers such a change to a
+    # draft; a person who wants it takes it to a branch outside the loop.
+    held = bool(pr.get("auto_merge")) or not pr.get("draft")
+    hold = ("ADR 0021 Decision 4 never merges a change in what a skill runs or may run "
+            "automatically. Leave it a draft, or take it to a branch outside the loop's "
+            "prefixes for a person to review.")
+    if held and changed_keys:
+        errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys}. {hold}")
+    elif held and at_head and at_base != at_head and frontmatter_is_ambiguous(head_text):
+        errors.append(f"{_q(skill_md)}'s frontmatter could read differently to Claude "
+                      "Code (a `---` inside a line, a duplicate key, or a key-shaped line "
+                      "inside a value), so this check cannot tell whether it adds `hooks` "
+                      f"or `allowed-tools`. Fix the frontmatter. {hold}")
+    if held:
+        # Text only: plugin-runtime-review gates a plugin's own hooks/ and bin/,
+        # not a skill's scripts, so anything in the skill but a regular
+        # Markdown file is code (or a link to code) and is held here.
+        for path in changed:
+            if not path.startswith(f"{root}/skills/{skill}/"):
+                continue
+            mode = _mode(merged, path)
+            if mode is None:
+                continue  # deleted
+            if not path.endswith(".md") or mode != "100644":
+                errors.append(f"{_q(path)} is not a plain Markdown file (mode {mode}); "
+                              f"only text auto-merges. {hold}")
+    if "skills.lock" in changed:
+        errors += _lock_matches_merge(base, merged, head)
 
     # A draft is never auto-merged, and Decision 5 lets the draft-skill gate
     # open one while another loop PR is open, so the slot rule skips drafts;
@@ -700,8 +751,10 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
 
 def run(base: str, head: str, pr: dict, open_prs: Optional[list]) -> List[str]:
     base = resolve(base)
-    merged = merge_result(base, resolve(head))
-    return check_names(base, merged, pr.get("body")) + check_loop_pr(base, merged, pr, open_prs)
+    head = resolve(head)
+    merged = merge_result(base, head)
+    return check_names(base, merged, pr.get("body")) + check_loop_pr(base, merged, pr,
+                                                                     open_prs, head)
 
 
 def _escape(message: str) -> str:

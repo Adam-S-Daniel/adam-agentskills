@@ -114,7 +114,13 @@ SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 REVIEW_PASS_RE = re.compile(
     r"^[ \t]*Adversarial-review:[ \t]*pass[ \t]+"
     r"(https://(?:github\.com|claude\.ai)/\S+)[ \t]*$", re.MULTILINE)
-REVIEW_BLOCK_RE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*block\b", re.MULTILINE)
+#: A block counts wherever a reader could see it (inside <details> too), in
+#: any case: only HTML comments hide it. Too strict is the safe direction.
+REVIEW_BLOCK_RE = re.compile(r"^[ \t]*Adversarial-review:[ \t]*block\b",
+                             re.MULTILINE | re.IGNORECASE)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
+WAIVERS = "scripts/skills_waivers.yml"
+LENGTH_WAIVER_CLASS = "length-limit"
 _GIT_VERBATIM = ("-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "core.quotepath=off")
 
 
@@ -325,7 +331,8 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
         parts.append("\n")
     visible = "".join(parts)
     match = REVIEW_PASS_RE.search(visible)
-    return (match.group(1) if match else None), bool(REVIEW_BLOCK_RE.search(visible))
+    blocked = bool(REVIEW_BLOCK_RE.search(_HTML_COMMENT_RE.sub("", body or "")))
+    return (match.group(1) if match else None), blocked
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +407,27 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     return errors
 
 
+def _only_drops_length_waiver(base: str, merged: str, skill_md: str) -> bool:
+    import yaml  # third-party; only for an improvement that touches the file
+
+    try:
+        old = yaml.safe_load(show(base, WAIVERS) or "")
+        new = yaml.safe_load(show(merged, WAIVERS) or "")
+    except yaml.YAMLError:
+        return False
+    if not isinstance(old, dict) or not isinstance(new, dict):
+        return False
+    if {k: v for k, v in old.items() if k != "waivers"} != \
+            {k: v for k, v in new.items() if k != "waivers"}:
+        return False
+    old_w, new_w = old.get("waivers") or [], new.get("waivers") or []
+    if not isinstance(old_w, list) or not isinstance(new_w, list):
+        return False
+    target = [w for w in old_w if isinstance(w, dict) and w.get("klass") == LENGTH_WAIVER_CLASS
+              and w.get("registry") == "adam-agentskills" and w.get("path") == skill_md]
+    return len(target) == 1 and new_w == [w for w in old_w if w is not target[0]]
+
+
 def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) -> List[str]:
     config = _json_at(base, LOOP_CONFIG)
     if config is None:
@@ -454,6 +482,11 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
     allowed |= {f"{root}/{m}" for m in MANIFESTS}
     if kind in ("create", "remove"):
         allowed |= {"scripts/plugin_layout.json", LEDGER}
+    if kind == "edit" and WAIVERS in changed and _only_drops_length_waiver(base, merged, skill_md):
+        # A trim retires the skill's own length-limit waiver (skills-evals'
+        # improve_gate.remove_length_waiver), or check_skills.py fails on a
+        # stale waiver. Nothing else in the file may change.
+        allowed.add(WAIVERS)
     outside = [p for p in changed
                if p not in allowed and not p.startswith(f"{root}/skills/{skill}/")]
     for path in outside:

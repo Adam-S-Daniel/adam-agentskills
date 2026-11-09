@@ -63,7 +63,8 @@ merge-base, which a criss-cross history can make lie):
   stops being `plugins/<name>`, a manifest `name` changes, it is listed twice
   or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
-  `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
+  `Adversarial-review: pass <link>` and no `Adversarial-review: block` line
+  (a block counts anywhere a reader could see it, in any case).
   The link must be on github.com or claude.ai, and the line must be visible
   text, not inside an HTML comment or a code block. A name that disappears
   must also be in `scripts/shipped_names.json`.
@@ -75,6 +76,9 @@ merge-base, which a criss-cross history can make lie):
   request from that App open. Text-only changes auto-merge in any plugin
   (owner decision 2026-11-03); a skill's own `hooks/` or `bin/` is held by
   the required `plugin-runtime-review` gate.
+
+A pull request retargeted to a new base is checked again by the `edited`
+run; until that run registers (seconds), the previous result still shows.
 
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.

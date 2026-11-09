@@ -135,9 +135,13 @@ adversarial review found both were prose only.
   after skills-evals' reviewer
   ([skills-evals#922](https://github.com/Adam-S-Daniel/skills-evals/pull/922))
   does; a `block` result still stops the loop until a person merges or
-  closes that pull request, by design.
+  closes that pull request, by design. A new skill that reuses a retired name
+  fails the same way until the draft lane refuses such names
+  ([skills-evals#918](https://github.com/Adam-S-Daniel/skills-evals/issues/918)).
 - **Decision 3's path list, corrected.** A new skill also edits
-  `scripts/plugin_layout.json` (the draft lane always has). A create or a
+  `scripts/plugin_layout.json` (the draft lane always has), and an
+  improvement that trims a skill may remove that skill's own `length-limit`
+  waiver from `scripts/skills_waivers.yml` and nothing else in it. A create or a
   removal may append the skill to `scripts/shipped_names.json`; a removal of
   a skill not yet listed there must (every skill on `main` on 2026-11-09 is
   listed). skills-evals' lanes do not write it yet; until they do, a removal

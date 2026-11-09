@@ -664,3 +664,71 @@ def test_a_loop_draft_may_open_while_another_loop_pr_is_open(tmp_path):
     pr["draft"] = False
     code, out = check(repo, tmp_path, pr, open_prs=[open_pr(4, f"eval-improve/{OTHER}")])
     assert code == 1 and "[4]" in out, out
+
+
+# ---------------------------------------------------------------------------
+# Round 4 findings
+# ---------------------------------------------------------------------------
+
+def _waivers(repo: Path, entries) -> None:
+    import yaml
+    _write(repo / "scripts" / "skills_waivers.yml", yaml.safe_dump({"waivers": entries}))
+
+
+def _waiver(skill: str, klass: str = "length-limit") -> dict:
+    return {"klass": klass, "registry": "adam-agentskills",
+            "path": f"plugins/{PLUGIN}/skills/{skill}/SKILL.md", "reason": "Invented."}
+
+
+def _trim_repo(tmp_path: Path) -> Path:
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _waivers(repo, [_waiver(SKILL), _waiver(OTHER)])
+    commit(repo, "waivers")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nshorter\n")
+    return repo
+
+
+def test_a_trim_may_retire_its_own_length_waiver(tmp_path):
+    """Round 4: skills-evals' improve lane removes the trimmed skill's
+    length-limit waiver; failing that would hold the loop slot."""
+    repo = _trim_repo(tmp_path)
+    _waivers(repo, [_waiver(OTHER)])
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True), open_prs=[])
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("entries", [
+    [_waiver(SKILL)],                          # drops another skill's waiver
+    [],                                        # drops both
+    [_waiver(SKILL), _waiver(OTHER), _waiver("x")],  # adds one
+])
+def test_a_trim_may_change_nothing_else_in_the_waivers(tmp_path, entries):
+    repo = _trim_repo(tmp_path)
+    _waivers(repo, entries)
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True), open_prs=[])
+    assert code == 1 and "skills_waivers.yml" in out, out
+
+
+@pytest.mark.parametrize("wrapper", [
+    "<details>\nAdversarial-review: block https://github.com/Example/registry/pull/2\n</details>",
+    "ADVERSARIAL-REVIEW: BLOCK https://github.com/Example/registry/pull/2",
+])
+def test_a_visible_block_line_anywhere_fails(tmp_path, wrapper):
+    repo = make_repo(tmp_path)
+    remove_skill(repo)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json(body=f"{wrapper}\n\n{PASS}\n"))
+    assert code == 1 and "block" in out, out
+
+
+def test_a_block_line_inside_a_comment_does_not_count(tmp_path):
+    repo = make_repo(tmp_path)
+    remove_skill(repo)
+    commit(repo)
+    body = f"<!--\nAdversarial-review: block https://github.com/Example/registry/pull/2\n-->\n\n{PASS}\n"
+    code, out = check(repo, tmp_path, pr_json(body=body))
+    assert code == 0, out

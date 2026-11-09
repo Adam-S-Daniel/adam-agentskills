@@ -86,6 +86,10 @@ merge-base, which a criss-cross history can make lie):
   does not count as present. A `SKILL.md` directly in a plugin's `skills/`
   makes Claude Code load only that one, so every skill of the plugin counts
   as gone.
+- **A new path under `plugins/` or `.claude-plugin/` that a
+  case-insensitive file system could merge with another** (two names, or a
+  name and a directory, that fold to one; or any non-ASCII name) needs the
+  same line: on a Windows or macOS checkout one replaces the other.
 - **A changed `renames` map in the marketplace, or any changed
   `.gitattributes`** (`git archive`, and so every lock, applies its
   `export-ignore`, `export-subst`, `ident`, `text`/`eol`, `filter` and
@@ -113,7 +117,10 @@ merge-base, which a criss-cross history can make lie):
   ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and
   `bin/`, so it does not hold these.
 
-The check runs twice in the job: before the test suites, and again as the
+Before anything in the job runs a pull request's code (the pip install
+reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
+step refuses a loop pull request that changes any path outside the ones its
+lanes write. The check runs twice in the job: before the test suites, and again as the
 job's last step with the pull request's body, draft state, arming and base
 read afresh, so the run that reports last has read them last. A pull
 request retargeted to a new base is checked again by the `edited` run;
@@ -126,7 +133,8 @@ requires branches to be up to date (it does not today; #137).
 A skill body that runs a shell command on load (an exclamation mark then a
 backtick span, or a fence opened with three backticks and `!`) is refused in
 a loop pull request's SKILL.md by this check, matched the way Claude Code
-matches it (after any Unicode space, and a fence anywhere in a line). The
+matches it (after any Unicode space or a byte-order mark, a fence anywhere in
+a line, and with `$ARGUMENTS`-style placeholders substituted first). The
 required `agent-checks` job's `skill-shell` check covers other pull
 requests, with a narrower match, and `disableSkillShellExecution` turns
 execution off where it is set.

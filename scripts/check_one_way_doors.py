@@ -99,8 +99,9 @@ Config is read at the base, and CI runs the base branch's copy of this
 script, so a pull request cannot loosen the rules it is judged by by editing
 them; a file
 absent there (the pull request that adds it) is read from the merge result.
-A loop pull request may not change requirements-dev.txt (the CI step
-refuses it before the check runs, since those packages are imported here). A
+A loop pull request may change only the paths its lanes write; a bash-only
+CI step refuses anything else before the job runs any of its code (the pip
+install, the skill gates), since that code could make this check pass. A
 pull request can still edit ci.yml to drop the step, as it can for every
 check in that job; the loop's App has no `workflows` permission to push one.
 
@@ -191,10 +192,14 @@ def show(rev: str, path: str) -> Optional[str]:
     """File content at rev, or None when the path is not a file there."""
     if _git("cat-file", "-e", f"{rev}:{path}").returncode != 0:
         return None
-    proc = _git("show", f"{rev}:{path}")
+    # Bytes, decoded without newline translation: a `\r` must reach the
+    # ambiguity test as itself (round 13).
+    proc = subprocess.run(["git", *_GIT_VERBATIM, "show", f"{rev}:{path}"],
+                          capture_output=True)
     if proc.returncode != 0:
-        raise CheckError(f"git show {rev}:{path} failed: {proc.stderr.strip()}")
-    return proc.stdout
+        raise CheckError(f"git show {rev}:{path} failed: "
+                         f"{proc.stderr.decode('utf-8', 'replace').strip()}")
+    return proc.stdout.decode("utf-8", "replace")
 
 
 def blob_id(rev: str, path: str) -> Optional[str]:
@@ -267,6 +272,26 @@ def _lock_matches_merge(base: str, merged: str, head: Optional[str], key: str,
         errors.append(f"skills.lock pins {ref[:12]}, whose .gitattributes differ from the "
                       "merge result's, so `git archive` would export something else.")
     return errors
+
+
+def _path_hazards(rev: str) -> Set[str]:
+    """Under plugins/ and .claude-plugin/: each non-ASCII path, and each pair
+    of distinct paths or directories that fold to one name."""
+    proc = _git("ls-tree", "-r", "-z", "--name-only", "--full-tree", rev)
+    if proc.returncode != 0:
+        raise CheckError(f"git ls-tree {rev[:12]} failed: {proc.stderr.strip()}")
+    paths = [p for p in proc.stdout.split("\0")
+             if p.startswith("plugins/") or p.startswith(".claude-plugin/")]
+    names = set(paths)
+    for path in paths:
+        parts = path.split("/")
+        names.update("/".join(parts[:i]) for i in range(1, len(parts)))
+    hazards = {f"non-ASCII {n}" for n in names if not n.isascii()}
+    by_fold: Dict[str, Set[str]] = {}
+    for name in names:
+        by_fold.setdefault(_fold(name), set()).add(name)
+    hazards |= {" = ".join(sorted(group)) for group in by_fold.values() if len(group) > 1}
+    return hazards
 
 
 def _gitattributes(rev: str) -> List[str]:
@@ -346,6 +371,7 @@ def frontmatter(text: str) -> dict:
 #: How Claude Code finds a SKILL.md's frontmatter: it stops at the first
 #: `---` anywhere, even mid-line, where frontmatter() stops at a line that is
 #: only `---`. A file the two read differently can hide a key from this check.
+_ODD_CHAR_RE = re.compile("[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029\ufeff]")
 _KEY_LINE_RE = re.compile(r"^([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]|$)")
 _CC_FRONTMATTER_RE = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
 
@@ -360,6 +386,11 @@ def frontmatter_is_ambiguous(text: str) -> bool:
     text = text[1:] if text.startswith("\ufeff") else text
     if text.startswith("\ufeff"):
         return True  # a second mark: Claude Code then finds no frontmatter
+    head = _CC_FRONTMATTER_RE.match(text)
+    if head and _ODD_CHAR_RE.search(head.group(0)):
+        # PyYAML breaks lines at U+0085, U+2028 and U+2029 and strips other
+        # controls where Bun's YAML (Claude Code's) rejects the whole block.
+        return True
     lines = text.split("\n")
     if not lines or lines[0].strip() != "---":
         return _CC_FRONTMATTER_RE.match(text) is not None
@@ -432,7 +463,7 @@ def _description_shape_ok(block: List[str]) -> bool:
     one-line plain scalar (round 12: `'x'# y` drops Claude Code's whole
     frontmatter)."""
     import json as _json
-    value = block[0].split(":", 1)[1].strip()
+    value = block[0].split(":", 1)[1].strip(" \t")
     rest = block[1:]
     if _BLOCK_HEADER_RE.match(value):
         return all(not line.strip() or line.startswith("  ") for line in rest)
@@ -445,15 +476,18 @@ def _description_shape_ok(block: List[str]) -> bool:
             return False
     if value.startswith("'"):
         return re.fullmatch(r"'(?:[^']|'')*'", value) is not None
-    return bool(value) and value[0] not in "[]{}&*!|>%@`#,?:-" and " #" not in value \
+    leading_ok = value[:1] not in "-?:" or (len(value) > 1 and not value[1].isspace())
+    return bool(value) and value[0] not in "[]{}&*!|>%@`#," and leading_ok \
+        and " #" not in value \
         and ": " not in value
 
 
 #: What Claude Code runs from a skill body when skill shell execution is on:
 #: `!` then a backtick span after any (Unicode) space or at a line start, and
 #: a ```! fence anywhere. Matched as Claude Code does, not as a grep would.
-_SKILL_SHELL_RES = (re.compile(r"(?:^|(?<=\s))!`[^`]+`", re.MULTILINE),
+_SKILL_SHELL_RES = (re.compile(r"(?:^|(?<=[\s\ufeff]))!`[^`]+`", re.MULTILINE),
                     re.compile(r"```!"))
+_PLACEHOLDER_RE = re.compile(r"\$ARGUMENTS(?:\[\d+\])?|\$\d+|\$\{[^}\n]*\}")
 #: Names Windows will not create, whatever the extension (git refuses them).
 _WINDOWS_RESERVED_RE = re.compile(r"^(?:con|prn|aux|nul|com[0-9]|lpt[0-9])(?:\..*)?$",
                                   re.IGNORECASE)
@@ -477,7 +511,10 @@ def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[st
     if "description" not in head or not _description_shape_ok(head["description"]):
         errors.append("a `description` that is not a plain line, one complete quoted "
                       "line, or a `>`/`|` block of indented lines")
-    if any(r.search(head_text) for r in _SKILL_SHELL_RES):
+    # Claude Code substitutes arguments before it looks, so try the body with
+    # each placeholder empty and as a space (round 13: `$ARGUMENTS!` + a span).
+    bodies = [_PLACEHOLDER_RE.sub(sub, head_text) for sub in ("", " ")]
+    if any(r.search(body) for r in _SKILL_SHELL_RES for body in bodies):
         errors.append("a shell command Claude Code would run on load (`!` and a backtick "
                       "span, or a ```! fence)")
     commented = sorted(k for k, block in head.items() if k != "description"
@@ -715,6 +752,14 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     if attr_files:
         doors.append(("change what `git archive` exports",
                       [("marketplace", p) for p in attr_files]))
+    # Paths a case-insensitive checkout (NTFS, APFS) merges into one: on a
+    # consumer's disk one replaces the other, and a SKILL.md or a skills/
+    # directory can go. Any new collision, or any new non-ASCII name (whose
+    # case folding differs between file systems), is a door.
+    hazards = sorted(_path_hazards(merged) - _path_hazards(base))
+    if hazards:
+        doors.append(("add a path a case-insensitive file system could merge",
+                      [("marketplace", h) for h in hazards]))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):

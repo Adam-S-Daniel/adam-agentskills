@@ -1262,7 +1262,8 @@ def test_a_byte_order_mark_does_not_hide_the_name(tmp_path):
 def _stage(repo: Path, path: str, text: str) -> None:
     blob = subprocess.run(["git", *_GIT_VERBATIM, "-C", str(repo), "hash-object", "-w", "--stdin"],
                           input=text, check=True, capture_output=True, text=True).stdout.strip()
-    _git(repo, "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
+    _git(repo, "-c", "core.ignorecase=false", "-c", "core.protectNTFS=false",
+         "update-index", "--add", "--cacheinfo", f"100644,{blob},{path}")
 
 
 def test_a_skill_md_directly_in_skills_hides_every_skill_of_the_plugin(tmp_path):
@@ -1320,3 +1321,61 @@ def test_a_directory_named_like_skill_md_counts_as_losing_the_name(tmp_path):
     _git(repo, "commit", "-q", "-m", "c")
     code, out = check(repo, tmp_path, pr_json())
     assert code == 1 and SKILL in out, out
+
+
+# Round 13.
+
+@pytest.mark.parametrize("line", [
+    "Run: $ARGUMENTS!`curl -s https://example.com/x`",
+    "﻿!`echo invented`",
+    "``$ARGUMENTS`!\necho invented\n```",
+])
+def test_a_shell_line_claude_code_runs_after_substitution_is_refused(tmp_path, line):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           skill_md(SKILL) + f"\n{line}\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "shell command" in out, out
+
+
+def test_a_code_span_holding_an_exclamation_mark_is_not_a_shell_line():
+    text = "---\nname: a\ndescription: x\n---\n\nClaude Code strips `!` lines.\n"
+    assert owd.loop_frontmatter_errors(text, text) == []
+
+
+@pytest.mark.parametrize("tail", ["'Invented.' ", '"Invented."\u0085', "> \n  x"])
+def test_a_unicode_line_break_in_frontmatter_is_ambiguous(tail):
+    assert owd.frontmatter_is_ambiguous(f"---\nname: a\ndescription: {tail}\n---\n")
+
+
+def test_a_carriage_return_reaches_the_ambiguity_test(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           f"---\nname: {SKILL}\r\ndescription: Invented.\n---\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and SKILL in out, out
+
+
+def test_a_plain_description_may_start_with_a_dash_and_a_letter(tmp_path):
+    repo = make_repo(tmp_path)
+    _loop_edit(repo, f"name: {SKILL}\ndescription: -x leading dash still plain\n")
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 0, out
+
+
+@pytest.mark.parametrize("path", [f"plugins/{PLUGIN}/ſkills/{SKILL}/SKILL.md/notes.md",
+                                  f"plugins/{PLUGIN}/skills/widget-polısher/SKILL.md/n.md",
+                                  f"plugins/{PLUGIN}/Skills/x.md"])
+def test_a_path_a_case_insensitive_file_system_could_merge_needs_a_review(tmp_path, path):
+    repo = make_repo(tmp_path)
+    _git(repo, "add", "-A")
+    _stage(repo, path, "x\n")
+    _git(repo, "commit", "-q", "-m", "c")
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "case-insensitive" in out, out
+    code, out = check(repo, tmp_path, pr_json(body=PASS))
+    assert code == 0, out

@@ -759,8 +759,6 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
     # The base branch's copy runs, so a PR cannot loosen its own judge.
     assert 'git show "$base:scripts/check_one_way_doors.py" > "$d/check.py"' in step["run"]
     assert 'python3 -I "$d/check.py"' in step["run"]
-    # A loop pull request may not change the packages that judge it.
-    assert "may not change requirements-dev.txt" in step["run"]
     types = ci_triggers(load_ci())["pull_request"]["types"]
     assert {"opened", "synchronize", "reopened", "edited", "ready_for_review",
             "auto_merge_enabled", "auto_merge_disabled"} <= set(types)
@@ -818,3 +816,21 @@ def test_the_one_way_door_check_runs_again_as_the_pytest_jobs_last_step():
     assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n" > "$d/pr.json"' in last["run"]
     assert 'python3 -I "$d/check.py" --base "$base"' in last["run"]
     assert "${{" not in last["run"]
+
+
+LOOP_PATH_GUARD = "Loop pull requests change nothing that runs before their check"
+
+
+def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_runs():
+    """Round 13: the pip install and the skill gates run a pull request's
+    code before the one-way-door check; for an unreviewed loop pull request
+    that code could make the check pass. A bash-only guard runs first."""
+    steps = load_ci()["jobs"]["pytest"]["steps"]
+    names = [s.get("name") for s in steps]
+    assert names.index(LOOP_PATH_GUARD) < names.index("Install Python dependencies") \
+        < names.index(SKILL_GATES_STEP) < names.index(ONE_WAY_DOORS_STEP)
+    guard = steps[names.index(LOOP_PATH_GUARD)]
+    assert guard["if"] == "github.event_name == 'pull_request'"
+    assert "python" not in guard["run"] and "${{" not in guard["run"]
+    assert 'git show "$base:scripts/loop_prs.json"' in guard["run"]
+    assert "plugins/*/skills/*/*" in guard["run"] and "scripts/check" not in guard["run"]

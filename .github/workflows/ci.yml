@@ -438,6 +438,39 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
+      # An evals-loop pull request merges with no person reading it, and the
+      # steps below run its code before the one-way-door check judges it: the
+      # pip install reads its requirements-dev.txt, the skill gates run its
+      # scripts/. Either could make the check report a pass. So before any of
+      # that, with git, jq and bash only, a loop pull request may change only
+      # the paths its lanes write; the check then holds it to the rest.
+      - name: Loop pull requests change nothing that runs before their check
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          base="refs/remotes/origin/$(jq -r .pull_request.base.ref "$GITHUB_EVENT_PATH")"
+          head="$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")"
+          ref="$(jq -r .pull_request.head.ref "$GITHUB_EVENT_PATH")"
+          git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null || exit 0
+          loop=false
+          while IFS= read -r prefix; do
+            if [[ "$ref" == "$prefix"* ]]; then loop=true; fi
+          done < <(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')
+          [ "$loop" = true ] || exit 0
+          # The merge result, so main moving a file does not fail an older
+          # loop branch; with a conflict, the head itself.
+          merged="$(git merge-tree --write-tree --no-messages "$base" "$head" | head -n1)" \
+            || merged="$head"
+          bad=0
+          while IFS= read -r -d '' path; do
+            case "$path" in
+              plugins/*/skills/*/*|plugins/*/plugin.json|plugins/*/.claude-plugin/plugin.json) ;;
+              docs/skill-impact.md|README.md|skills.lock) ;;
+              scripts/plugin_layout.json|scripts/shipped_names.json|scripts/skills_waivers.yml) ;;
+              *) echo "::error::An evals-loop pull request may not change this path."; bad=1 ;;
+            esac
+          done < <(git diff -z --no-renames --name-only "$base" "$merged")
+          exit "$bad"
       - name: Install Python dependencies
         if: steps.salient.outputs.run == 'true'
         # The scripts/ suites import the modules under test, so this job needs
@@ -506,24 +539,6 @@ jobs:
           else
             echo "::notice::The base has no one-way-door check yet; running this pull request's copy."
             cp scripts/check_one_way_doors.py "$d/check.py"
-          fi
-          # The interpreter's packages come from this pull request's
-          # requirements-dev.txt, so a loop pull request (no person reviews it)
-          # may not change that file: it could install a package that makes
-          # the check pass. The lanes are read from the base's copy.
-          ref="$(jq -r .head.ref "$d/pr.json")"
-          # Judged on the merge result, so main moving the file does not fail
-          # a loop branch cut before it; with a conflict, on the head itself.
-          merged="$(git merge-tree --write-tree --no-messages "$base" "$HEAD_SHA" | head -n1)" \
-            || merged="$HEAD_SHA"
-          if git cat-file -e "$base:scripts/loop_prs.json" 2>/dev/null; then
-            while IFS= read -r prefix; do
-              if [[ "$ref" == "$prefix"* ]] && \
-                 ! git diff --quiet "$base" "$merged" -- requirements-dev.txt; then
-                echo "::error::An evals-loop pull request may not change requirements-dev.txt."
-                exit 1
-              fi
-            done < <(git show "$base:scripts/loop_prs.json" | jq -r '.lanes | keys[]')
           fi
           echo "base=$base" >> "$GITHUB_ENV"
           python3 -I "$d/check.py" --base "$base" \

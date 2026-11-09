@@ -13,7 +13,9 @@ either. This script is the check for both (issue #133).
 
 What is compared
 -----------------
-The base branch's tip (`--base`, the event's `pull_request.base.sha`) against
+The base branch's tip (`--base`: the workflow passes the remote-tracking ref
+of the base branch the API names now, so a retargeted pull request is judged
+against its new base) against
 the tree `git merge-tree --write-tree <base> <head>` produces: what `main`
 would hold if the pull request merged now. Not head against a merge-base: a
 branch built across a criss-cross history can make `git merge-base` return
@@ -26,8 +28,11 @@ Check 1: shipped names change only with a recorded review
 -----------------------------------------------------------
 A name is the marketplace's `name`, a plugin's `name` in
 .claude-plugin/marketplace.json, or `<plugin>/<skill>` for a skill that has
-`<plugin source>/skills/<skill>/SKILL.md` and, when that SKILL.md changed, a
-frontmatter `name` equal to `<skill>`. A name present at the base and absent
+`plugins/<plugin>/skills/<skill>/SKILL.md` and, when that SKILL.md changed, a
+frontmatter `name` equal to `<skill>`. A local plugin counts only while it is
+listed once, its `source` is `./plugins/<plugin>` and both manifests name it,
+and no `metadata.pluginRoot` moves it: a renamed bundle directory or manifest
+`name` is a rename too (round 2 on #134). A name present at the base and absent
 from the merge result was removed, renamed or moved between plugins. A name
 that arrives but is already in the ledger (a skill by basename, in any
 plugin) reuses a retired name. Either fails the check unless the pull request
@@ -61,11 +66,11 @@ plus a Bot author. So here it must be:
   docs/skill-impact.md, README.md, skills.lock, the plugin's two manifests
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
-- running no code (Decision 4): the plugin has no hooks/ or bin/ directory,
-  no settings.json, package.json or package lock, and no `hooks` or
-  `settings` key in a manifest or its marketplace entry, at the base or in
-  the merge result; and the skill's frontmatter does not add or change
-  `hooks` or `allowed-tools`;
+- when armed to auto-merge, not adding or changing `hooks` or
+  `allowed-tools` in the skill's frontmatter (Decision 4 as the owner
+  narrowed it on 2026-11-03: text-only changes auto-merge in any plugin, and
+  plugin-runtime-review already holds a skill's own hooks/ or bin/; it does
+  not read frontmatter, #135);
 - the only ready (non-draft) loop pull request the App has open from this
   repository (Decision 5). Forks and people cannot hold the slot.
 
@@ -101,11 +106,7 @@ LEDGER = "scripts/shipped_names.json"
 LOOP_CONFIG = "scripts/loop_prs.json"
 LEDGER_KEYS = ("marketplace", "plugins", "skills")
 MANIFESTS = ("plugin.json", ".claude-plugin/plugin.json")
-RUNTIME_KEYS = ("hooks", "settings")
 SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
-RUNTIME_DIRS = ("hooks/", "bin/")
-RUNTIME_FILES = frozenset({"settings.json", "package.json", "bun.lock", "bun.lockb",
-                           "npm-shrinkwrap.json", "package-lock.json"})
 KINDS = ("create", "edit", "remove")
 SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 #: The review record must link a page on one of these hosts: a GitHub run,
@@ -206,16 +207,22 @@ def _local_root(source) -> Optional[str]:
     return norm
 
 
-def marketplace_entries(rev: str) -> Tuple[Optional[str], Dict[str, dict]]:
+def marketplace_entries(rev: str) -> Tuple[Optional[str], Dict[str, dict], Set[str], object]:
+    """(marketplace name, {plugin name: entry}, names listed more than once,
+    metadata.pluginRoot or None)."""
     data = _json_at(rev, MARKETPLACE)
     if not isinstance(data, dict):
-        return None, {}
-    entries = {}
+        return None, {}, set(), None
+    entries, dupes = {}, set()
     for entry in data.get("plugins") or []:
         if isinstance(entry, dict) and isinstance(entry.get("name"), str):
+            if entry["name"] in entries:
+                dupes.add(entry["name"])
             entries[entry["name"]] = entry
     name = data.get("name") if isinstance(data.get("name"), str) else None
-    return name, entries
+    meta = data.get("metadata")
+    root = meta.get("pluginRoot") if isinstance(meta, dict) else None
+    return name, entries, dupes, root
 
 
 def frontmatter(text: str) -> dict:
@@ -241,15 +248,33 @@ def frontmatter_name(text: str) -> Optional[str]:
 
 
 def present_names(rev: str, verify_against: Optional[str] = None) -> Dict[str, Set[str]]:
-    """{marketplace, plugins, skills} present at rev. With verify_against (the
-    merge-base), a SKILL.md whose blob differs from that rev's must also carry a
-    frontmatter `name` equal to its directory, or the skill is not present."""
-    name, entries = marketplace_entries(rev)
-    names = {"marketplace": {name} if name else set(), "plugins": set(entries), "skills": set()}
+    """{marketplace, plugins, skills} present at rev.
+
+    A plugin counts only when its name is listed once and, for a local plugin,
+    its `source` is `./plugins/<name>` (the lock's `<bundle>` is that
+    directory, and the bootstrap reads `plugins/{bundle}/skills`) and both
+    manifests carry the same `name` (Codex and Agent Plugins read it there).
+    A `metadata.pluginRoot` other than the repository root moves every local
+    source, so no local plugin counts. Anything else is a rename in disguise.
+    With verify_against (the base), a SKILL.md whose blob differs from that
+    rev's must also carry a frontmatter `name` equal to its directory."""
+    name, entries, dupes, plugin_root = marketplace_entries(rev)
+    names = {"marketplace": {name} if name else set(), "plugins": set(), "skills": set()}
+    moved = plugin_root not in (None, "", ".", "./")
     for plugin, entry in entries.items():
-        root = _local_root(entry.get("source"))
-        if root is None:
+        if plugin in dupes:
             continue
+        source = entry.get("source")
+        if not isinstance(source, str):
+            names["plugins"].add(plugin)  # a remote plugin: its name is all we own
+            continue
+        root = _local_root(source)
+        if moved or root != f"plugins/{plugin}":
+            continue
+        manifests = [_json_at(rev, f"{root}/{f}") for f in MANIFESTS]
+        if not all(isinstance(m, dict) and m.get("name") == plugin for m in manifests):
+            continue
+        names["plugins"].add(plugin)
         prefix = root + "/skills/"
         for path in files_under(rev, root + "/skills"):
             rest = path[len(prefix):] if path.startswith(prefix) else ""
@@ -282,8 +307,18 @@ def review_line(body: Optional[str]) -> Tuple[Optional[str], bool]:
     block is not a record anyone would see, so it never counts."""
     from markdown_it import MarkdownIt  # third-party; only when a name is lost
 
-    visible = "\n".join(t.content for t in MarkdownIt("commonmark").parse(body or "")
-                        if t.type == "inline")
+    parts = []
+    for token in MarkdownIt("commonmark").parse(body or ""):
+        if token.type != "inline":
+            continue
+        for child in token.children or []:
+            if child.type in ("softbreak", "hardbreak"):
+                parts.append("\n")
+            elif child.type in ("text", "code_inline"):
+                parts.append(child.content)
+            # html_inline (a comment inside a paragraph) is hidden: dropped.
+        parts.append("\n")
+    visible = "".join(parts)
     match = REVIEW_PASS_RE.search(visible)
     return (match.group(1) if match else None), bool(REVIEW_BLOCK_RE.search(visible))
 
@@ -353,25 +388,6 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
                               f"`{key}` in the merge result. Add it, so the retired name "
                               "stays on record.")
     return errors
-
-
-def _plugin_runs_code(rev: str, plugin: str, root: str) -> List[str]:
-    reasons = []
-    for path in files_under(rev, root):
-        rel = path[len(root) + 1:]
-        if rel.startswith(RUNTIME_DIRS):
-            reasons.append(f"{_q(path)} (a {rel.split('/', 1)[0]}/ directory)")
-        elif rel in RUNTIME_FILES:
-            reasons.append(f"{_q(path)} (a settings or package file)")
-    for manifest in MANIFESTS:
-        data = _json_at(rev, f"{root}/{manifest}")
-        if isinstance(data, dict) and any(k in data for k in RUNTIME_KEYS):
-            reasons.append(f"{_q(root + '/' + manifest)} has a hooks or settings key")
-    _, entries = marketplace_entries(rev)
-    entry = entries.get(plugin) or {}
-    if any(k in entry for k in RUNTIME_KEYS):
-        reasons.append(f"the marketplace entry for {_q(plugin)} has a hooks or settings key")
-    return reasons
 
 
 def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) -> List[str]:
@@ -444,20 +460,23 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
             errors.append(f"{_q(path)} may change only its `version` in an evals-loop "
                           "pull request.")
 
-    for rev in (base, merged):
-        for reason in _plugin_runs_code(rev, plugin, root):
-            errors.append(f"Plugin {_q(plugin)} runs code ({reason}), so ADR 0021 "
-                          "Decision 4 never merges its skills automatically.")
-
-    # Decision 4 at the skill level: frontmatter `hooks` run code and
-    # `allowed-tools` skips permission prompts in every consumer.
-    old_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
-    new_fm = frontmatter(show(merged, skill_md) or "") if at_head else {}
-    for key in SKILL_RUNTIME_KEYS:
-        if key in new_fm and new_fm.get(key) != old_fm.get(key):
-            errors.append(f"{_q(skill_md)} adds or changes frontmatter {_q(key)}; ADR 0021 "
-                          "Decision 4 never merges a change in what a skill runs or is "
-                          "allowed to run automatically.")
+    # Decision 4, as the owner narrowed it on 2026-11-03 (skills-evals ADR
+    # 0005, "Text-only skill changes addendum"): a text-only change auto-merges
+    # in any plugin; one plugin-runtime-review would hold (a skill's own hooks/
+    # or bin/, or a hook naming a path in the skill) is held by that required
+    # gate already. What that gate does not see (#135) is the skill's own
+    # frontmatter: `hooks` run code and `allowed-tools` skips permission
+    # prompts. A pull request armed to auto-merge may not add or change them;
+    # a person may still merge one by hand.
+    base_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
+    head_fm = frontmatter(show(merged, skill_md) or "") if at_head else {}
+    changed_keys = [k for k in SKILL_RUNTIME_KEYS
+                    if k in head_fm and head_fm.get(k) != base_fm.get(k)]
+    if changed_keys and pr.get("auto_merge"):
+        errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys} and the "
+                      "pull request is armed to auto-merge; ADR 0021 Decision 4 never "
+                      "merges a change in what a skill runs or may run automatically. "
+                      "Disarm it for a person to review.")
 
     if open_prs is not None:
         number = pr.get("number")

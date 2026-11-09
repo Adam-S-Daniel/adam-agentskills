@@ -99,8 +99,10 @@ def pr_json(ref: str = "claude/some-change", body: str = "", login: str = "Adam-
             "base": {"repo": {"full_name": "Example/registry"}}}
 
 
-def loop_pr(ref: str, body: str = "", **kw) -> dict:
-    return pr_json(ref=ref, body=body, login=APP, user_type="Bot", **kw)
+def loop_pr(ref: str, body: str = "", auto_merge: bool = False, **kw) -> dict:
+    pr = pr_json(ref=ref, body=body, login=APP, user_type="Bot", **kw)
+    pr["auto_merge"] = {"merge_method": "merge"} if auto_merge else None
+    return pr
 
 
 def check(repo: Path, tmp_path: Path, pr: dict, open_prs=None):
@@ -175,6 +177,7 @@ def test_a_block_line_fails_even_beside_a_pass_line(tmp_path):
     "<!--\nAdversarial-review: pass https://github.com/Example/registry/actions/runs/1\n-->",
     "```\nAdversarial-review: pass https://github.com/Example/registry/actions/runs/1\n```",
     "    Adversarial-review: pass https://github.com/Example/registry/actions/runs/1",
+    "Removes a skill. <!--\nAdversarial-review: pass https://github.com/Example/registry/actions/runs/1\n-->",
     "",
 ])
 def test_a_malformed_review_line_does_not_count(tmp_path, body):
@@ -229,17 +232,48 @@ def test_renaming_the_marketplace_fails(tmp_path):
     assert code == 1 and 'marketplace "adam-agentskills"' in out, out
 
 
-def test_moving_a_plugin_source_keeps_its_names(tmp_path):
+def test_moving_a_plugin_directory_counts_as_a_rename(tmp_path):
+    """Round 2: the lock's `<bundle>` is the directory under plugins/, so a
+    moved directory breaks every consumer key even when the name stays."""
     repo = make_repo(tmp_path)
     _json(repo / ".claude-plugin" / "marketplace.json", {
         "name": "adam-agentskills",
-        "plugins": [{"name": PLUGIN, "source": "./bundles/coding"},
+        "plugins": [{"name": PLUGIN, "source": "./plugins/aca"},
                     {"name": CODE_PLUGIN, "source": f"./plugins/{CODE_PLUGIN}"}]})
-    (repo / "bundles").mkdir()
-    (repo / "plugins" / PLUGIN).rename(repo / "bundles" / "coding")
+    (repo / "plugins" / PLUGIN).rename(repo / "plugins" / "aca")
     commit(repo)
     code, out = check(repo, tmp_path, pr_json())
-    assert code == 0, out
+    assert code == 1 and f'plugin "{PLUGIN}"' in out, out
+
+
+def test_renaming_a_plugin_in_its_manifests_counts_as_a_rename(tmp_path):
+    repo = make_repo(tmp_path)
+    for m in owd.MANIFESTS:
+        _json(repo / "plugins" / PLUGIN / m, manifest("adam-coding-everywhere"))
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and f'plugin "{PLUGIN}"' in out, out
+
+
+def test_a_decoy_duplicate_marketplace_entry_counts_as_a_rename(tmp_path):
+    repo = make_repo(tmp_path)
+    _json(repo / ".claude-plugin" / "marketplace.json", {
+        "name": "adam-agentskills",
+        "plugins": [{"name": PLUGIN, "source": "./plugins/nowhere"}]
+        + [{"name": p, "source": f"./plugins/{p}"} for p in (PLUGIN, CODE_PLUGIN)]})
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and f'plugin "{PLUGIN}"' in out, out
+
+
+def test_a_plugin_root_that_moves_every_source_counts_as_a_rename(tmp_path):
+    repo = make_repo(tmp_path)
+    data = json.loads((repo / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    data["metadata"] = {"pluginRoot": "./nowhere"}
+    _json(repo / ".claude-plugin" / "marketplace.json", data)
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and f'plugin "{PLUGIN}"' in out, out
 
 
 def test_the_ledger_is_append_only(tmp_path):
@@ -412,24 +446,16 @@ def test_a_loop_branch_from_a_fork_fails(tmp_path):
     assert code == 1 and "fork" in out, out
 
 
-def test_a_loop_pr_in_a_plugin_that_runs_code_fails(tmp_path):
+def test_a_text_only_loop_pr_in_a_plugin_with_hooks_passes(tmp_path):
+    """Round 2: the owner decided on 2026-11-03 that text-only loop PRs in
+    plugins with hooks auto-merge (skills-evals ADR 0005 addendum); runtime
+    changes are held by plugin-runtime-review, not here."""
     repo = make_repo(tmp_path)
     _write(repo / "plugins" / CODE_PLUGIN / "skills" / "hooky" / "SKILL.md", skill_md("hooky") + "\nv2\n")
+    bump_version(repo, plugin=CODE_PLUGIN, version="1.1.0")
     commit(repo)
-    code, out = check(repo, tmp_path, loop_pr("eval-improve/hooky"), open_prs=[])
-    assert code == 1 and "Decision 4" in out, out
-
-
-def test_a_manifest_hooks_key_counts_as_running_code(tmp_path):
-    repo = make_repo(tmp_path)
-    _git(repo, "checkout", "-q", "main")
-    bump_version(repo, version="1.0.0", hooks="./hooks.json")
-    commit(repo)
-    _git(repo, "checkout", "-q", "-B", "pr")
-    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
-    commit(repo)
-    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
-    assert code == 1 and "hooks or settings key" in out, out
+    code, out = check(repo, tmp_path, loop_pr("eval-improve/hooky", auto_merge=True), open_prs=[])
+    assert code == 0, out
 
 
 def test_a_second_open_loop_pr_fails(tmp_path):
@@ -472,8 +498,12 @@ def test_a_loop_pr_may_not_add_skill_runtime_frontmatter(tmp_path, extra):
     text = f"---\nname: {SKILL}\ndescription: Invented.\n{extra}---\n\n# {SKILL}\n"
     _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", text)
     commit(repo)
-    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
     assert code == 1 and "Decision 4" in out, out
+    # Unarmed, it waits for a person, who may merge it by hand.
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    assert code == 0, out
 
 
 def test_a_criss_cross_merge_base_cannot_hide_a_deletion(tmp_path):

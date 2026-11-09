@@ -748,9 +748,13 @@ def test_the_pytest_job_runs_the_one_way_door_check_on_every_pull_request():
     assert names.index(SKILL_GATES_STEP) < names.index(ONE_WAY_DOORS_STEP) \
         < names.index("Run every test suite in the repo")
     assert step["if"] == "github.event_name == 'pull_request'"
-    assert step["env"] == {"BASE_SHA": "${{ github.event.pull_request.base.sha }}",
-                           "HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
+    assert step["env"] == {"HEAD_SHA": "${{ github.event.pull_request.head.sha }}",
                            "GH_TOKEN": "${{ github.token }}"}
+    # The base comes from the API's current base.ref, so a retargeted PR is
+    # judged against its new base, and the trigger re-runs on that edit.
+    assert '--base "refs/remotes/origin/$base_ref"' in step["run"]
+    types = ci_triggers(load_ci())["pull_request"]["types"]
+    assert {"opened", "synchronize", "reopened", "edited", "auto_merge_enabled"} <= set(types)
     assert "${{" not in step["run"]
     assert "scripts/check_one_way_doors.py" in step["run"]
     assert 'gh api "repos/$GITHUB_REPOSITORY/pulls/$n"' in step["run"]

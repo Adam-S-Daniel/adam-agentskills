@@ -135,11 +135,23 @@ adversarial review found both were prose only.
 - **Decision 3's path list, corrected.** A new skill also edits
   `scripts/plugin_layout.json` (the draft lane always has). A create or a
   removal may append the skill to `scripts/shipped_names.json`; a removal of
-  a skill not yet listed there must.
+  a skill not yet listed there must (every skill on `main` on 2026-11-09 is
+  listed). skills-evals' lanes do not write it yet; until they do, a removal
+  of a skill drafted after that date fails until the name is appended.
 - **Decisions 3 to 5 are checked on receipt.** `scripts/check_one_way_doors.py`,
   in the required `pytest` job, fails a `draft-skill/`, `eval-improve/` or
   `retire-skill/` pull request that is not opened by the App
   `scripts/loop_prs.json` names (from a branch here, not a fork), changes
   anything outside its one skill and the bookkeeping, changes a manifest
-  beyond `version`, is in a plugin that runs code, or is not the only open
-  loop pull request.
+  beyond `version`, is armed to auto-merge while adding or changing `hooks`
+  or `allowed-tools` in the skill's frontmatter, or is not the only ready loop
+  pull request the App has open here (forks, people and the loop's own drafts
+  do not hold the slot).
+- **Decision 4 is as the owner narrowed it on 2026-11-03**, not as written
+  above: text-only changes auto-merge in any plugin, and only a change
+  `plugin-runtime-review` would hold (a skill's own `hooks/` or `bin/`, or a
+  hook naming a path in the skill) is lowered to a draft
+  ([skills-evals ADR 0005](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/decisions/0005-improvement-loop-reuses-skill-creator.md),
+  "Text-only skill changes addendum"). That gate does not read a skill's
+  frontmatter ([#135](https://github.com/Adam-S-Daniel/adam-agentskills/issues/135)),
+  hence the frontmatter rule above.

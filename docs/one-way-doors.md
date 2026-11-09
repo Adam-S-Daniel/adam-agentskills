@@ -59,7 +59,9 @@ base branch with the result of merging the pull request now (not with a
 merge-base, which a criss-cross history can make lie):
 
 - **A shipped name that disappears** (items 1 to 3: a removal, a rename or a
-  move between plugins), **or a retired name that comes back** (a skill by
+  move between plugins; a plugin also counts as renamed when its directory
+  stops being `plugins/<name>`, a manifest `name` changes, it is listed twice
+  or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
   `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
   The link must be on github.com or claude.ai, and the line must be visible
@@ -68,9 +70,11 @@ merge-base, which a criss-cross history can make lie):
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
-  bookkeeping paths, a plugin that runs no code, no new or changed `hooks` or
-  `allowed-tools` in the skill's frontmatter, and no other ready loop pull
-  request from that App open.
+  bookkeeping paths, no new or changed `hooks` or `allowed-tools` in the
+  skill's frontmatter while armed to auto-merge, and no other ready loop pull
+  request from that App open. Text-only changes auto-merge in any plugin
+  (owner decision 2026-11-03); a skill's own `hooks/` or `bin/` is held by
+  the required `plugin-runtime-review` gate.
 
 The line is a record, not proof: anyone who can edit the body can write it.
 What makes it worth something is the review behind the link.

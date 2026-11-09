@@ -142,7 +142,8 @@ adversarial review found both were prose only.
   `scripts/plugin_layout.json` (the draft lane always has), and an
   improvement that trims a skill may remove that skill's own `length-limit`
   waiver from `scripts/skills_waivers.yml` and nothing else in it. A create or a
-  removal may append the skill to `scripts/shipped_names.json`; a removal of
+  removal may append that skill, and only that skill, to
+  `scripts/shipped_names.json`; a removal of
   a skill not yet listed there must. The ledger lists every skill that was on
   `main` on 2026-11-09 and the two retired before then (`sync-skills`,
   `launch-wsl-claude-session`); skills-evals' removal lane appends from
@@ -154,14 +155,18 @@ adversarial review found both were prose only.
   `scripts/loop_prs.json` names (from a branch here, not a fork), changes
   anything outside its one skill and the bookkeeping, changes a manifest
   beyond `version`, is armed to auto-merge while adding or changing `hooks`
-  or `allowed-tools` in the skill's frontmatter, or, unless it is a draft, has an
+  or `allowed-tools` in the skill's frontmatter (or changing a frontmatter
+  Claude Code could read differently) or touching the skill's own `hooks/` or
+  `bin/`, or, unless it is a draft, has an
   older ready loop pull request from the App open here (forks, people and the
   loop's own drafts do not hold the slot, and the older of two wins).
 - **Decision 4 is as the owner narrowed it on 2026-11-03**, not as written
-  above: text-only changes auto-merge in any plugin, and only a change
-  `plugin-runtime-review` would hold (a skill's own `hooks/` or `bin/`, or a
-  hook naming a path in the skill) is lowered to a draft
+  above: text-only changes auto-merge in any plugin, and skills-evals'
+  improve gate lowers a change to a skill's own `hooks/` or `bin/`, or one a
+  hook names, to a draft
   ([skills-evals ADR 0005](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/decisions/0005-improvement-loop-reuses-skill-creator.md),
-  "Text-only skill changes addendum"). That gate does not read a skill's
-  frontmatter ([#135](https://github.com/Adam-S-Daniel/adam-agentskills/issues/135)),
-  hence the frontmatter rule above.
+  "Text-only skill changes addendum"). `plugin-runtime-review` does not
+  catch these: it gates only a plugin's own `hooks/` and `bin/`, and does not
+  read a skill's frontmatter
+  ([#135](https://github.com/Adam-S-Daniel/adam-agentskills/issues/135)),
+  hence the rules above.

@@ -67,10 +67,14 @@ plus a Bot author. So here it must be:
   with only `version` changed, and scripts/plugin_layout.json and
   scripts/shipped_names.json for a create or removal;
 - when armed to auto-merge, not adding or changing `hooks` or
-  `allowed-tools` in the skill's frontmatter (Decision 4 as the owner
-  narrowed it on 2026-11-03: text-only changes auto-merge in any plugin, and
-  plugin-runtime-review already holds a skill's own hooks/ or bin/; it does
-  not read frontmatter, #135);
+  `allowed-tools` in the skill's frontmatter, not changing a frontmatter that
+  Claude Code could read differently from this check, and not touching the
+  skill's own hooks/ or bin/ (Decision 4 as the owner narrowed it on
+  2026-11-03: text-only changes auto-merge in any plugin; plugin-runtime-review
+  gates only a plugin's own hooks/ and bin/ and does not read frontmatter,
+  #135);
+- a create or removal appending nothing to scripts/shipped_names.json but
+  its own `<plugin>/<skill>`;
 - unless it is a draft, the oldest ready loop pull request the App has open
   from this repository (Decision 5). Forks and people cannot hold the slot,
   and two opened in the same seconds cannot block each other.
@@ -189,6 +193,29 @@ def files_under(rev: str, root: str) -> List[str]:
     return [p for p in proc.stdout.splitlines() if p]
 
 
+def _all_files(rev: str) -> List[str]:
+    proc = _git("ls-tree", "-r", "-z", "--name-only", "--full-tree", rev)
+    if proc.returncode != 0:
+        raise CheckError(f"git ls-tree {rev[:12]} failed: {proc.stderr.strip()}")
+    return [p for p in proc.stdout.split("\0") if p]
+
+
+def export_attrs(rev: str, paths: List[str]) -> Dict[str, Tuple[str, str]]:
+    """{path: (export-ignore, export-subst)} as `git archive rev` would see
+    them, from the .gitattributes files in rev's tree."""
+    proc = subprocess.run(
+        ["git", *_GIT_VERBATIM, "check-attr", "-z", "--stdin", "--source", rev,
+         "export-ignore", "export-subst"],
+        input="\0".join(paths) + "\0", capture_output=True, text=True, encoding="utf-8")
+    if proc.returncode != 0:
+        raise CheckError(f"git check-attr --source {rev[:12]} failed: {proc.stderr.strip()}")
+    fields = proc.stdout.split("\0")
+    out: Dict[str, Dict[str, str]] = {}
+    for i in range(0, len(fields) - 2, 3):
+        out.setdefault(fields[i], {})[fields[i + 1]] = fields[i + 2]
+    return {p: (v.get("export-ignore", ""), v.get("export-subst", "")) for p, v in out.items()}
+
+
 def changed_paths(base: str, merged: str) -> List[str]:
     proc = _git("diff", "--no-renames", "--name-only", base, merged)
     if proc.returncode != 0:
@@ -253,6 +280,48 @@ def frontmatter(text: str) -> dict:
                 return {}
             return data if isinstance(data, dict) else {}
     return {}
+
+
+#: How Claude Code finds a SKILL.md's frontmatter: it stops at the first
+#: `---` anywhere, even mid-line, where frontmatter() stops at a line that is
+#: only `---`. A file the two read differently can hide a key from this check.
+_CC_FRONTMATTER_RE = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
+
+
+def frontmatter_is_ambiguous(text: str) -> bool:
+    """True when Claude Code and this check could read different frontmatter:
+    the two ways of finding its end disagree, or the YAML does not load
+    strictly (a duplicate key, which PyYAML resolves to the last value and
+    Claude Code's early end can resolve to the first)."""
+    import yaml
+
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return _CC_FRONTMATTER_RE.match(text) is not None
+    end = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+    match = _CC_FRONTMATTER_RE.match(text)
+    if end is None or match is None:
+        return True
+    region = "\n".join(lines[1:end])
+    if match.group(1).rstrip("\n") != region.rstrip("\n"):
+        return True
+
+    class _Strict(yaml.SafeLoader):
+        pass
+
+    def _mapping(loader, node, deep=False):
+        keys = [loader.construct_object(k, deep=deep) for k, _ in node.value]
+        if len(keys) != len(set(map(repr, keys))):
+            raise yaml.constructor.ConstructorError(None, None, "duplicate key",
+                                                    node.start_mark)
+        return loader.construct_mapping(node, deep=deep)
+
+    _Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _mapping)
+    try:
+        yaml.load(region, Loader=_Strict)  # noqa: S506 - SafeLoader subclass
+    except yaml.YAMLError:
+        return True
+    return False
 
 
 def frontmatter_name(text: str) -> Optional[str]:
@@ -414,11 +483,20 @@ def check_names(base: str, merged: str, body: Optional[str]) -> List[str]:
     # export-subst from .gitattributes, so a rule there can drop or rewrite a
     # skill in every lock while the object store (what this check reads)
     # still has it. Any changed .gitattributes that uses either is a door.
-    for path in changed_paths(base, merged):
-        if posixpath.basename(path) == ".gitattributes":
-            text = show(merged, path) or ""
-            if re.search(r"\bexport-(ignore|subst)\b", text):
-                doors.append(("change what `git archive` exports", [("marketplace", path)]))
+    # Ask git rather than read the text: a macro (`[attr]x export-ignore`)
+    # sets the attribute without naming it where it is used.
+    attr_files = [p for p in changed_paths(base, merged)
+                  if posixpath.basename(p) == ".gitattributes"]
+    if attr_files:
+        # Directories too: `git archive` drops a directory whose own path is
+        # export-ignore, and that attribute does not show on the files in it.
+        files = set(_all_files(base)) | set(_all_files(merged))
+        paths = sorted(files | {posixpath.dirname(f)[:i] for f in files
+                                for i, c in enumerate(posixpath.dirname(f) + "/")
+                                if c == "/" and i})
+        if export_attrs(base, paths) != export_attrs(merged, paths):
+            doors.append(("change what `git archive` exports",
+                          [("marketplace", p) for p in attr_files]))
     # A `renames` map is followed by Claude Code for good and migrates users'
     # settings (append-only), so adding or changing one is a one-way door.
     if _marketplace_key(base, "renames") != _marketplace_key(merged, "renames"):
@@ -541,6 +619,16 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
     for path in outside:
         errors.append(f"{_q(path)} is outside ADR 0021 Decision 3's scope for a "
                       f"{_q(lane)} pull request.")
+    if LEDGER in changed and LEDGER in allowed:
+        # A create or removal may record its own skill; any other append would
+        # reserve a name so a later pull request needs a review to use it.
+        old_l, new_l = _json_at(base, LEDGER) or {}, _json_at(merged, LEDGER) or {}
+        added = {(k, n) for k in LEDGER_KEYS for n in (new_l.get(k) or [])
+                 if n not in (old_l.get(k) or [])}
+        extra = sorted(added - {("skills", f"{plugin}/{skill}")})
+        if extra:
+            errors.append(f"{_q(LEDGER)} may gain only {_q(plugin + '/' + skill)} in this "
+                          f"pull request; it also adds {extra}.")
     for manifest in MANIFESTS:
         path = f"{root}/{manifest}"
         if path not in changed:
@@ -554,21 +642,35 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list]) ->
 
     # Decision 4, as the owner narrowed it on 2026-11-03 (skills-evals ADR
     # 0005, "Text-only skill changes addendum"): a text-only change auto-merges
-    # in any plugin; one plugin-runtime-review would hold (a skill's own hooks/
-    # or bin/, or a hook naming a path in the skill) is held by that required
-    # gate already. What that gate does not see (#135) is the skill's own
-    # frontmatter: `hooks` run code and `allowed-tools` skips permission
-    # prompts. A pull request armed to auto-merge may not add or change them;
-    # a person may still merge one by hand.
+    # in any plugin. plugin-runtime-review gates a plugin's own hooks/ and
+    # bin/ only, so what it does not see is held here: the skill's frontmatter
+    # (#135; `hooks` run code and `allowed-tools` skips permission prompts) and
+    # the skill's own hooks/ and bin/. A pull request armed to auto-merge may
+    # not add or change them; a person may still merge one by hand.
     base_fm = frontmatter(show(base, skill_md) or "") if at_base else {}
-    head_fm = frontmatter(show(merged, skill_md) or "") if at_head else {}
+    head_text = (show(merged, skill_md) or "") if at_head else ""
+    head_fm = frontmatter(head_text) if at_head else {}
     changed_keys = [k for k in SKILL_RUNTIME_KEYS
                     if k in head_fm and head_fm.get(k) != base_fm.get(k)]
-    if changed_keys and pr.get("auto_merge"):
-        errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys} and the "
-                      "pull request is armed to auto-merge; ADR 0021 Decision 4 never "
-                      "merges a change in what a skill runs or may run automatically. "
-                      "Disarm it for a person to review.")
+    if pr.get("auto_merge"):
+        if changed_keys:
+            errors.append(f"{_q(skill_md)} adds or changes frontmatter {changed_keys} and "
+                          "the pull request is armed to auto-merge; ADR 0021 Decision 4 "
+                          "never merges a change in what a skill runs or may run "
+                          "automatically. Disarm it for a person to review.")
+        elif at_head and at_base != at_head and frontmatter_is_ambiguous(head_text):
+            errors.append(f"{_q(skill_md)}'s frontmatter could read differently to Claude "
+                          "Code (a `---` inside a line, or a duplicate key), so this check "
+                          "cannot tell whether it adds `hooks` or `allowed-tools`. Fix the "
+                          "frontmatter, or disarm auto-merge for a person to review.")
+        # plugin-runtime-review gates a plugin's own hooks/ and bin/, not a
+        # skill's, so a skill-level hooks/ or bin/ is held here instead.
+        runtime = [p for p in changed if p.startswith(f"{root}/skills/{skill}/hooks/")
+                   or p.startswith(f"{root}/skills/{skill}/bin/")]
+        for path in runtime:
+            errors.append(f"{_q(path)} is code the skill runs, and the pull request is "
+                          "armed to auto-merge; ADR 0021 Decision 4 holds it for a person. "
+                          "Disarm auto-merge.")
 
     # A draft is never auto-merged, and Decision 5 lets the draft-skill gate
     # open one while another loop PR is open, so the slot rule skips drafts;

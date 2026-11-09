@@ -72,21 +72,26 @@ merge-base, which a criss-cross history can make lie):
   or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
   `Adversarial-review: pass <link>` and no `Adversarial-review: block` line
-  (a block counts anywhere a reader could see it, in any case).
+  (a block line counts at the start of any line, after list, quote or
+  emphasis markers, in any case; one quoted mid-sentence does not).
   The link must be on github.com or claude.ai, and the line must be visible
   text, not inside an HTML comment or a code block. A name that disappears
   must also be in `scripts/shipped_names.json`.
 - **A changed `renames` map in the marketplace, or a changed
-  `.gitattributes` that uses `export-ignore` or `export-subst`** (which
-  `git archive`, and so every lock, follows) needs the same line.
+  `.gitattributes` that changes which file or directory is `export-ignore`
+  or `export-subst`** (which `git archive`, and so every lock, follows;
+  asked of git, so a macro counts) needs the same line.
 - **An evals-loop pull request** (`draft-skill/`, `eval-improve/`,
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
-  bookkeeping paths, no new or changed `hooks` or `allowed-tools` in the
-  skill's frontmatter while armed to auto-merge, and (unless it is a draft) no
-  older ready loop pull request from that App open. Text-only changes auto-merge in any plugin
-  (owner decision 2026-11-03); a skill's own `hooks/` or `bin/` is held by
-  the required `plugin-runtime-review` gate.
+  bookkeeping paths (a create or removal may append only its own skill to
+  the ledger), and (unless it is a draft) no older ready loop pull request
+  from that App open. While armed to auto-merge it may not add or change
+  `hooks` or `allowed-tools` in the skill's frontmatter, change a frontmatter
+  Claude Code could read differently (a `---` inside a line, a duplicate key),
+  or touch the skill's own `hooks/` or `bin/`. Text-only changes auto-merge in
+  any plugin (owner decision 2026-11-03). `plugin-runtime-review` gates only a
+  plugin's own `hooks/` and `bin/`, so it does not hold these.
 
 A pull request retargeted to a new base is checked again by the `edited`
 run; until that run registers (seconds), the previous result still shows.

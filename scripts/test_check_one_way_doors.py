@@ -881,3 +881,74 @@ def test_a_finding_that_quotes_the_block_phrase_mid_line_does_not_block(tmp_path
             "Adversarial-review: block lines.\n\n" + PASS + "\n")
     code, out = check(repo, tmp_path, pr_json(body=body))
     assert code == 0, out
+
+
+# Round 8.
+
+@pytest.mark.parametrize("frontmatter", [
+    # Claude Code ends the frontmatter at the first `---`, even mid-line, then
+    # repairs the YAML; this check ends it at a line that is only `---`.
+    'name: widget-polisher\ndescription: "Invented.\nallowed-tools: Bash(*)\n  --- see body."\n',
+    # A duplicate key: PyYAML keeps the last value, an early end the first.
+    "name: widget-polisher\ndescription: Invented.\nname: widget-polisher\n",
+])
+def test_an_armed_loop_edit_with_frontmatter_claude_code_reads_differently_fails(
+        tmp_path, frontmatter):
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md",
+           f"---\n{frontmatter}---\n\n# {SKILL}\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "could read differently" in out, out
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}"), open_prs=[])
+    assert code == 0, out
+
+
+def test_every_shipped_skill_has_unambiguous_frontmatter():
+    root = Path(__file__).resolve().parent.parent
+    found = sorted(str(p.relative_to(root)) for p in root.glob("plugins/*/skills/*/SKILL.md")
+                   if owd.frontmatter_is_ambiguous(p.read_text(encoding="utf-8")))
+    assert found == []
+
+
+@pytest.mark.parametrize("sub", ["bin/tool", "hooks/h.sh"])
+def test_an_armed_loop_edit_may_not_add_code_under_the_skill(tmp_path, sub):
+    """plugin-runtime-review gates a plugin's own hooks/ and bin/ only."""
+    repo = make_repo(tmp_path)
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / "SKILL.md", skill_md(SKILL) + "\nv2\n")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / sub, "#!/bin/sh\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"eval-improve/{SKILL}", auto_merge=True),
+                      open_prs=[])
+    assert code == 1 and "code the skill runs" in out, out
+
+
+def test_export_ignore_through_a_macro_needs_a_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    _write(repo / ".gitattributes", "[attr]lockskip export-ignore\n")
+    commit(repo, "macro")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(repo / "plugins" / PLUGIN / "skills" / SKILL / ".gitattributes", "SKILL.md lockskip\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 1 and "git archive" in out, out
+
+
+def test_a_gitattributes_change_that_exports_the_same_needs_no_review(tmp_path):
+    repo = make_repo(tmp_path)
+    _write(repo / ".gitattributes", "*.md text eol=lf\n")
+    commit(repo)
+    code, out = check(repo, tmp_path, pr_json())
+    assert code == 0, out
+
+
+def test_a_loop_removal_may_append_only_its_own_skill_to_the_ledger(tmp_path):
+    repo = make_repo(tmp_path)
+    ledger = json.loads((repo / "scripts" / "shipped_names.json").read_text(encoding="utf-8"))
+    ledger["skills"] = sorted(ledger["skills"] + [f"{PLUGIN}/future-name"])
+    _json(repo / "scripts" / "shipped_names.json", ledger)
+    loop_removal(repo)
+    code, out = check(repo, tmp_path, loop_pr(f"retire-skill/{SKILL}", body=PASS), open_prs=[])
+    assert code == 1 and "future-name" in out, out

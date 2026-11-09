@@ -841,7 +841,7 @@ def test_loop_pull_requests_are_held_to_their_paths_before_any_of_their_code_run
     assert "^plugins/[^/]+/skills/[^/]+/." in guard["run"] and "scripts/check" not in guard["run"]
 
 
-def _run_guard(tmp_path, ref: str, changed: str) -> int:
+def _run_guard(tmp_path, ref: str, changed: str, stale=None) -> int:
     import json
     import subprocess
     run = next(s for s in load_ci()["jobs"]["pytest"]["steps"]
@@ -862,11 +862,16 @@ def _run_guard(tmp_path, ref: str, changed: str) -> int:
     target = repo / changed
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("x\n", encoding="utf-8")
+    git("checkout", "-q", "-b", "head")
     git("add", "-A")
     git("commit", "-q", "-m", "change")
+    head = git("rev-parse", "HEAD")
+    # The workspace is the merge commit, as actions/checkout leaves it.
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "merge", head if stale is None else stale(git, head))
     event = tmp_path / "event.json"
     event.write_text(json.dumps({"pull_request": {
-        "base": {"ref": "main"}, "head": {"sha": git("rev-parse", "HEAD"), "ref": ref}}}),
+        "base": {"ref": "main"}, "head": {"sha": head, "ref": ref}}}),
         encoding="utf-8")
     script = tmp_path / "guard.sh"
     script.write_text(run, encoding="utf-8", newline="\n")
@@ -887,6 +892,19 @@ def _run_guard(tmp_path, ref: str, changed: str) -> int:
 def test_the_loop_path_guard_matches_whole_path_segments(tmp_path, changed, code):
     """Round 14: a case glob's `*` matches `/`, so it admitted hook paths."""
     assert _run_guard(tmp_path, "eval-improve/s", changed) == code
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with git and jq, as the Linux runner does")
+def test_the_loop_path_guard_refuses_a_workspace_of_another_head(tmp_path):
+    """Round 16: a merge ref lagging a push would install an older head's files."""
+    def older(git, head):
+        git("checkout", "-q", "-b", "older", "main")
+        git("commit", "-q", "--allow-empty", "-m", "older head")
+        older_head = git("rev-parse", "HEAD")
+        git("checkout", "-q", "main")
+        return older_head
+    assert _run_guard(tmp_path, "eval-improve/s", "plugins/p/skills/s/SKILL.md", older) == 1
 
 
 def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):

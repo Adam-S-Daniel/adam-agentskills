@@ -146,7 +146,7 @@ REVIEW_PASS_RE = re.compile(
 #: comments, as the Markdown parser finds them, hide it. It must
 #: start its line, as skills-evals' removal reviewer writes it, so a finding
 #: that merely quotes the phrase mid-sentence does not fail a passing review.
-REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)#|]*Adversarial-review\W*block\b",
+REVIEW_BLOCK_RE = re.compile(r"^[ \t>*_+\-0-9.)#|\[\]xX]*Adversarial-review\W*block\b",
                              re.MULTILINE | re.IGNORECASE)
 WAIVERS = "scripts/skills_waivers.yml"
 LENGTH_WAIVER_CLASS = "length-limit"
@@ -372,13 +372,33 @@ def _json_at(rev: str, path: str):
 # ---------------------------------------------------------------------------
 
 def _local_root(source) -> Optional[str]:
-    """`./plugins/x` -> `plugins/x`; None for a remote source or anything odd."""
-    if not isinstance(source, str):
+    """`./plugins/x` -> `plugins/x`; None for a remote source or anything odd.
+    Claude Code accepts a relative source only when it starts with `./`; any
+    other string makes the entry unsupported (round 16)."""
+    if not isinstance(source, str) or not source.startswith("./"):
         return None
     norm = posixpath.normpath(source)
     if norm.startswith("/") or norm == ".." or norm.startswith("../") or norm == ".":
         return None
     return norm
+
+
+#: Marketplace entry fields Claude Code types strictly; an entry with any of
+#: them mistyped is stubbed as unsupported, so its plugin will not install
+#: (round 16).
+_ENTRY_TYPES = {"description": str, "version": str, "category": str, "homepage": str,
+                "repository": str, "license": str, "keywords": list, "tags": list,
+                "strict": bool, "defaultEnabled": bool, "author": dict}
+
+
+_SEMVER_RE = re.compile(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)")
+
+
+def _entry_types_ok(entry: dict) -> bool:
+    for key, kind in _ENTRY_TYPES.items():
+        if key in entry and not isinstance(entry[key], kind):
+            return False
+    return all(isinstance(v, str) for key in ("keywords", "tags") for v in entry.get(key) or [])
 
 
 def marketplace_entries(rev: str) -> Tuple[Optional[str], Dict[str, dict], Set[str], object]:
@@ -576,7 +596,10 @@ def loop_frontmatter_errors(base_text: Optional[str], head_text: str) -> List[st
     # each placeholder empty and as a space (round 13: `$ARGUMENTS!` + a span).
     # The text as written is checked too, so nothing a substitution removes
     # can hide a command (round 14).
-    bodies = [head_text] + [_PLACEHOLDER_RE.sub(sub, head_text) for sub in ("", " ")]
+    # Arguments are escaped for `!` but not for backticks, so a placeholder may
+    # also become a backtick, a fence or a closed span (round 16).
+    bodies = [head_text] + [_PLACEHOLDER_RE.sub(sub, head_text)
+                            for sub in ("", " ", "`", "```", "`x`")]
     if any(r.search(body) for r in _SKILL_SHELL_RES for body in bodies):
         errors.append("a shell command Claude Code would run on load (`!` and a backtick "
                       "span, or a ```! fence)")
@@ -638,7 +661,7 @@ def present_names(rev: str, verify_against: Optional[str] = None,
     names = {"marketplace": {name} if name else set(), "plugins": set(), "skills": set()}
     moved = plugin_root not in (None, "", ".", "./")
     for plugin, entry in entries.items():
-        if plugin in dupes:
+        if plugin in dupes or not _entry_types_ok(entry):
             continue
         source = entry.get("source")
         if not isinstance(source, str):
@@ -969,6 +992,11 @@ def check_loop_pr(base: str, merged: str, pr: dict, open_prs: Optional[list],
                 {k: v for k, v in new.items() if k != "version"}:
             errors.append(f"{_q(path)} may change only its `version` in an evals-loop "
                           "pull request.")
+        elif not (isinstance(new.get("version"), str)
+                  and _SEMVER_RE.fullmatch(new["version"])):
+            # Claude Code's schema wants a string; anything else unloads the
+            # whole plugin (round 16).
+            errors.append(f"{_q(path)}'s `version` must be a semantic version string.")
 
     # Decision 4, as the owner narrowed it on 2026-11-03 (skills-evals ADR
     # 0005, "Text-only skill changes addendum"): a text-only change auto-merges

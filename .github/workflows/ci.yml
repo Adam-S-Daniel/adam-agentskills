@@ -460,6 +460,12 @@ jobs:
             if [ -n "$prefix" ] && [[ "$ref" == "$prefix"* ]]; then loop=true; fi
           done <<< "$lanes"
           [ "$loop" = true ] || exit 0
+          # The workspace must be the merge of the head checked below; a merge
+          # ref that lags a push would install another head's files (round 16).
+          if [ "$(git rev-parse -q --verify 'HEAD^2' || true)" != "$head" ]; then
+            echo "::error::The checked-out merge commit is not of head $head; re-run the job."
+            exit 1
+          fi
           # The merge result, so main moving a file does not fail an older
           # loop branch; with a conflict, the head itself.
           merged="$(git merge-tree --write-tree --no-messages "$base" "$head" | head -n1)" \

@@ -68,8 +68,9 @@ merge-base, which a criss-cross history can make lie):
 
 - **A shipped name that disappears** (items 1 to 3: a removal, a rename or a
   move between plugins; a plugin also counts as renamed when its directory
-  stops being `plugins/<name>`, a manifest `name` changes, it is listed twice
-  or `metadata.pluginRoot` moves it), **or a retired name that comes back** (a skill by
+  stops being `./plugins/<name>`, a manifest `name` changes, it is listed twice,
+  `metadata.pluginRoot` moves it, or its marketplace entry has a field of a
+  type Claude Code refuses, such as `keywords` as a string), **or a retired name that comes back** (a skill by
   basename, in any plugin), fails the check unless the pull request body has
   `Adversarial-review: pass <link>` and no `Adversarial-review: block` line.
   The pass line must be visible paragraph text, not inside an HTML comment
@@ -102,7 +103,7 @@ merge-base, which a criss-cross history can make lie):
   `retire-skill/`) fails unless it stays inside ADR 0021: opened by the App
   `scripts/loop_prs.json` names, one skill in one plugin, only the
   bookkeeping paths (a create or removal may append only its own skill to
-  the ledger), a `skills.lock` that changes only its own skill's entry and is
+  the ledger), manifests whose `version` stays a semantic version string, a `skills.lock` that changes only its own skill's entry and is
   re-pinned to a commit in its own history where that skill and every
   `.gitattributes` match the merge result and every other locked skill, and
   each bundle's set of skills, match the base's pinned commit, no change to
@@ -121,16 +122,18 @@ merge-base, which a criss-cross history can make lie):
   ready and armed before a new run of the check registers. `plugin-runtime-review` gates only a plugin's own `hooks/` and
   `bin/`, so it does not hold these.
 
-All of this rests on the loop's App having no `workflows` permission: a
+All of this rests on the loop's App having no `workflows` permission (a
 pull request's run uses its own `ci.yml`, so a branch that could change
-workflows could remove these steps. Verify that permission whenever the App
+workflows could remove these steps) and no `statuses` or `checks` write
+permission (the required `pytest` context is not tied to GitHub Actions, so
+such a credential could report it green). Verify both whenever the App
 changes.
 
 Before anything in the job runs a pull request's code (the pip install
 reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
 step refuses a loop pull request that changes any path outside the ones its
-lanes write. The check runs twice in the job: before the test suites, and again as the
-job's last step with the pull request's body, draft state, arming and base
+lanes write, or whose checked-out merge commit is not of the head it read. The check runs twice in the job: before the test suites, and again as the
+job's last step with the pull request's body, draft state and base
 read afresh, so the run that reports last has read them last. A pull
 request retargeted to a new base is checked again by the `edited` run;
 until that run registers (seconds), the previous result still shows.

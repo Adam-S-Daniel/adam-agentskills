@@ -83,9 +83,9 @@ Keep that file harness-agnostic: every handler needs a shell-form `command`
 `timeout`, and no `if`/`args`/`shell`; a hook prints nothing to stdout unless
 it means to answer both harnesses. Claude-only hooks go in a file the
 `.claude-plugin/plugin.json` `hooks` key names. Hook scripts call
-`hooks/lib/harness.sh` to tell `claude-code`, `codex` and `other` apart.
+`hooks/lib/harness.sh` (in `plugins/adam-coding-local/`) to tell `claude-code`, `codex` and `other` apart.
 
-The API-credit lane (`bin/claude-credit`, `hooks/credit-lane/`, `hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
+The API-credit lane (`plugins/adam-coding-local/bin/claude-credit`, `plugins/adam-coding-local/hooks/credit-lane/`, `plugins/adam-coding-local/hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
 
 The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: at session start it fetches `_agent-guidance`'s `main` HEAD commit with a commit-only git fetch and `base.md` at that commit from `raw.githubusercontent.com`, and installs it through the bundled `fleet-memory.sh`. It never reads the project directory. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a reviewed pull request and never edited here.
 
@@ -144,8 +144,10 @@ The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker
   ends with `unittest.main()`, and running THAT one directly really does run
   its tests — which is why the habit to build is naming the runner rather than
   auditing each file for a footer. The one command that actually runs this
-  repo's suite is the one CI runs:
-  `python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q`,
+  repo's suite is the one CI runs, minus its flags:
+  `python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q`
+  (CI adds `-rfEs -n auto`, parallel through `pytest-xdist`; the plain form
+  is the same tests run serially, so slower),
   and read its result from `$?` directly rather than through a pipe.
 - **A hosted session starts with NONE of the dev dependencies**, so that command
   and `scripts/check_skills.py` both fail before they check anything. CI installs

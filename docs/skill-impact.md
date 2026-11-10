@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-10 — adam-coding-anywhere/workflow-path-audit — edit
+
+- Motivation: skills-evals description trim run `20261110T140514Z-a5cfb2`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).
+- Change: SKILL.md description shortened from 425 to 392 characters by the trim loop, body unchanged; its `length-limit` waiver removed from `scripts/skills_waivers.yml`; bundle `adam-coding-anywhere` 1.3.10 -> 1.3.11, by skills-evals' `routine-improve-gate.yml`.
+- Eval: run `20261110T140514Z-a5cfb2`, objective checks passed on every fixture, baseline -> candidate, 3 trial(s) per fixture in the eval routine (a local exhibit, not badge input): companion-skip-pair 24/24 -> 24/24; moved-test-dir 30/30 -> 30/30; required-by-unseen-ruleset 33/33 -> 33/33; required-check-routing 24/24 -> 24/24; required-gate-salience 35/36 -> 36/36; workflow-doc-in-step 30/30 -> 30/30; all fixtures 176/177 -> 177/177.
+- Outcome: auto-merges once required checks pass, with no human review (ADR 0021, Adam's 2026-10-26 decision).
+
 ## 2026-11-10 — adam-coding-anywhere/vendor-release-impact-issues — edit
 
 - Motivation: skills-evals description trim run `20261110T081040Z-55cbf3`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).

@@ -120,14 +120,6 @@ waivers:
     issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
   - klass: length-limit
     registry: adam-agentskills
-    path: plugins/adam-coding-anywhere/skills/workflow-path-audit/SKILL.md
-    reason: >-
-      Eval-protected (_agent-guidance ADR 0034): its description is over the
-      400-character listing cap, but a wording edit would reset its eval evidence,
-      so the trim goes through skills-evals' eval-backed improve lane instead.
-    issue: https://github.com/Adam-S-Daniel/skills-evals/issues/668
-  - klass: length-limit
-    registry: adam-agentskills
     path: plugins/adam-anything-anywhere/skills/writing-adrs/SKILL.md
     reason: >-
       Eval-protected (_agent-guidance ADR 0034): its description is over the

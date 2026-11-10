@@ -3225,7 +3225,7 @@ def load(path):
     try:
         if not stat.S_ISREG(os.lstat(path).st_mode):
             return None
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(fd, encoding="utf-8") as fh:
             if not stat.S_ISREG(os.fstat(fh.fileno()).st_mode):
                 return None

@@ -2470,7 +2470,7 @@ def _regular_json(path: Path) -> object:
     try:
         if not stat_module.S_ISREG(os.lstat(path).st_mode):
             return None
-        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
         with os.fdopen(fd, encoding="utf-8") as handle:
             if not stat_module.S_ISREG(os.fstat(handle.fileno()).st_mode):
                 return None

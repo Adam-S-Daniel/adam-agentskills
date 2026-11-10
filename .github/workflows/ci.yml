@@ -916,3 +916,99 @@ jobs:
             echo "No usable base commit for this event; scanning the tree only."
             python3 scripts/check_privacy_denylist.py
           fi
+
+  # The one context only a pull request into the default branch can report
+  # (issue #137). Required checks belong to a head commit, not to one pull
+  # request, so a second pull request from the same head into a branch whose
+  # ci.yml predates a guard could report `pytest` green for the pull request
+  # into main. This job's check is named `merge-gate` only on a pull request
+  # whose base is the default branch; on any other base or event it reports
+  # under another name, and a ci.yml from before this job cannot report it at
+  # all. A pull request into the default branch runs the merge of its head
+  # with main, so main's ci.yml, unless the head changed the workflow, which
+  # the loop's App cannot do. So a green `merge-gate` always comes from the
+  # current jobs, run for a pull request into main.
+  #
+  # It passes only when every job it needs succeeded in the same run, and it
+  # runs under `always()` so that a failed or cancelled job fails it instead of
+  # skipping it (a skipped required check counts as passing).
+  #
+  # scripts/test_ci_workflow.py pins the name, the needs, the condition and the
+  # absence of a `concurrency:` block. Do not give this job a matrix.
+  merge-gate:
+    name: >-
+      ${{ github.event_name == 'pull_request'
+            && github.event.pull_request.base.ref == github.event.repository.default_branch
+            && 'merge-gate'
+          || 'merge-gate (not a pull request into the default branch)' }}
+    needs: [privacy, pytest, pytest-windows]
+    if: always() && github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Every job this gate stands for succeeded
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          set -euo pipefail
+          bad="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")"
+          count="$(jq -r 'length' <<< "$NEEDS")"
+          if [ "$count" != 3 ] || [ -n "$bad" ]; then
+            printf '::error::merge-gate needs three successful jobs, and got:\n%s\n' "${bad:-$count jobs}"
+            exit 1
+          fi
+
+  # The one-way-door check in `pytest` judges a pull request against main as
+  # it is when the check runs. When main then gains a name (or its ledger a
+  # retired one), a pull request that was already green was not judged again,
+  # so one that deletes a skill another adds could merge the removal unseen
+  # (issue #137). After a push to main that changes what the check reads
+  # there, this job re-runs the `pytest` job of every open pull request into
+  # main. A re-run fetches main again, so the check reads it as it is now, and
+  # `merge-gate` re-runs with it.
+  #
+  # Push to main only, so it never runs a pull request's copy of the script,
+  # and on a pull request it shows as skipped: it is not a required check.
+  # A job of this workflow, not a workflow of its own, so that it needs no new
+  # entry in actions.lock.
+  recheck-open-prs:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The script waits up to 45 minutes per pull request for runs in progress.
+    timeout-minutes: 120
+    # actions: write re-runs a job; pull-requests: read lists the open ones.
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # What the check reads from the base: the plugins and the marketplace,
+      # the ledger, the loop's lanes, the lock, any .gitattributes and the
+      # check itself. A range that cannot be read re-runs everything.
+      - name: Decide whether the push changed what the check reads
+        id: changed
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if ! paths="$(git diff --no-renames --name-only "$BEFORE" "$GITHUB_SHA" 2>/dev/null)"; then
+            echo "::notice::Could not read the pushed range; re-running every open pull request."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          hit="$(grep -E '^(plugins/|\.claude-plugin/|scripts/(shipped_names\.json|loop_prs\.json|check_one_way_doors\.py)$|skills\.lock$|(.*/)?\.gitattributes$)' <<< "$paths" || true)"
+          if [ -n "$hit" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The push changed nothing the one-way-door check reads; no pull request is re-run."
+          fi
+      - name: Re-run the pytest job of every open pull request into main
+        if: steps.changed.outputs.run == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -I scripts/recheck_open_prs.py --repo "$GITHUB_REPOSITORY"

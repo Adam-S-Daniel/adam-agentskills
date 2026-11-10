@@ -2465,12 +2465,107 @@ def cluster(stamped: List[Tuple[str, float]]) -> List[List[Tuple[str, float]]]:
     return clusters
 
 
+def _regular_json(path: Path) -> object:
+    """JSON from a regular file, never blocking on a FIFO; None otherwise."""
+    try:
+        if not stat_module.S_ISREG(os.lstat(path).st_mode):
+            return None
+        fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, encoding="utf-8") as handle:
+            if not stat_module.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                return None
+            return json.load(handle)
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+
+
+def synced_plugin_skills(claude_dir: Path, project_dir: Path,
+                         claims: Set[Tuple[str, str]] = frozenset()
+                         ) -> Dict[str, str]:
+    """Skill basename -> `<plugin>:<name>` for every skill a synced account plugin
+    loads, as the bootstrap hook reads it (ADR 0024).
+
+    The hook leaves a locked skill to such a plugin instead of installing it, so
+    the doctor must not call that skill missing. It mirrors the hook's test: a
+    `manifest.json` entry with `installationPreference: available`, not turned
+    off in `enabledPlugins` (user, project, then local settings, later wins),
+    whose (marketplace, plugin) is a (registry repository name, bundle) some
+    lock claims, and a real `skills/<name>/SKILL.md`.
+    """
+    wanted = set()
+    for registry, bundle in claims:
+        market = registry.rstrip("/").rsplit("/", 1)[-1]
+        wanted.add((market[:-4] if market.endswith(".git") else market, bundle))
+    enabled: Dict[str, object] = {}
+    for path in (claude_dir / "settings.json",
+                 project_dir / ".claude" / "settings.json",
+                 project_dir / ".claude" / "settings.local.json"):
+        if not os.path.lexists(path):
+            continue
+        # Unreadable might be the file that turns a plugin off: the hook then
+        # leaves nothing to a plugin, so neither does this.
+        data = _regular_json(path)
+        if not isinstance(data, dict):
+            return {}
+        value = data.get("enabledPlugins", {})
+        if not isinstance(value, dict):
+            return {}
+        enabled.update(value)
+    found: Dict[str, str] = {}
+    root = claude_dir / "plugins" / "synced"
+    try:
+        buckets = sorted(b for b in root.iterdir() if not b.name.startswith("."))
+    except OSError:
+        return found
+    # One bucket or none, as the hook: several accounts' buckets cannot say
+    # which one this session loads.
+    if len(buckets) != 1:
+        return found
+    for bucket in buckets:
+        if bucket.name.startswith(".") or os.path.islink(bucket) \
+                or not os.path.isdir(bucket):
+            continue
+        data = _regular_json(bucket / "manifest.json")
+        plugins = data.get("plugins") if isinstance(data, dict) else None
+        for plugin in plugins if isinstance(plugins, list) else ():
+            if not isinstance(plugin, dict):
+                continue
+            name, market = plugin.get("name"), plugin.get("marketplaceName")
+            if not isinstance(name, str) or not isinstance(market, str) \
+                    or not _SAFE_NAME.match(name) or not _SAFE_NAME.match(market) \
+                    or (market, name) not in wanted \
+                    or plugin.get("installationPreference") != "available" \
+                    or plugin.get("enabled") not in (None, True) \
+                    or enabled.get(f"{name}@synced") is False \
+                    or enabled.get(f"{name}@{market}") is False:
+                continue
+            skills = bucket / name / "skills"
+            if os.path.islink(bucket / name) or os.path.islink(skills) \
+                    or not os.path.isdir(skills):
+                continue
+            try:
+                entries = sorted(skills.iterdir())
+            except OSError:
+                continue
+            for skill in entries:
+                md = skill / "SKILL.md"
+                # os.path, not pathlib: these swallow a permission error.
+                if _SAFE_NAME.match(skill.name) and not os.path.islink(skill) \
+                        and os.path.isfile(md) and not os.path.islink(md):
+                    found.setdefault(skill.name, f"{name}:{skill.name}")
+    return found
+
+
 def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
              origins: Dict[str, Origin], union: Union,
              account: Set[str] = frozenset(),
              repo_owned: Optional[Mapping[str, Path]] = MappingProxyType({}),
              store_state: str = PRESENT,
              surface: str = DURABLE,
+             plugin_delivered: Mapping[str, str] = MappingProxyType({}),
              ) -> Tuple[List[Row], List[Finding], List[Finding]]:
     """One row per directory on disk, plus the findings and notes they imply.
 
@@ -2897,6 +2992,16 @@ def classify(skills_dir: Path, names: List[str], record: Record, lock: Lock,
                     f"project dir AND every accepted lock's own repo, and in a "
                     f"multi-repo session the project dir is the parent of them "
                     f"all and ships nothing.{but_here}"))
+                continue
+            if missing in plugin_delivered:
+                notes.append(Finding(
+                    "delivered-by-an-account-plugin", missing,
+                    f"not in the personal store, and a synced account plugin "
+                    f"loads it as `{plugin_delivered[missing]}`. Where the "
+                    f"bootstrap hook runs, it leaves a skill such a plugin "
+                    f"already delivers rather than load it twice (ADR 0024). "
+                    f"That copy is the plugin's, not digest-checked against "
+                    f"the lock."))
                 continue
             if not attributable:
                 # No record means the hook has never delivered into this store.
@@ -3824,11 +3929,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     # expectation, and `classify` is handed the union separately so that the
     # per-lock sentences and the union-scoped ones cannot be confused for each
     # other.
+    # The settings the hook reads are the SESSION's project's, which is
+    # CLAUDE_PROJECT_DIR when set, not wherever the doctor was started.
+    session_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    plugin_delivered = synced_plugin_skills(
+        skills_dir.parent, Path(session_dir) if session_dir else project_dir,
+        union.claims)
     results: List[LockResult] = []
     for lock_path, lock in locks:
         rows, findings, notes = classify(
             skills_dir, names, record, lock, origins, union, account=account,
-            repo_owned=repo_owned, store_state=store_state, surface=surface[0])
+            repo_owned=repo_owned, store_state=store_state, surface=surface[0],
+            plugin_delivered=plugin_delivered)
         tagged = [finding._replace(lock=str(lock_path))
                   for finding in lock_findings(lock, lock_path, surface[0])
                   + findings]

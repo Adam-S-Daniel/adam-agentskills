@@ -1465,6 +1465,69 @@ def test_the_surface_test_is_the_hooks_own_three_arms():
         == prov.EPHEMERAL
 
 
+def _synced_plugin(claude_dir, plugin, skill, preference="available",
+                   market="adam-agentskills"):
+    bucket = claude_dir / "plugins" / "synced" / "org_account"
+    (bucket / plugin / "skills" / skill).mkdir(parents=True)
+    (bucket / plugin / "skills" / skill / "SKILL.md").write_text(
+        f"---\nname: {skill}\n---\n", encoding="utf-8")
+    (bucket / "manifest.json").write_text(json.dumps({"plugins": [
+        {"name": plugin, "marketplaceName": market,
+         "installationPreference": preference}]}), encoding="utf-8")
+
+
+@pytest.mark.parametrize("shape", ["delivers", "hidden", "other-marketplace",
+                                   "other-plugin", "fifo-manifest",
+                                   "two-buckets", "bad-settings",
+                                   "not-enabled"])
+def test_a_locked_skill_a_synced_account_plugin_delivers_is_not_called_missing(
+        tmp_path, capsys, shape, monkeypatch):
+    """ADR 0024: the hook leaves such a skill to the plugin, so it is a note.
+
+    Only when the hook would: an available plugin named after a lock's bundle,
+    from the marketplace named after that lock's registry. A FIFO manifest is
+    read as nothing rather than blocking the doctor.
+    """
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
+    store = tmp_path / "skills"
+    store.mkdir()
+    make_skill(store, "alpha")
+    write_record(store, "alpha")
+    lock = write_lock(tmp_path / "skills.lock", store, "alpha")
+    lock_data = json.loads(lock.read_text(encoding="utf-8"))
+    lock_data["skills"]["adam/beta"] = "0" * 64
+    lock.write_text(json.dumps(lock_data, indent=2) + "\n", encoding="utf-8")
+    _synced_plugin(tmp_path, "other" if shape == "other-plugin" else "adam",
+                   "beta", "hidden" if shape == "hidden" else "available",
+                   "someone-else" if shape == "other-marketplace"
+                   else "adam-agentskills")
+    if shape == "fifo-manifest":
+        if not hasattr(os, "mkfifo"):
+            pytest.skip("no FIFOs on this platform")
+        manifest = tmp_path / "plugins" / "synced" / "org_account" / "manifest.json"
+        manifest.unlink()
+        os.mkfifo(manifest)
+
+    if shape == "not-enabled":
+        manifest = tmp_path / "plugins" / "synced" / "org_account" / "manifest.json"
+        doc = json.loads(manifest.read_text(encoding="utf-8"))
+        doc["plugins"][0]["enabled"] = False
+        manifest.write_text(json.dumps(doc), encoding="utf-8")
+    if shape == "two-buckets":
+        bucket = tmp_path / "plugins" / "synced" / "org_account"
+        shutil.copytree(bucket, bucket.parent / "other_account")
+    if shape == "bad-settings":
+        (tmp_path / "settings.json").write_text("{not json", encoding="utf-8")
+
+    code, out = run(store, lock, capsys)
+    if shape == "delivers":
+        assert "[delivered-by-an-account-plugin] beta" in flat(out), out
+        assert "adam:beta" in flat(out), out
+        assert "[missing] beta" not in flat(out), out
+    else:
+        assert "delivered-by-an-account-plugin" not in flat(out), out
+
+
 def test_a_locked_skill_the_account_store_delivers_is_not_called_missing(
         tmp_path, capsys):
     """Measured on the author's own machine: this fired for real.

@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-10 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: [adam-agentskills#116](https://github.com/Adam-S-Daniel/adam-agentskills/issues/116): the bootstrap hook now leaves a locked skill to a synced account plugin that already loads it (ADR 0024), and the doctor would have called that skill missing in every cloud session.
+- Change: `scripts/check_provenance.py` reports such a skill as the note `delivered-by-an-account-plugin`, reading `~/.claude/plugins/synced` the way the hook does; SKILL.md unchanged; bundle `adam-coding-anywhere` 1.3.8 -> 1.3.9 (PR pending).
+- Eval: none — script-only change, SKILL.md untouched; the doctor's own suite covers the new note
+- Outcome: pending
+
 ## 2026-11-09 — adam-non-coding-local/pdf-ocr-audit — edit
 
 - Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the large-folder bullet listed `YYYYMMDD_*_iOS.pdf` among files that need OCR, while the filename table says No (already searchable).

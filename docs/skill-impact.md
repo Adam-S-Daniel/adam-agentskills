@@ -54,6 +54,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-10 — adam-coding-anywhere/vendor-release-impact-issues — edit
+
+- Motivation: skills-evals description trim run `20261110T081040Z-55cbf3`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).
+- Change: SKILL.md description shortened from 617 to 367 characters by the trim loop, body unchanged; its `length-limit` waiver removed from `scripts/skills_waivers.yml`; bundle `adam-coding-anywhere` 1.3.9 -> 1.3.10, by skills-evals' `routine-improve-gate.yml`.
+- Eval: run `20261110T081040Z-55cbf3`, objective checks passed on every fixture, baseline -> candidate, 3 trial(s) per fixture in the eval routine (a local exhibit, not badge input): closed-duplicate 15/18 -> 15/18; closing-keywords 18/18 -> 18/18; issue-hygiene 21/21 -> 21/21; stamps-skip-quotes 12/15 -> 14/15; all fixtures 66/72 -> 68/72.
+- Outcome: auto-merges once required checks pass, with no human review (ADR 0021, Adam's 2026-10-26 decision).
+
 ## 2026-11-10 — adam-coding-anywhere/skills-doctor — edit
 
 - Motivation: [adam-agentskills#116](https://github.com/Adam-S-Daniel/adam-agentskills/issues/116): the bootstrap hook now leaves a locked skill to a synced account plugin that already loads it (ADR 0024), and the doctor would have called that skill missing in every cloud session.

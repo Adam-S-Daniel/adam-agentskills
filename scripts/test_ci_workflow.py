@@ -36,6 +36,8 @@ CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 # drift apart, instead of a PR queue silently wedging.
 # `pytest` too: the live ruleset requires it (read 2026-11-09), and the
 # one-way-door check in it is enforcement only while it stays required.
+# `merge-gate` is required too, and is NOT in this list: its job has a `name:`
+# on purpose, so it has tests of its own at the end of this file.
 REQUIRED_CONTEXTS = ["pytest", "pytest-windows"]
 
 
@@ -973,3 +975,162 @@ def test_the_loop_path_guard_names_the_path_it_refuses(tmp_path):
                     reason="runs the step's bash with git and jq, as the Linux runner does")
 def test_the_loop_path_guard_ignores_other_branches(tmp_path):
     assert _run_guard(tmp_path, "claude/some-change", "requirements-dev.txt")[0] == 0
+
+
+# --- merge-gate and the recheck of open pull requests (issue #137) ----------
+#
+# Required checks belong to a head commit, not to one pull request. `pytest`
+# can be reported green for a head by a second pull request into a branch
+# whose ci.yml is older, so the ruleset also requires `merge-gate`, which only
+# a pull request into the default branch reports under that name.
+
+MERGE_GATE = "merge-gate"
+GATED_JOBS = ["privacy", "pytest", "pytest-windows"]
+
+
+def test_merge_gate_reports_its_required_name_only_into_the_default_branch():
+    """The name is one expression: `merge-gate` on a pull request whose base
+    is the default branch, something else on any other base or event. A plain
+    name would let a run into another base report the required context."""
+    name = load_ci()["jobs"][MERGE_GATE]["name"]
+    flat = " ".join(name.split())
+    assert flat.startswith("${{ ") and flat.endswith(" }}") and flat.count("${{") == 1
+    assert flat == (
+        "${{ github.event_name == 'pull_request'"
+        " && github.event.pull_request.base.ref == github.event.repository.default_branch"
+        " && 'merge-gate'"
+        " || 'merge-gate (not a pull request into the default branch)' }}"
+    )
+
+
+def test_merge_gate_stands_for_every_required_job_and_is_never_skipped_on_a_pull_request():
+    """A skipped required check counts as passing, so the gate runs under
+    always() and fails unless each needed job succeeded in this run."""
+    job = load_ci()["jobs"][MERGE_GATE]
+    assert job["needs"] == GATED_JOBS
+    # Every required context that is a ci.yml job is behind the gate.
+    assert set(REQUIRED_CONTEXTS) <= set(GATED_JOBS)
+    assert job["if"] == "always() && github.event_name == 'pull_request'"
+    assert "matrix" not in (job.get("strategy") or {})
+    assert "concurrency" not in job
+    assert job["permissions"] == {}
+    assert "continue-on-error" not in job
+    (step,) = job["steps"]
+    assert step["env"] == {"NEEDS": "${{ toJSON(needs) }}"}
+    assert "${{" not in step["run"]
+    assert "continue-on-error" not in step and "if" not in step
+
+
+def _run_merge_gate(results):
+    import json
+    import subprocess
+    step = load_ci()["jobs"][MERGE_GATE]["steps"][0]
+    needs = {job: {"result": result, "outputs": {}} for job, result in results.items()}
+    return subprocess.run(
+        [shutil.which("bash"), "-c", step["run"]],
+        env={**os.environ, "NEEDS": json.dumps(needs)},
+        capture_output=True, text=True)
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with jq, as the Linux runner does")
+def test_merge_gate_passes_when_every_needed_job_succeeded():
+    assert _run_merge_gate({j: "success" for j in GATED_JOBS}).returncode == 0
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with jq, as the Linux runner does")
+@pytest.mark.parametrize("result", ["failure", "cancelled", "skipped"])
+@pytest.mark.parametrize("job", GATED_JOBS)
+def test_merge_gate_fails_when_a_needed_job_did_not_succeed(job, result):
+    done = _run_merge_gate({**{j: "success" for j in GATED_JOBS}, job: result})
+    assert done.returncode == 1 and f"{job}: {result}" in done.stdout
+
+
+@pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
+                    reason="runs the step's bash with jq, as the Linux runner does")
+def test_merge_gate_fails_when_a_needed_job_is_missing():
+    assert _run_merge_gate({j: "success" for j in GATED_JOBS[:2]}).returncode == 1
+
+
+RECHECK_JOB = "recheck-open-prs"
+
+
+def test_the_recheck_job_runs_only_mains_copy_of_its_script():
+    """It holds actions: write, so it must never run on a pull request (whose
+    copy of the script it would execute) or on another ref."""
+    job = load_ci()["jobs"][RECHECK_JOB]
+    assert job["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert ci_triggers(load_ci())["push"] == {"branches": ["main"]}
+    assert job["permissions"] == {"contents": "read", "actions": "write",
+                                  "pull-requests": "read"}
+    assert "concurrency" not in job
+    last = job["steps"][-1]
+    assert last["if"] == "steps.changed.outputs.run == 'true'"
+    assert last["run"] == 'python3 -I scripts/recheck_open_prs.py --repo "$GITHUB_REPOSITORY"'
+    for step in job["steps"]:
+        assert "${{" not in step.get("run", "")
+
+
+def _run_recheck_decision(tmp_path, changed_files, before=None):
+    import subprocess
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                              capture_output=True, text=True).stdout.strip()
+
+    git("init", "-q")
+    git("config", "user.name", "fixture")
+    git("config", "user.email", "fixture@example.com")
+    (repo / "seed.txt").write_text("seed\n", encoding="utf-8")
+    git("add", "seed.txt")
+    git("commit", "-q", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    for name in changed_files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("changed\n", encoding="utf-8")
+        git("add", name)
+    git("commit", "-q", "-m", "head")
+    out_file = tmp_path / "github_output"
+    out_file.write_text("", encoding="utf-8")
+    step = next(s for s in load_ci()["jobs"][RECHECK_JOB]["steps"] if s.get("id") == "changed")
+    done = subprocess.run(
+        [shutil.which("bash"), "-c", step["run"]], cwd=str(repo),
+        env={**os.environ, "BEFORE": before or base, "GITHUB_SHA": git("rev-parse", "HEAD"),
+             "GITHUB_OUTPUT": out_file.as_posix()},
+        capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    return out_file.read_text(encoding="utf-8").strip()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="runs the step's bash, as the Linux runner does")
+@pytest.mark.parametrize("path", [
+    "plugins/p/skills/s/SKILL.md",
+    "plugins/p/.claude-plugin/plugin.json",
+    ".claude-plugin/marketplace.json",
+    "scripts/shipped_names.json",
+    "scripts/loop_prs.json",
+    "scripts/check_one_way_doors.py",
+    "skills.lock",
+    ".gitattributes",
+    "docs/deep/.gitattributes",
+])
+def test_a_push_that_changes_what_the_check_reads_rechecks_open_pull_requests(tmp_path, path):
+    assert _run_recheck_decision(tmp_path, ["README.md", path]) == "run=true"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="runs the step's bash, as the Linux runner does")
+def test_a_push_that_changes_nothing_the_check_reads_rechecks_nothing(tmp_path):
+    out = _run_recheck_decision(
+        tmp_path, ["README.md", "docs/plugins/x.md", "scripts/check_skills.py",
+                   "scripts/skills.lock", "myplugins/a.md"])
+    assert out == "run=false"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="runs the step's bash, as the Linux runner does")
+def test_a_push_whose_range_cannot_be_read_rechecks_everything(tmp_path):
+    out = _run_recheck_decision(tmp_path, ["README.md"], before="0" * 40)
+    assert out == "run=true"

@@ -238,6 +238,16 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   limits or not opened by the App [`scripts/loop_prs.json`](scripts/loop_prs.json)
   names. The other surfaces rely on the review alone. After a body edit,
   re-run the job: it reads the body from the API.
+- **`merge-gate` is the required check only a pull request into `main` can
+  report** (#137). Its job name in `ci.yml` is an expression, on purpose:
+  on any other base or event it reports under another name, so a second pull
+  request from the same head into an older branch cannot turn the required
+  context green. Do not replace the name with a plain string, and add a new
+  required `ci.yml` job to its `needs`. After a push to `main` that changes
+  what the one-way-door check reads, `ci.yml`'s `recheck-open-prs` job re-runs
+  `pytest` on every open pull request, so expect checks on an open pull
+  request to restart by themselves. It runs on pushes to `main` only, so it
+  shows as skipped on pull requests and is not a required check.
 - **Two automatic paths cross these doors.** The evals loop's PRs merge by
   auto-merge; improvements and new skills lose no name, and a removal carries
   the review line written by skills-evals' removal reviewer. `_agent-guidance`'s

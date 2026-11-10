@@ -141,13 +141,16 @@ workflows could remove these steps) and no `statuses` or `checks` write
 permission (the required `pytest` context is not tied to GitHub Actions, so
 such a credential could report it green), and no `actions` write permission
 (a re-run keeps an old event's workspace). Verify all three whenever the App
-changes. One gap remains that no permission closes: required checks belong
-to a head commit, not to one pull request, so a second pull request from the
-same head into a branch whose `ci.yml` predates these steps can report
-`pytest` green for the pull request into the default branch. Requiring
-branches to be up to date before merging (#137) closes it, since the head
-then carries the current `ci.yml`; until then, keep no long-lived branch
-besides the default one.
+changes. Required checks belong to a head commit, not to one pull request,
+so a second pull request from the same head into a branch whose `ci.yml`
+predates these steps can report `pytest` green for the pull request into the
+default branch. The required `merge-gate` check closes that (#137): its
+job reports under that name only on a pull request whose base is the default
+branch, needs `privacy`, `pytest` and `pytest-windows` to have succeeded in
+the same run, and cannot be reported at all by a `ci.yml` from before it
+existed. A pull request into the default branch runs the default branch's
+`ci.yml` unless its head changed the workflow, which the App cannot do. So
+stale branches no longer open anything.
 
 Before anything in the job runs a pull request's code (the pip install
 reads `requirements-dev.txt`, the skill gates run `scripts/`), a bash-only
@@ -158,10 +161,18 @@ job's last step with the pull request's body, draft state and base
 read afresh, so the run that reports last has read them last. A pull
 request retargeted to a new base is checked again by the `edited` run;
 until that run registers (seconds), the previous result still shows.
-The check is not re-run when the base branch moves: a pull request stacked
-on another one (it deletes a skill the other adds) passes against the old
-base and is not re-checked once the other merges, unless the ruleset
-requires branches to be up to date (it does not today; #137).
+When the default branch moves, the check is run again: after a push there
+that changes what the check reads (the plugins, the marketplace, the ledger,
+the loop's lanes, the lock, a `.gitattributes` or the check itself),
+`ci.yml`'s `recheck-open-prs` job re-runs the `pytest` job of every open pull
+request into it (`scripts/recheck_open_prs.py`; #137). A re-run fetches the
+base again, so a pull request stacked on another one (it deletes a skill the
+other adds) turns red once the other merges. The re-run starts within about a
+minute of the push, or once the pull request's runs in progress finish; until
+then the earlier result still shows. If a re-run is refused (GitHub refuses
+after 30 days), that job fails and names the pull request. A re-run uses the
+`ci.yml` of the run it repeats, so a change to `ci.yml` itself reaches an
+open pull request only with its next push or description edit.
 
 A skill body that could run a shell command on load is refused in a loop
 pull request's SKILL.md by this check: any exclamation mark followed by a

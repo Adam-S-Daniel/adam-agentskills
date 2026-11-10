@@ -8304,8 +8304,9 @@ def test_a_json_in_the_project_directory_is_not_the_hooks_lock_reader(tmp_path, 
 def test_every_python3_the_hook_launches_is_isolated():
     """A drift alarm on the flag itself, since only two call sites are probed.
 
-    The hook launches python six times — the verdict encoder, the lock reader,
-    the digest, and the three readers/writers of the install record (the
+    The hook launches python seven times — the verdict encoder, the lock reader,
+    the digest, the synced-plugin reader (what an account plugin already
+    delivers), and the three readers/writers of the install record (the
     attribution read that decides what the install loop may OVERWRITE, the prune
     planner that decides what it may REMOVE, and the writer that rewrites it) —
     and every one of them puts the project directory on sys.path without `-I`.
@@ -8314,7 +8315,7 @@ def test_every_python3_the_hook_launches_is_isolated():
     user's directories the hook then `rm -rf`s.
 
     Matching is lexical and deliberately narrow: an invocation is `python3`
-    followed by a flag, which is the shape all six have (`-c`, `-`) and which
+    followed by a flag, which is the shape all seven have (`-c`, `-`) and which
     no prose mention or `command -v python3` probe takes. Comment lines are
     dropped first so the header's own `python3 -I` reference is not counted as a
     call site.
@@ -8323,7 +8324,7 @@ def test_every_python3_the_hook_launches_is_isolated():
         line for line in HOOK.read_text(encoding="utf-8").splitlines()
         if not line.lstrip().startswith("#")
     )
-    assert re.findall(r"\bpython3\s+(-\S+)", code) == ["-I"] * 6
+    assert re.findall(r"\bpython3\s+(-\S+)", code) == ["-I"] * 7
 
 
 # --------------------------------------------------------------------------
@@ -8472,6 +8473,256 @@ def test_hook_removes_a_stale_copy_that_shadows_a_project_owned_skill(tmp_path, 
     assert "collision skipped, repo-owned wins (alpha)" in verdict, verdict
     assert not stale.exists()
     assert (home / ".claude" / "skills" / "beta" / "SKILL.md").is_file()
+
+
+def _sync_plugin(home: Path, market: str, plugin: str, skills: dict,
+                 manifest: bool = True, preference: str = "available") -> Path:
+    """Lay out an account plugin the way claude.ai syncs it into a cloud session.
+
+    `~/.claude/plugins/synced/<bucket>/manifest.json` lists the plugins with
+    their marketplace, and `<bucket>/<plugin>/skills/<skill>/` holds each skill.
+    """
+    bucket = home / ".claude" / "plugins" / "synced" / "org_account"
+    for skill, files in skills.items():
+        for rel, text in files.items():
+            _write(bucket / plugin / "skills" / skill / rel, text)
+    if manifest:
+        _write(bucket / "manifest.json", json.dumps({"plugins": [
+            {"name": plugin, "marketplaceName": market,
+             "installationPreference": preference}]}))
+    return bucket
+
+
+def test_hook_leaves_a_skill_a_synced_account_plugin_delivers(tmp_path, registry):
+    """adam-agentskills#116: one skill must not load twice in a cloud session.
+
+    The fixture lock's source is `.../registry`, so the plugin `adam` from the
+    marketplace `registry` delivers `adam/alpha`. The hook must not install a
+    second copy, must remove the copy it installed on an earlier run, must still
+    count the skill as available, and must say where it comes from.
+    """
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    stale = _seed_installed(home, "alpha")
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert verdict.startswith("skills: 2/2 "), verdict
+    assert "— OK" in verdict, verdict
+    assert ("left 1 skill to the account's synced plugins, whose copies "
+            "already load and are not digest-checked against the lock "
+            "(adam/alpha)") in verdict, verdict
+    assert not stale.exists()
+    assert (home / ".claude" / "skills" / "beta" / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("shape", ["other-marketplace", "other-plugin",
+                                   "no-skill-md", "no-manifest", "not-enabled",
+                                   "other-preference", "disabled-by-user",
+                                   "disabled-by-project", "symlinked-skill"])
+def test_hook_still_installs_a_skill_no_synced_plugin_really_delivers(
+        tmp_path, registry, shape):
+    """Only an exact <marketplace>/<plugin>/<skill> with a SKILL.md suppresses.
+
+    A same-named skill from another marketplace or plugin, a skill directory
+    with no SKILL.md, or a bucket with no manifest delivers nothing this lock
+    pinned, so the hook installs as it always has.
+    """
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    market, plugin, files, manifest = "registry", "adam", SKILL_A, True
+    if shape == "other-marketplace":
+        market = "someone-else"
+    elif shape == "other-plugin":
+        plugin = "other"
+    elif shape == "no-skill-md":
+        files = {"notes.md": "a\n"}
+    elif shape == "no-manifest":
+        manifest = False
+    preference = "hidden" if shape == "other-preference" else "available"
+    if shape == "disabled-by-user":
+        _write(home / ".claude" / "settings.json",
+               json.dumps({"enabledPlugins": {"adam@synced": False}}))
+    if shape == "disabled-by-project":
+        _write(project / ".claude" / "settings.json",
+               json.dumps({"enabledPlugins": {"adam@synced": False}}))
+    if shape == "symlinked-skill":
+        real = tmp_path / "elsewhere" / "alpha"
+        for rel, text in SKILL_A.items():
+            _write(real / rel, text)
+        bucket = _sync_plugin(home, market, plugin, {})
+        (bucket / plugin / "skills").mkdir(parents=True)
+        _make_symlink(bucket / plugin / "skills" / "alpha", real,
+                      to_directory=True)
+    else:
+        bucket = _sync_plugin(home, market, plugin, {"alpha": files},
+                              manifest=manifest, preference=preference)
+        if shape == "not-enabled":
+            doc = json.loads((bucket / "manifest.json").read_text(encoding="utf-8"))
+            doc["plugins"][0]["enabled"] = False
+            _write(bucket / "manifest.json", json.dumps(doc))
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert verdict.startswith("skills: 2/2 "), verdict
+    assert "synced plugins" not in verdict, verdict
+    assert (home / ".claude" / "skills" / "alpha" / "SKILL.md").is_file()
+
+
+def test_hook_reports_repo_owned_before_a_synced_plugin(tmp_path, registry):
+    """A repo's own copy still wins, and its collision is still reported."""
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    _write(project / ".claude" / "skills" / "alpha" / "SKILL.md", "repo-owned alpha\n")
+    home = tmp_path / "home"
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    assert "collision skipped, repo-owned wins (alpha)" in verdict, verdict
+    assert "synced plugins" not in verdict, verdict
+
+
+@pytest.mark.parametrize("where", ["manifest", "settings.local"])
+def test_a_fifo_in_the_synced_plugin_inputs_does_not_hang_the_hook(
+        tmp_path, registry, where):
+    """The synced-plugin reader opens only regular files, never blocking."""
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("no FIFOs on this platform")
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    bucket = _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+    if where == "manifest":
+        (bucket / "manifest.json").unlink()
+        os.mkfifo(bucket / "manifest.json")
+    else:
+        (project / ".claude").mkdir(parents=True, exist_ok=True)
+        os.mkfifo(project / ".claude" / "settings.local.json")
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"}, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    verdict = _verdict(proc)
+    # Unreadable either way: the manifest delivers nothing, and a settings file
+    # that might turn the plugin off makes the answer unknown. Both install.
+    assert "synced plugins" not in verdict, verdict
+    assert (home / ".claude" / "skills" / "alpha" / "SKILL.md").is_file()
+
+
+@pytest.mark.parametrize("settings", [
+    ("settings.local.json", {"adam@synced": False}),
+    ("settings.json", {"adam@registry": False}),
+])
+def test_other_enabled_plugins_spellings_also_turn_the_plugin_off(
+        tmp_path, registry, settings):
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+    _write(project / ".claude" / settings[0],
+           json.dumps({"enabledPlugins": settings[1]}))
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "synced plugins" not in _verdict(proc)
+    assert (home / ".claude" / "skills" / "alpha" / "SKILL.md").is_file()
+
+
+def test_project_settings_reenable_a_plugin_user_settings_turn_off(
+        tmp_path, registry):
+    """Later settings win per key, as Claude Code resolves them."""
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+    _write(home / ".claude" / "settings.json",
+           json.dumps({"enabledPlugins": {"adam@synced": False}}))
+    _write(project / ".claude" / "settings.json",
+           json.dumps({"enabledPlugins": {"adam@synced": True}}))
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "left 1 skill" in _verdict(proc)
+    assert not (home / ".claude" / "skills" / "alpha").exists()
+
+
+@pytest.mark.parametrize("shape", ["second-bucket", "bom-settings"])
+def test_hook_installs_when_it_cannot_tell_what_the_session_loads(
+        tmp_path, registry, shape):
+    """Two account buckets, or a settings file it cannot parse: install."""
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    bucket = _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+    if shape == "second-bucket":
+        shutil.copytree(bucket, bucket.parent / "other_account")
+    else:
+        (home / ".claude" / "settings.json").write_bytes(
+            b"\xef\xbb\xbf" + json.dumps({"enabledPlugins": {}}).encode())
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "synced plugins" not in _verdict(proc)
+    assert (home / ".claude" / "skills" / "alpha" / "SKILL.md").is_file()
+
+
+def test_a_registry_url_ending_in_git_matches_its_marketplace(tmp_path):
+    """Production sources are `https://github.com/<owner>/<repo>.git`; the
+    marketplace is `<repo>`, so the `.git` must be stripped to match."""
+    root = tmp_path / "adam-agentskills.git"
+    sha = make_registry(root, {"adam/alpha": SKILL_A, "adam/beta": SKILL_B})
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    _sync_plugin(home, "adam-agentskills", "adam", {"alpha": SKILL_A})
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "left 1 skill" in _verdict(proc), _verdict(proc)
+    assert not (home / ".claude" / "skills" / "alpha").exists()
+
+
+def test_codex_cloud_ignores_claudes_synced_plugins(tmp_path, registry):
+    """Codex never loads Claude's synced plugins, so it installs regardless."""
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+
+    proc = _run_hook(home, project, args=("--codex-cloud",))
+    assert proc.returncode == 0, proc.stderr
+    assert (home / ".agents" / "skills" / "alpha" / "SKILL.md").is_file()
+
+
+def test_hook_leaves_a_hand_placed_copy_alone_with_a_synced_plugin(tmp_path, registry):
+    """The plugin check runs after the may_replace gate: a directory the hook
+    did not install is still refused and named, never removed."""
+    root, sha = registry
+    project = tmp_path / "project"
+    make_project(project, root, sha)
+    home = tmp_path / "home"
+    hand = home / ".claude" / "skills" / "alpha"
+    _write(hand / "SKILL.md", "---\nname: alpha\n---\nmine\n")
+    _sync_plugin(home, "registry", "adam", {"alpha": SKILL_A})
+
+    proc = _run_hook(home, project, {"SKILLS_BOOTSTRAP_FORCE": "1"})
+    assert proc.returncode == 0, proc.stderr
+    assert "shadowed" in _verdict(proc)
+    assert (hand / "SKILL.md").read_text(encoding="utf-8").endswith("mine\n")
 
 
 def _duplicate_basename_project(tmp_path: Path) -> Path:

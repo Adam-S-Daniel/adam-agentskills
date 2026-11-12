@@ -189,6 +189,17 @@ def show(rev: str, path: str) -> Optional[str]:
     return proc.stdout
 
 
+def removal_parent_tree(rev: str, plugin: str, skill: str) -> Optional[str]:
+    """Tree id of plugins/<plugin>/skills/<skill>/ at the parent of the latest
+    commit in rev's history that deleted its SKILL.md, or None."""
+    d = f"plugins/{plugin}/skills/{skill}"
+    proc = _git("log", "--diff-filter=D", "--format=%H", "-1", rev, "--", f"{d}/SKILL.md")
+    sha = proc.stdout.strip() if proc.returncode == 0 else ""
+    if not sha:
+        return None
+    return blob_id(f"{sha}^", d)
+
+
 def blob_id(rev: str, path: str) -> Optional[str]:
     proc = _git("rev-parse", "--verify", "-q", f"{rev}:{path}")
     return proc.stdout.strip() if proc.returncode == 0 else None
@@ -385,7 +396,7 @@ def check_remove(rep, added, plugin, skill):
                  f"Add `## <date> — {who} — remove` with Motivation, Change, Eval and Outcome lines")
 
 
-def check_create(rep, added, head_blobs, plugin, skill, base_entries=()):
+def check_create(rep, added, head_blobs, plugin, skill, base_entries=(), base=None, head=None):
     who = f"{plugin}/{skill}"
     entries = _entries_for(added, plugin, skill, kinds={"create"})
     restores = _entries_for(added, plugin, skill, kinds={"restore"})
@@ -397,6 +408,15 @@ def check_create(rep, added, head_blobs, plugin, skill, base_entries=()):
                  "only a skill removed earlier can be restored without a new green arm",
                  f"Write a `create` entry for {who}, or restore it into the plugin it was removed from")
         restores = []
+    # A restore is byte for byte what the removal deleted: the directory's tree
+    # at head must equal its tree at the parent of the removal commit.
+    if restores and base is not None and head is not None:
+        d = f"plugins/{plugin}/skills/{skill}"
+        before = removal_parent_tree(base, plugin, skill)
+        if before is None or before != blob_id(head, d):
+            rep.warn(who, "the `restore` entry does not count: the directory differs from "
+                     "what the removal commit deleted, so the normal graduation gate applies")
+            restores = []
     if not entries and not restores:
         rep.fail(who, "a new skill has no new `create` entry in docs/skill-impact.md (or `restore` entry, for a restored one)",
                  "AGENTS.md records every creation and restoration there",
@@ -528,7 +548,7 @@ def run(base: str, head: str, census_source: str) -> Tuple[int, List[str]]:
     for plugin, skill in removed:
         check_remove(rep, added, plugin, skill)
     for plugin, skill in created:
-        check_create(rep, added, head_blobs, plugin, skill, base_entries)
+        check_create(rep, added, head_blobs, plugin, skill, base_entries, point, head)
     for plugin, skill in touched:
         check_touch(rep, added, head_blobs, plugin, skill, census, census_why)
     for src, dst, changed in moves:

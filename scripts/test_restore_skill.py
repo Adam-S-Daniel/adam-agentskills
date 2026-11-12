@@ -181,17 +181,47 @@ def test_locked_plugin_prints_the_follow_up(removed):
     assert "generate_skills_lock.py --repin" in out and "--check-current" in out
 
 
-def test_layout_first_position(tmp_path):
+def test_layout_sorted_position(tmp_path):
     repo = make_repo(tmp_path)
-    write(repo / "scripts" / "plugin_layout.json", layout([GONE, "alpha-skill", "gamma-skill"]))
-    commit(repo, "layout order")
     original = tree_bytes(repo / "plugins" / PLUGIN / "skills" / GONE)
     retire(repo)
     code, out = restore(repo)
     assert code == 0, out
     doc = json.loads((repo / "scripts" / "plugin_layout.json").read_text(encoding="utf-8"))
-    assert doc["plugins"][PLUGIN]["skills"] == [GONE, "alpha-skill", "gamma-skill"]
+    assert doc["plugins"][PLUGIN]["skills"] == ["alpha-skill", GONE, "gamma-skill"]
     assert tree_bytes(repo / "plugins" / PLUGIN / "skills" / GONE) == original
+
+
+def test_layout_stays_sorted_when_a_skill_was_added_after_the_removal(removed):
+    repo, _, _ = removed
+    cur = json.loads((repo / "scripts" / "plugin_layout.json").read_text(encoding="utf-8"))
+    skills = cur["plugins"][PLUGIN]["skills"]
+    write(repo / "scripts" / "plugin_layout.json", layout(sorted([*skills, "aaa-newer"])))
+    write(repo / "plugins" / PLUGIN / "skills" / "aaa-newer" / "SKILL.md", skill_md("aaa-newer"))
+    commit(repo, "add a skill after the removal")
+    code, out = restore(repo)
+    assert code == 0, out
+    got = json.loads((repo / "scripts" / "plugin_layout.json").read_text(encoding="utf-8"))
+    assert got["plugins"][PLUGIN]["skills"] == sorted(got["plugins"][PLUGIN]["skills"])
+    assert GONE in got["plugins"][PLUGIN]["skills"]
+
+
+def test_refuses_when_another_plugin_lists_the_basename(removed):
+    repo, _, _ = removed
+    doc = json.loads((repo / "scripts" / "plugin_layout.json").read_text(encoding="utf-8"))
+    doc["plugins"]["other-plugin"] = {"defaultEnabled": True, "skills": [GONE]}
+    write(repo / "scripts" / "plugin_layout.json", json.dumps(doc, indent=2) + "\n")
+    commit(repo, "another plugin lists it")
+    code, out = restore(repo)
+    assert code == 2 and "already lists" in out and "other-plugin" in out
+
+
+def test_refuses_when_another_plugin_has_the_directory(removed):
+    repo, _, _ = removed
+    write(repo / "plugins" / "other-plugin" / "skills" / GONE / "SKILL.md", skill_md(GONE))
+    commit(repo, "same basename elsewhere")
+    code, out = restore(repo)
+    assert code == 2 and "already exists" in out
 
 
 def test_refuses_without_a_removal_commit(tmp_path):
@@ -241,10 +271,13 @@ def test_bump_minor():
 
 
 def test_layout_position():
-    assert rs.layout_position(["a", "b", "c"], ["a", "c"], "b") == 1
-    assert rs.layout_position(["b", "c"], ["a", "c"], "b") == 0
-    assert rs.layout_position(["a", "x", "b"], ["a"], "b") == 1
-    assert rs.layout_position([], ["a", "c"], "b") == 1
+    assert rs.layout_position(["a", "c"], "b") == 1
+    assert rs.layout_position(["b", "c"], "a") == 0
+    assert rs.layout_position(["a", "b"], "c") == 2
+    # old [a,c,e], current [a,b,e]: restoring c must keep the list sorted
+    cur = ["a", "b", "e"]
+    cur.insert(rs.layout_position(cur, "c"), "c")
+    assert cur == ["a", "b", "c", "e"]
 
 
 def test_restored_tree_passes_the_skill_gates(removed):

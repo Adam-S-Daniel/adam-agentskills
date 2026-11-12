@@ -687,6 +687,27 @@ def test_restore_of_a_never_removed_skill_fails(tmp_path):
     assert "no `remove` entry" in out
 
 
+def test_restore_of_changed_content_needs_the_normal_gate(tmp_path):
+    """A `restore` entry does not stand in when the directory differs from what
+    the removal commit deleted."""
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry())
+    _write(skill_dir(repo, PLUGIN, SKILL) / "SKILL.md", f"# {SKILL}\n\nv2 changed\n")
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "does not count" in out and "no new `create` entry" in out
+
+
+def test_restore_of_changed_content_passes_with_a_create_entry(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry(), entry("create", "routine run `20261112T000000Z-cccccc`, with_skill objective 3/3, without_skill 1/3."))
+    _write(skill_dir(repo, PLUGIN, SKILL) / "SKILL.md", f"# {SKILL}\n\nv2 changed\n")
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 0, out
+
+
 def test_restore_kind_parses():
     entries = csg.parse_entries(HEADER + "\n" + restore_entry())
     assert [(e["kind"], e["skill"]) for e in entries] == [("restore", SKILL)]

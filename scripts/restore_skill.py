@@ -21,7 +21,7 @@ Run at the repository root, on a fresh branch from main, with a clean tree:
    plugins/<plugin>/skills/<skill>/SKILL.md, or `--commit`.
 2. Restores the skill directory from `<removal>^`, byte for byte
    (`git restore --source`), and its entry in scripts/plugin_layout.json under
-   the same plugin at its original position.
+   the same plugin, in sorted order (the layout file is held to sorted skills).
 3. Regenerates the README table with scripts/generate_readme_table.py.
 4. Raises the plugin's MINOR version (x.y.z -> x.(y+1).0) in both manifests.
 5. Prepends a `restore` entry to docs/skill-impact.md naming the removal commit.
@@ -137,20 +137,14 @@ def shipped_basenames(ledger_text: str) -> set:
     return {name.rsplit("/", 1)[-1] for name in doc.get("skills", []) if isinstance(name, str)}
 
 
-def layout_position(old: List[str], current: List[str], skill: str) -> int:
-    """Index in `current` that puts `skill` where it was in `old` (the list
-    before its removal): right after the nearest earlier neighbor of `old`
-    that `current` still lists, else first. When `old` does not list the skill
-    (the layout file is newer than the skill), the sorted position."""
-    if skill in old:
-        for earlier in reversed(old[:old.index(skill)]):
-            if earlier in current:
-                return current.index(earlier) + 1
-        return 0
+def layout_position(current: List[str], skill: str) -> int:
+    """Index in `current` that keeps it sorted with `skill` inserted: the layout
+    file is held to sorted skills, so a restore goes in sorted order, not at its
+    old index (skills added since the removal would break the order)."""
     return sum(1 for s in current if s < skill)
 
 
-def layout_with(current_text: str, old_text: Optional[str], plugin: str, skill: str) -> str:
+def layout_with(current_text: str, plugin: str, skill: str) -> str:
     """plugin_layout.json's text with `skill` back under `plugin`, in the file's
     canonical form (json.dumps, indent 2, one trailing newline)."""
     doc = json.loads(current_text)
@@ -160,12 +154,7 @@ def layout_with(current_text: str, old_text: Optional[str], plugin: str, skill: 
         raise Refusal(f"{LAYOUT_FILE} has no plugin {plugin} with a skills list")
     if skill in skills:
         raise Refusal(f"{LAYOUT_FILE} already lists {skill} under {plugin}")
-    old: List[str] = []
-    if old_text:
-        old_entry = (json.loads(old_text).get("plugins") or {}).get(plugin)
-        if isinstance(old_entry, dict) and isinstance(old_entry.get("skills"), list):
-            old = old_entry["skills"]
-    skills.insert(layout_position(old, skills, skill), skill)
+    skills.insert(layout_position(skills, skill), skill)
     return json.dumps(doc, indent=2) + "\n"
 
 
@@ -249,13 +238,20 @@ def restore(root: Path, skill: str, commit: Optional[str], date: str) -> List[st
     rel_dir = f"plugins/{plugin}/skills/{skill}"
     if (root / rel_dir).exists():
         raise Refusal(f"{rel_dir} already exists")
+    for other_dir in sorted((root / "plugins").glob(f"*/skills/{skill}")):
+        raise Refusal(f"{other_dir.relative_to(root).as_posix()} already exists; "
+                      "a basename is one skill across plugins")
     before = f"{sha}^"
     if git(root, "rev-parse", "--verify", "-q", before, check=False).strip() == "":
         raise Refusal(f"commit {sha} has no parent to restore from")
 
     try:
-        layout = layout_with((root / LAYOUT_FILE).read_text(encoding="utf-8"),
-                             _show(root, before, LAYOUT_FILE), plugin, skill)
+        layout_text = (root / LAYOUT_FILE).read_text(encoding="utf-8")
+        for other, other_entry in sorted((json.loads(layout_text).get("plugins") or {}).items()):
+            if other != plugin and isinstance(other_entry, dict) \
+                    and skill in (other_entry.get("skills") or []):
+                raise Refusal(f"{LAYOUT_FILE} already lists {skill} under {other}")
+        layout = layout_with(layout_text, plugin, skill)
         manifests = {}
         for name in MANIFESTS:
             rel = f"plugins/{plugin}/{name}"
@@ -288,12 +284,6 @@ def restore(root: Path, skill: str, commit: Optional[str], date: str) -> List[st
     out.append(follow_up(plugin, skill) if locked
                else "skills.lock does not lock this plugin; no re-pin needed")
     return out
-
-
-def _show(root: Path, rev: str, path: str) -> Optional[str]:
-    proc = subprocess.run(["git", "-C", str(root), "show", f"{rev}:{path}"],
-                          capture_output=True, text=True, encoding="utf-8")
-    return proc.stdout if proc.returncode == 0 else None
 
 
 def main(argv=None) -> int:

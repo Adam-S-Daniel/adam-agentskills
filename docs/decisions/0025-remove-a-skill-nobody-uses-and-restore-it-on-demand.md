@@ -43,12 +43,12 @@ skill listing of every session, and the listing is re-read on every turn.
    and it gets no improvement pull requests.
 6. **Restore.** `scripts/restore_skill.py <skill>` puts a removed skill back
    from the commit before its removal: the directory byte for byte, its
-   `scripts/plugin_layout.json` entry at its old position, the regenerated
+   `scripts/plugin_layout.json` entry in sorted order, the regenerated
    README table, the plugin's MINOR version raised, and a `restore` entry in
    `docs/skill-impact.md` naming the removal commit. The basename is reused and
    must already be in `scripts/shipped_names.json`, which stays append-only and
    is not modified. `scripts/check_skill_gates.py` accepts a `restore` entry for
-   a skill that reappears and that main records a `remove` entry for, with no new green arm, since the content already
+   a skill that reappears, that main records a `remove` entry for and whose directory equals its tree at the parent of the removal commit, with no new green arm, since the content already
    graduated.
 
 ## Consequences

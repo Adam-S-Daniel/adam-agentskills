@@ -39,7 +39,7 @@ merge-base that cannot be resolved (a shallow checkout, an unknown sha) exits
 object store (`git show <rev>:<path>`), never from the working tree.
 
 Skills are `plugins/<plugin>/skills/<skill>/SKILL.md`. Only SKILL.md counts:
-create (absent at the merge-base, present at head), remove (the reverse),
+create (absent at the merge-base, present at head; a restore reads as one), remove (the reverse),
 touch (present at both, blob differs). A skill whose basename leaves one
 plugin and arrives in another in the same diff is a move: it needs a new
 entry, and if its SKILL.md also changed it is gated as a touch in its new
@@ -81,6 +81,11 @@ touch, census `covered`: RAN. `skipped`: RAN or EXEMPT. `gap`: RAN or
 FIRST_FIXTURE. create: GREEN, or EXEMPT in a machine-bound plugin
 (adam-coding-local, adam-non-coding-local), which passes with a warning to add
 a row to skills-evals' evals/non-coverage.yml. remove: a `remove` entry.
+restore: a `restore` entry with a non-empty Eval line (the skill is back from
+the commit before its removal, scripts/restore_skill.py, so it needs no new
+green arm), and a PURPOSE.md; a skill that is absent at the merge-base and
+present at head is "created" to this check, and a `restore` entry satisfies it
+the way a `create` entry does.
 
 The evals loop's own pull requests pass as written: improve PRs
 (`eval-improve/<skill>`, skills-evals' scripts/improve_gate.py) write an
@@ -382,16 +387,29 @@ def check_remove(rep, added, plugin, skill):
 def check_create(rep, added, head_blobs, plugin, skill):
     who = f"{plugin}/{skill}"
     entries = _entries_for(added, plugin, skill, kinds={"create"})
-    if not entries:
-        rep.fail(who, "a new skill has no new `create` entry in docs/skill-impact.md",
-                 "AGENTS.md records every creation there, with its eval result",
+    restores = _entries_for(added, plugin, skill, kinds={"restore"})
+    if not entries and not restores:
+        rep.fail(who, "a new skill has no new `create` entry in docs/skill-impact.md (or `restore` entry, for a restored one)",
+                 "AGENTS.md records every creation and restoration there",
                  f"Add `## <date> — {who} — create` with an Eval line carrying the "
-                 "with_skill and without_skill counts and the routine run id")
+                 "with_skill and without_skill counts and the routine run id, or, for a skill "
+                 f"brought back by scripts/restore_skill.py, `## <date> — {who} — restore`")
     if f"plugins/{plugin}/skills/{skill}/PURPOSE.md" not in head_blobs:
         rep.fail(who, "a new skill has no PURPOSE.md",
                  "AGENTS.md says a new or touched skill adds a PURPOSE.md beside SKILL.md",
                  "Add PURPOSE.md mapping the skill to the incidents or patterns behind it")
+    if not entries and not restores:
+        return
+    # A restore brings back a skill that already graduated, byte for byte from
+    # the commit before its removal, so it needs no new green arm; it needs the
+    # entry to say what it restored from (a non-empty Eval line).
+    if any(e["eval"].strip() for e in restores):
+        return
     if not entries:
+        rep.fail(who, "the `restore` entry has no Eval line",
+                 "the entry must name the removal commit the skill was restored from",
+                 "Add an `- Eval:` line saying the skill was restored unchanged from "
+                 "the commit before its removal, and naming that commit")
         return
     if any(is_green(e["eval"]) for e in entries):
         return

@@ -249,3 +249,141 @@ def test_each_file_keeps_its_own_newline_style_and_bom(tmp_path, win_fmt, wsl_fm
     # One timestamped backup per file, next to it.
     assert len(list(w.parent.glob("*-ET-settings.json.bak"))) == 1
     assert len(list(l.parent.glob("*-ET-settings.json.bak"))) == 1
+
+
+# ---------- three-way merge against the last-synced snapshot ----------
+
+SNAPSHOT = ".settings-sync-snapshot.json"
+
+
+def _snapshot(w: Path) -> dict:
+    return _read(w.parent / SNAPSHOT)
+
+
+def _touch(path: Path, when: int) -> None:
+    os.utime(path, (when, when))
+
+
+def test_a_key_deleted_on_one_side_is_deleted_on_the_other(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark", "verbose": True}, {"theme": "dark", "verbose": True})
+    _run(w, l, "-Unattended")
+    data = _read(w)
+    del data["verbose"]
+    _write(w, data)
+    _run(w, l, "-Unattended")
+    assert "verbose" not in _read(w)
+    assert "verbose" not in _read(l)
+    assert "verbose" not in _snapshot(w)
+
+
+def test_unrelated_newer_edits_do_not_decide_a_key_neither_side_changed_alone(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark"}, {"theme": "dark"})
+    _run(w, l, "-Unattended")
+    wsl = _read(l)
+    wsl["theme"] = "light"  # the only theme change, on the OLDER file
+    _write(l, wsl)
+    _touch(l, OLDER)
+    win = _read(w)
+    win["verbose"] = True  # an unrelated edit makes Windows the newer file
+    _write(w, win)
+    _touch(w, NEWER)
+    _run(w, l, "-Unattended")
+    assert _read(w)["theme"] == "light"
+    assert _read(l)["verbose"] is True
+
+
+def test_unattended_conflict_keeps_each_value_and_the_base_and_reports_it(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark"}, {"theme": "dark"})
+    _run(w, l, "-Unattended")
+    _write(w, {"theme": "light"})
+    _write(l, {"theme": "auto"})
+    out = _run(w, l, "-Unattended").output
+    assert _read(w)["theme"] == "light" and _read(l)["theme"] == "auto"
+    assert _snapshot(w)["theme"] == "dark"
+    assert "conflicts=1" in out
+
+
+def test_assume_yes_conflict_goes_to_the_newer_file(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark"}, {"theme": "dark"})
+    _run(w, l, "-Unattended")
+    _write(w, {"theme": "light"})
+    _write(l, {"theme": "auto"})
+    _touch(w, OLDER)
+    _touch(l, NEWER)
+    _run(w, l, "-AssumeYes")
+    assert _read(w)["theme"] == "auto" and _read(l)["theme"] == "auto"
+
+
+def test_permission_lists_propagate_adds_and_removals_per_item(tmp_path):
+    w, l = _pair(
+        tmp_path,
+        {"permissions": {"allow": ["Read", "Bash(a)"]}},
+        {"permissions": {"allow": ["Read", "Bash(a)"]}},
+    )
+    _run(w, l, "-Unattended")
+    win = _read(w)
+    win["permissions"]["allow"] = ["Read"]  # removed Bash(a)
+    _write(w, win)
+    wsl = _read(l)
+    wsl["permissions"]["allow"].append("Bash(b)")  # added Bash(b)
+    _write(l, wsl)
+    _run(w, l, "-Unattended")
+    assert _read(w)["permissions"]["allow"] == ["Bash(b)", "Read"]
+    assert _read(l)["permissions"]["allow"] == ["Bash(b)", "Read"]
+
+
+def test_enabled_plugins_merge_per_entry_and_keep_the_os_bound_entries(tmp_path):
+    w, l = _pair(
+        tmp_path,
+        {"enabledPlugins": {"a@m": True, "adam-non-coding-local@synced": True}},
+        {"enabledPlugins": {"b@m": True, "adam-non-coding-local@synced": False}},
+    )
+    _run(w, l, "-Unattended")
+    assert _read(w)["enabledPlugins"] == {"a@m": True, "adam-non-coding-local@synced": True, "b@m": True}
+    assert _read(l)["enabledPlugins"] == {"a@m": True, "adam-non-coding-local@synced": False, "b@m": True}
+    assert "adam-non-coding-local@synced" not in _snapshot(w)["enabledPlugins"]
+
+
+def test_a_run_with_nothing_to_change_writes_and_backs_up_nothing(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark"}, {"theme": "dark"})
+    _run(w, l, "-Unattended")
+    before = (w.read_bytes(), l.read_bytes(), w.stat().st_mtime_ns, l.stat().st_mtime_ns)
+    n_backups = len(list(tmp_path.glob("*/*.bak")))
+    out = _run(w, l, "-Unattended").output
+    assert (w.read_bytes(), l.read_bytes(), w.stat().st_mtime_ns, l.stat().st_mtime_ns) == before
+    assert len(list(tmp_path.glob("*/*.bak"))) == n_backups
+    assert "windows=nochange wsl=nochange" in out
+
+
+def test_unattended_prints_one_value_free_line_and_dry_run_leaves_no_snapshot(tmp_path):
+    w, l = _pair(
+        tmp_path,
+        {"env": {"API_TOKEN": "sentinel-win-7f3a91"}},
+        {"env": {"API_TOKEN": "sentinel-wsl-c02be4"}},
+    )
+    out = _run(w, l, "-Unattended", "-DryRun").output
+    lines = [x for x in out.splitlines() if x.strip()]
+    assert len(lines) == 1 and "sentinel-" not in out
+    assert "mode=dry-run" in lines[0] and "conflicts=1" in lines[0]
+    assert not (w.parent / SNAPSHOT).exists()
+
+
+def test_report_file_lists_key_names_never_values(tmp_path):
+    w, l = _pair(tmp_path, {"env": {"API_TOKEN": "sentinel-win-7f3a91"}}, {"model": "opus"})
+    report = tmp_path / "report.txt"
+    _run(w, l, "-Unattended", "-DryRun", "-ReportPath", _host_path(report))
+    text = report.read_text(encoding="utf-8")
+    assert "API_TOKEN" in text and "sentinel-" not in text and "sync-claude-settings" in text
+
+
+def test_only_the_newest_backups_are_kept(tmp_path):
+    w, l = _pair(tmp_path, {"theme": "dark"}, {"theme": "dark"})
+    _run(w, l, "-Unattended")
+    for stamp in ("20200101-000001", "20200101-000002", "20200101-000003"):
+        (l.parent / f"{stamp}-ET-settings.json.bak").write_text("{}")
+    win = _read(w)
+    win["verbose"] = True
+    _write(w, win)
+    _run(w, l, "-Unattended", "-KeepBackups", "2")
+    kept = sorted(p.name for p in l.parent.glob("*-ET-settings.json.bak"))
+    assert len(kept) == 2 and "20200101-000001-ET-settings.json.bak" not in kept

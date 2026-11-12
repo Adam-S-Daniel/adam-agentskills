@@ -48,3 +48,15 @@ for the merge engine.
 - Prompt-audit fix ([issue #56](https://github.com/Adam-S-Daniel/adam-agentskills/issues/56)):
   the frontmatter description was trimmed to what the skill does and when to
   use it; merge rules and launch quirks it repeated are stated in the body.
+- **Drift on a real machine (2026-11).** Nothing ran the sync, and the two
+  files had drifted. Reading the script against them showed why a scheduled
+  run could not be built on it: a deleted key came back from the other file
+  (no record of the last result), the whole-file newer side decided keys such
+  as `theme` that it never changed, whole-object keys such as `enabledPlugins`
+  were copied as a unit, and a copied `enabledPlugins` would have switched
+  `adam-non-coding-local` off in Windows, because `setup.sh` turns it off on
+  Linux only (ADR 0015). The merge is now three-way against a snapshot of the
+  last result, recurses into objects, keeps those two plugin entries per file,
+  writes (and backs up) only a file that changes, refuses to write over an
+  edit made mid-run, and has an `-Unattended` mode that prints one value-free
+  line, so a scheduled task can run it in `-DryRun` first.

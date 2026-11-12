@@ -29,6 +29,14 @@
 # from _agent-guidance, refreshed only by a reviewed pull request. Never edit
 # them here.
 #
+# Opt-in: installing this plugin is the user's opt-in to the guidance, so every
+# run of the bundled fleet-memory.sh below passes FLEET_GUIDANCE_OWNER=1 in that
+# command's environment only. The copy of fleet-memory.sh that fleet repos
+# deliver is gated on a durable machine: it installs nothing there without an
+# owner signal (see
+# https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md).
+# The variable is ignored by a bundled copy that predates the gate.
+#
 # Knobs: FLEET_GUIDANCE_FETCH=0|false|no|off installs the bundled copy without
 # touching the network. FLEET_GUIDANCE_SKIP (any value fleet-memory.sh treats as
 # on) removes the block and installs nothing. A nonempty FLEET_GUIDANCE_PAYLOAD
@@ -58,14 +66,16 @@ fi
 case "${FLEET_GUIDANCE_SKIP:-}" in
   ""|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) ;;
   *)
-    env -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP "$BASH" "$HERE/fleet-memory.sh"
+    env -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP FLEET_GUIDANCE_OWNER=1 \
+      "$BASH" "$HERE/fleet-memory.sh"
     exit 0
     ;;
 esac
 
 # Install the bundled copy, say so, and stop.
 fall_back() {
-  env -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP "$BASH" "$HERE/fleet-memory.sh"
+  env -u FLEET_GUIDANCE_PAYLOAD -u FLEET_GUIDANCE_PAYLOAD_STAMP FLEET_GUIDANCE_OWNER=1 \
+    "$BASH" "$HERE/fleet-memory.sh"
   printf "fleet-guidance-source: the adam-anything-anywhere plugin's bundled copy (%s), which can be older than _agent-guidance main\n" "$1"
   exit 0
 }
@@ -225,6 +235,7 @@ if [[ ! "$size" =~ ^[0-9]+$ ]] || [ "$size" -eq 0 ] || [ "$size" -gt 1048576 ] \
   fall_back "the downloaded base.md failed validation"
 fi
 
-env -u FLEET_GUIDANCE_PAYLOAD_STAMP FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" \
+env -u FLEET_GUIDANCE_PAYLOAD_STAMP FLEET_GUIDANCE_OWNER=1 \
+  FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" \
   FLEET_GUIDANCE_PAYLOAD_STAMP="$epoch" "$BASH" "$HERE/fleet-memory.sh"
 exit 0

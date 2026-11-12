@@ -1338,6 +1338,49 @@ def test_skip_removes_the_block_and_never_calls_curl(world, value):
     assert_temp_dir_gone(world)
 
 
+STUB_FLEET_MEMORY = """#!/usr/bin/env bash
+printf '%s\\n' "${FLEET_GUIDANCE_OWNER-UNSET}" >> "$STUB_OWNER_LOG"
+"""
+
+
+def run_with_stub_fleet_memory(world: World, **extra):
+    """Run a copy of the hook directory whose fleet-memory.sh only records the
+    FLEET_GUIDANCE_OWNER value it was started with. Returns the recorded lines."""
+    copy = world.tmp / "hook-copy"
+    shutil.copytree(GUIDANCE, copy)
+    (copy / "fleet-memory.sh").write_text(STUB_FLEET_MEMORY, encoding="utf-8")
+    log = world.tmp / "owner.log"
+    log.write_text("", encoding="utf-8")
+    proc = subprocess.run([BASH, str(copy / "on-session-start.sh")],
+                          env=world.env(STUB_OWNER_LOG=str(log), **extra),
+                          cwd=str(world.cwd), stdin=subprocess.DEVNULL,
+                          capture_output=True, encoding="utf-8", timeout=120)
+    assert proc.returncode == 0, proc
+    return log.read_text(encoding="utf-8").splitlines(), proc
+
+
+@posix_only
+@pytest.mark.parametrize("path, extra", [
+    ("skip", {"FLEET_GUIDANCE_SKIP": "1"}),
+    ("fall_back", {"FLEET_GUIDANCE_FETCH": "0"}),
+    ("fetched payload", {}),
+])
+def test_every_path_passes_owner_on_to_fleet_memory(world, path, extra):
+    # An inherited "0" must not leak through: the hook's own value wins.
+    lines, proc = run_with_stub_fleet_memory(world, FLEET_GUIDANCE_OWNER="0", **extra)
+    assert lines == ["1"], (path, lines, proc.stdout)
+    if path == "fetched payload":
+        assert world.urls() == [world.raw_url]
+
+
+def test_owner_is_not_exported_beyond_the_fleet_memory_command():
+    # Only the three fleet-memory.sh commands carry it; nothing exports it.
+    code = "\n".join(line for line in ON_SESSION_START.read_text(encoding="utf-8").splitlines()
+                     if not line.lstrip().startswith("#"))
+    assert "export FLEET_GUIDANCE_OWNER" not in code
+    assert code.count("FLEET_GUIDANCE_OWNER=1") == 3
+
+
 @posix_only
 @pytest.mark.parametrize("value", ["", "0", "false", "No", "OFF"])
 def test_skip_values_that_mean_off_do_not_skip(world, value):

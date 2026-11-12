@@ -58,7 +58,7 @@ no backfill is planned; the file adds the fields git does not capture.
 
 - Motivation: the two settings files had drifted and the old merge could not run unattended: deletions came back, the newer file decided keys it never changed, `enabledPlugins` was copied whole (which would have turned `adam-non-coding-local` off in Windows).
 - Change: three-way merge against a last-synced snapshot, recursive object merge, per-OS `adam-non-coding-local` plugin entries, `-Unattended` / `-SnapshotPath` / `-ReportPath` / `-KeepBackups`, write only on change, refuse to write over a mid-run edit; bundle `adam-coding-local` 2.2.5 -> 2.2.6 (PR pending).
-- Eval: none — no eval exists yet; the skill's own pytest suite covers it (20 tests; the 10 new ones fail against the old script)
+- Eval: exempt (skills-evals `evals/non-coverage.yml`); the skill's own pytest suite covers it (20 tests; the 10 new ones fail against the old script)
 - Outcome: pending
 
 ## 2026-11-10 — adam-coding-anywhere/workflow-path-audit — edit

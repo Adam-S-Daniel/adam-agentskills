@@ -1,43 +1,51 @@
 <#
 .SYNOPSIS
-    Sync Claude Code settings.json between Windows and WSL.
+    Sync Claude Code settings.json between Windows and WSL with a three-way merge.
 
 .DESCRIPTION
-    Backs up both settings files with a timestamp prefix (Eastern time) into
-    their own directories, then merges per-key according to these rules:
+    Compares each file with a snapshot of the last result this script wrote (the
+    "base"), so it can tell which side CHANGED a value instead of guessing from
+    file times:
 
-        permissions.allow                  : union
-        permissions.ask                    : union
-        permissions.deny                   : union
-        permissions.additionalDirectories  : per-file (each file keeps its own; paths are OS-bound)
-        permissions.defaultMode            : more-recently-modified / only-existing wins, PROMPT
-        [per-file keys, see $perFileKeys]  : per-file (each file keeps its own; never copied across)
-                                             hooks, statusLine, subagentStatusLine, fileSuggestion,
-                                             apiKeyHelper, awsAuthRefresh, awsCredentialExport,
-                                             gcpAuthRefresh, otelHeadersHelper, processWrapper,
-                                             autoMemoryDirectory, claudeMdExcludes, sandbox,
-                                             defaultShell, syncClaudeAiSkills, syncClaudeAiPlugins
-        autoDreamEnabled                   : more-recently-modified / only-existing wins, PROMPT
-        showMessageTimestamps              : more-recently-modified / only-existing wins (no prompt)
-        spinnerVerbs.verbs                 : union
-        env.<key>                          : per-key merge (more-recently-modified / only-existing wins, PROMPT)
-        env.CCSTATUSLINE_WIDTH             : per-file (each file keeps its own; WSL auto-detects, Windows needs a fixed value)
-        effortLevel                        : more-recently-modified / only-existing wins, PROMPT
-        tui                                : more-recently-modified / only-existing wins, PROMPT
-        skipDangerousModePermissionPrompt  : more-recently-modified / only-existing wins, PROMPT
-        theme                              : more-recently-modified / only-existing wins, PROMPT
-        verbose                            : more-recently-modified / only-existing wins, PROMPT
-        remoteControlAtStartup             : more-recently-modified / only-existing wins, PROMPT
-        agentPushNotifEnabled              : more-recently-modified / only-existing wins, PROMPT
-        model                              : more-recently-modified / only-existing wins, PROMPT
-        [any other key]                    : PROMPT
+        only one side changed a value      : that side's value wins (a change, an add or a delete)
+        both sides changed it, differently : a CONFLICT (see below); the base is kept
+        neither changed it                 : nothing happens
+        no snapshot yet (first run)        : two-way; a value on one side only is copied,
+                                             a value on both sides that differs is a conflict
 
-    A PROMPT key present on only one side is copied to the other without a
-    prompt; only a key present on both sides with different values prompts.
-    [s]kip at a prompt leaves each file with its own current value.
+    The merge recurses into objects, so `enabledPlugins`, `extraKnownMarketplaces`,
+    `env`, `permissions` and any other object-valued key merge entry by entry. An
+    array is one value, except these, merged as sets (an item one side removed
+    since the base is removed from both):
 
-    Preserves each file's existing newline style (CRLF or LF, whichever it
-    already uses), UTF-8 BOM presence and trailing newline.
+        permissions.allow, permissions.ask, permissions.deny, spinnerVerbs.verbs
+
+    Kept per file (each file keeps its own value; never copied across, never in
+    the snapshot):
+
+        hooks, statusLine, subagentStatusLine, fileSuggestion, apiKeyHelper,
+        awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper,
+        processWrapper, autoMemoryDirectory, claudeMdExcludes, sandbox, defaultShell,
+        syncClaudeAiSkills, syncClaudeAiPlugins, permissions.additionalDirectories,
+        env.CCSTATUSLINE_WIDTH, and the two enabledPlugins entries for
+        adam-non-coding-local (setup.sh turns them off on Linux and leaves them on
+        for Windows, per ADR 0015, so the OS decides, not a sync).
+
+    A conflict is resolved by the run mode:
+
+        interactive (default) : prompt [w]indows / [l]inux / [n]ewer / [s]kip
+        -AssumeYes            : the more-recently-modified file wins (showMessageTimestamps
+                                always resolves this way)
+        -Unattended           : skip; each file keeps its own value, the snapshot keeps the
+                                base, and the run reports the conflict count. Never prompts.
+
+    The script writes a file only when its content changes, backs up (timestamp
+    prefix, Eastern time) only a file it is about to change, and keeps the newest
+    -KeepBackups of its own backups per side. It refuses to write if either file
+    changed while it ran (Claude Code rewrites settings.json on its own).
+
+    Preserves each file's existing newline style (CRLF or LF), UTF-8 BOM presence
+    and trailing newline.
 
 .PARAMETER WindowsSettingsPath
     Path to the Windows settings.json.
@@ -54,20 +62,36 @@
     Default: empty (uses WSL's default distro).
     Can also be set via env var CLAUDE_SETTINGS_WSL_DISTRO.
 
+.PARAMETER SnapshotPath
+    Where the last-synced snapshot lives. It holds the shared (non-per-file) values,
+    including env values, so keep it as private as the settings files.
+    Default: ".settings-sync-snapshot.json" next to the Windows settings.json.
+    Can also be set via env var CLAUDE_SETTINGS_SNAPSHOT.
+
 .PARAMETER AssumeYes
-    Non-interactive mode. For PROMPT keys, auto-apply the more-recently-modified /
-    only-existing rule without asking.
+    Resolve every conflict without asking: the more-recently-modified file wins.
+
+.PARAMETER Unattended
+    For a scheduled task. Never prompts, skips conflicts (see above), prints exactly one
+    value-free summary line and exits 0 unless something is wrong (then it throws).
+
+.PARAMETER ReportPath
+    Also write the key-level report (key names and same/changed/added/removed markers,
+    never values) to this file, replacing it.
+
+.PARAMETER KeepBackups
+    How many of its own backups per side to keep. Default 20.
 
 .PARAMETER DryRun
-    Compute the merge, show the plan, but do not write files. Backups are also skipped.
-    The plan lists key names and whether each file's value would change; it never
+    Compute the merge and show the plan, but write nothing: no settings, no backups, no
+    snapshot. The plan lists key names and whether each file's value would change; it never
     prints settings values (env values can be credentials).
 
 .EXAMPLE
     .\Sync-ClaudeSettings.ps1
 
 .EXAMPLE
-    .\Sync-ClaudeSettings.ps1 -AssumeYes
+    .\Sync-ClaudeSettings.ps1 -Unattended -DryRun
 
 .EXAMPLE
     .\Sync-ClaudeSettings.ps1 -WslDistro Ubuntu-22.04
@@ -78,7 +102,11 @@ param(
     [string]$WindowsSettingsPath,
     [string]$WslSettingsPath,
     [string]$WslDistro,
+    [string]$SnapshotPath,
+    [string]$ReportPath,
+    [int]$KeepBackups = 20,
     [switch]$AssumeYes,
+    [switch]$Unattended,
     [switch]$DryRun
 )
 
@@ -95,6 +123,13 @@ if (-not $WslDistro -and $env:CLAUDE_SETTINGS_WSL_DISTRO) {
 }
 if (-not $WslSettingsPath -and $env:CLAUDE_SETTINGS_WSL) {
     $WslSettingsPath = $env:CLAUDE_SETTINGS_WSL
+}
+if (-not $SnapshotPath) {
+    $SnapshotPath = if ($env:CLAUDE_SETTINGS_SNAPSHOT) {
+        $env:CLAUDE_SETTINGS_SNAPSHOT
+    } else {
+        Join-Path (Split-Path -Parent $WindowsSettingsPath) '.settings-sync-snapshot.json'
+    }
 }
 
 function Resolve-WslSettingsPath {
@@ -132,6 +167,16 @@ if ($PSVersionTable.PSVersion.Major -lt 7) {
 
 # ---------- Helpers ----------
 
+# Everything the run prints goes through here so -Unattended can stay silent and
+# -ReportPath can capture the same lines. Key names and markers only, never values.
+$script:Report = [System.Collections.Generic.List[string]]::new()
+function Write-Info {
+    param([string]$Text = '', [string]$Color)
+    $script:Report.Add($Text) | Out-Null
+    if ($Unattended) { return }
+    if ($Color) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
+}
+
 function Get-EasternTimeStamp {
     # Prefer IANA name (works on PS7 cross-platform); fall back to Windows ID.
     $tz = $null
@@ -144,71 +189,104 @@ function Get-EasternTimeStamp {
 }
 
 function Get-FileNewline {
-    param([Parameter(Mandatory)][string]$Path)
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    for ($i = 0; $i -lt $bytes.Length - 1; $i++) {
-        if ($bytes[$i] -eq 13 -and $bytes[$i + 1] -eq 10) { return "`r`n" }
-        if ($bytes[$i] -eq 10) { return "`n" }
-        if ($bytes[$i] -eq 13) { return "`r" }
+    param([Parameter(Mandatory)][byte[]]$Bytes, [Parameter(Mandatory)][string]$Path)
+    for ($i = 0; $i -lt $Bytes.Length - 1; $i++) {
+        if ($Bytes[$i] -eq 13 -and $Bytes[$i + 1] -eq 10) { return "`r`n" }
+        if ($Bytes[$i] -eq 10) { return "`n" }
+        if ($Bytes[$i] -eq 13) { return "`r" }
     }
     # No newline found - fall back based on path heuristic.
     if ($Path -match '^(\\\\wsl|/)') { return "`n" }
     return "`r`n"
 }
 
-function Get-FileEncoding {
-    param([Parameter(Mandatory)][string]$Path)
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+function Get-BytesEncoding {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
         return [System.Text.UTF8Encoding]::new($true)
     }
     return [System.Text.UTF8Encoding]::new($false)
 }
 
-function Read-JsonOrdered {
-    param([Parameter(Mandatory)][string]$Path)
-    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
-    if ([string]::IsNullOrWhiteSpace($raw)) { return [ordered]@{} }
-    $obj = $raw | ConvertFrom-Json -AsHashtable -Depth 100
+function Get-BytesText {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    $start = 0
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) { $start = 3 }
+    return [System.Text.Encoding]::UTF8.GetString($Bytes, $start, $Bytes.Length - $start)
+}
+
+function ConvertFrom-JsonText {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Raw)
+    if ([string]::IsNullOrWhiteSpace($Raw)) { return [ordered]@{} }
+    $obj = $Raw | ConvertFrom-Json -AsHashtable -Depth 100
     if ($null -eq $obj) { return [ordered]@{} }
+    if ($obj -isnot [System.Collections.IDictionary]) { throw "Settings JSON is not an object." }
     # Convert to [ordered] to stabilize key order.
     $ordered = [ordered]@{}
     foreach ($k in $obj.Keys) { $ordered[$k] = $obj[$k] }
     return $ordered
 }
 
-function Write-JsonPreservingFormat {
+function Get-JsonFinalText {
     param(
-        [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)]$Object,
         [Parameter(Mandatory)][string]$Newline,
-        [Parameter(Mandatory)][System.Text.Encoding]$Encoding,
-        [switch]$EndsWithNewline
+        [bool]$EndsWithNewline
     )
     $json = ConvertTo-Json -InputObject $Object -Depth 100
     $normalized = $json -replace "`r`n", "`n" -replace "`r", "`n"
     $final = if ($Newline -eq "`n") { $normalized } else { $normalized -replace "`n", $Newline }
     if ($EndsWithNewline -and -not $final.EndsWith($Newline)) { $final += $Newline }
-    [System.IO.File]::WriteAllText($Path, $final, $Encoding)
+    return $final
 }
 
 function Test-EndsWithNewline {
-    param([Parameter(Mandatory)][string]$Path)
-    $bytes = [System.IO.File]::ReadAllBytes($Path)
-    if ($bytes.Length -eq 0) { return $false }
-    return $bytes[-1] -eq 10 -or $bytes[-1] -eq 13
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    if ($Bytes.Length -eq 0) { return $false }
+    return $Bytes[-1] -eq 10 -or $Bytes[-1] -eq 13
+}
+
+function Get-BytesHash {
+    param([Parameter(Mandatory)][byte[]]$Bytes)
+    return [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::HashData($Bytes))
 }
 
 function Backup-SettingsFile {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Stamp
+        [Parameter(Mandatory)][string]$Stamp,
+        [Parameter(Mandatory)][int]$Keep
     )
     $dir = Split-Path -Parent $Path
     $name = Split-Path -Leaf $Path
     $backupPath = Join-Path $dir "$Stamp-ET-$name.bak"
     Copy-Item -LiteralPath $Path -Destination $backupPath -Force
+    # Prune only this script's own backups (fixed name shape), oldest first.
+    $mine = @(Get-ChildItem -LiteralPath $dir -File -Filter "*-ET-$name.bak" |
+        Where-Object { $_.Name -match '^\d{8}-\d{6}-ET-' } |
+        Sort-Object Name -Descending)
+    if ($Keep -gt 0 -and $mine.Count -gt $Keep) {
+        foreach ($old in $mine[$Keep..($mine.Count - 1)]) { Remove-Item -LiteralPath $old.FullName -Force }
+    }
     return $backupPath
+}
+
+# Key order never decides equality: dictionary keys are sorted before comparing.
+function ConvertTo-CanonicalValue {
+    param($Value)
+    if ($Value -is [System.Collections.IDictionary]) {
+        $out = [ordered]@{}
+        foreach ($k in @($Value.Keys | Sort-Object { [string]$_ } -CaseSensitive)) {
+            $out[$k] = ConvertTo-CanonicalValue $Value[$k]
+        }
+        return $out
+    }
+    if ($Value -is [System.Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = [System.Collections.Generic.List[object]]::new()
+        foreach ($x in $Value) { $items.Add((ConvertTo-CanonicalValue $x)) | Out-Null }
+        return , $items.ToArray()
+    }
+    return $Value
 }
 
 function ConvertTo-ComparableJson {
@@ -216,7 +294,7 @@ function ConvertTo-ComparableJson {
     if ($null -eq $Value) { return 'null' }
     # -InputObject, not the pipeline: piping unrolls an array, so [] would
     # compare as nothing and ["x"] as "x".
-    return (ConvertTo-Json -InputObject $Value -Depth 100 -Compress)
+    return (ConvertTo-Json -InputObject (ConvertTo-CanonicalValue $Value) -Depth 100 -Compress)
 }
 
 function Get-UnionArray {
@@ -288,274 +366,175 @@ function Sort-DictByCanonicalOrder {
     return $out
 }
 
-function Resolve-ScalarConflict {
-    param(
-        [Parameter(Mandatory)][string]$KeyPath,
-        $WindowsValue,
-        [bool]$WindowsHasKey,
-        $WslValue,
-        [bool]$WslHasKey,
-        [Parameter(Mandatory)][ValidateSet('auto','prompt')][string]$Policy,
-        [Parameter(Mandatory)][ValidateSet('windows','wsl')][string]$NewerSide,
-        [bool]$NonInteractive
-    )
+# ---------- Rule tables ----------
 
-    if (-not $WindowsHasKey -and -not $WslHasKey) {
-        return [pscustomobject]@{ Present = $false; Value = $null; Source = 'absent' }
-    }
-    if ($WindowsHasKey -and -not $WslHasKey) {
-        return [pscustomobject]@{ Present = $true; Value = $WindowsValue; Source = 'windows (only existing)' }
-    }
-    if ($WslHasKey -and -not $WindowsHasKey) {
-        return [pscustomobject]@{ Present = $true; Value = $WslValue; Source = 'wsl (only existing)' }
-    }
-
-    # Both have it. If equal, no conflict.
-    if ((ConvertTo-ComparableJson $WindowsValue) -eq (ConvertTo-ComparableJson $WslValue)) {
-        return [pscustomobject]@{ Present = $true; Value = $WindowsValue; Source = 'both equal' }
-    }
-
-    # Plain assignment, never `$x = if (...) { $v }`: an if-expression sends $v
-    # through the pipeline, which unrolls arrays ([] -> $null, ["x"] -> "x").
-    $newerValue = $WslValue
-    if ($NewerSide -eq 'windows') { $newerValue = $WindowsValue }
-
-    if ($Policy -eq 'auto' -or $NonInteractive) {
-        return [pscustomobject]@{ Present = $true; Value = $newerValue; Source = "$NewerSide (newer)" }
-    }
-
-    Write-Host ""
-    Write-Host "Conflict on: $KeyPath" -ForegroundColor Yellow
-    Write-Host ("  windows : " + (ConvertTo-ComparableJson $WindowsValue))
-    Write-Host ("  wsl     : " + (ConvertTo-ComparableJson $WslValue))
-    Write-Host ("  newer   : $NewerSide")
-    while ($true) {
-        $choice = Read-Host "  [w]indows / [l]inux / [n]ewer / [s]kip (keep each file's current value)"
-        switch -Regex ($choice) {
-            '^[wW]' { return [pscustomobject]@{ Present = $true; Value = $WindowsValue; Source = 'windows (chosen)' } }
-            '^[lL]' { return [pscustomobject]@{ Present = $true; Value = $WslValue;     Source = 'wsl (chosen)' } }
-            '^[nN]' { return [pscustomobject]@{ Present = $true; Value = $newerValue;   Source = "$NewerSide (chosen: newer)" } }
-            '^[sS]' { return [pscustomobject]@{ Present = $true; Value = $null;         Source = 'skip (each file keeps its own)'; Skip = $true } }
-        }
-    }
-}
-
-# Apply a Resolve-ScalarConflict result to the two per-side dictionaries.
-# A skip writes each side's OWN value back to that side (never deletes);
-# anything else writes the resolved value to both.
-function Set-ResolvedValue {
-    param(
-        [Parameter(Mandatory)][System.Collections.IDictionary]$WindowsDict,
-        [Parameter(Mandatory)][System.Collections.IDictionary]$WslDict,
-        [Parameter(Mandatory)][string]$Key,
-        [Parameter(Mandatory)]$Resolution,
-        $WindowsValue, [bool]$WindowsHasKey,
-        $WslValue,     [bool]$WslHasKey
-    )
-    if (-not $Resolution.Present) { return }
-    if ($Resolution.PSObject.Properties.Name -contains 'Skip' -and $Resolution.Skip) {
-        if ($WindowsHasKey) { $WindowsDict[$Key] = $WindowsValue }
-        if ($WslHasKey)     { $WslDict[$Key]     = $WslValue }
-        return
-    }
-    $WindowsDict[$Key] = $Resolution.Value
-    $WslDict[$Key]     = $Resolution.Value
-}
-
-# ---------- Main ----------
-
-foreach ($p in @($WindowsSettingsPath, $WslSettingsPath)) {
-    if (-not (Test-Path -LiteralPath $p)) {
-        throw "Settings file not found: $p"
-    }
-}
-
-$stamp = Get-EasternTimeStamp
-Write-Host "=== Claude Code settings sync ===" -ForegroundColor Cyan
-Write-Host "Timestamp (Eastern): $stamp"
-Write-Host "Windows file:        $WindowsSettingsPath"
-Write-Host "WSL file:            $WslSettingsPath"
-if ($DryRun)    { Write-Host "Mode:                DRY RUN (no files will be written)" -ForegroundColor Magenta }
-if ($AssumeYes) { Write-Host "Mode:                NON-INTERACTIVE (-AssumeYes)" -ForegroundColor Magenta }
-
-# Detect formatting
-$winNewline = Get-FileNewline -Path $WindowsSettingsPath
-$wslNewline = Get-FileNewline -Path $WslSettingsPath
-$winEncoding = Get-FileEncoding -Path $WindowsSettingsPath
-$wslEncoding = Get-FileEncoding -Path $WslSettingsPath
-$winEndsNL = Test-EndsWithNewline -Path $WindowsSettingsPath
-$wslEndsNL = Test-EndsWithNewline -Path $WslSettingsPath
-
-function Format-Newline { param($nl) switch ($nl) { "`r`n" {'CRLF'} "`n" {'LF'} "`r" {'CR'} default {'?'} } }
-$winBom = ($winEncoding.GetPreamble().Length -gt 0)
-$wslBom = ($wslEncoding.GetPreamble().Length -gt 0)
-Write-Host ("Windows: newline={0}, bom={1}, trailing-nl={2}" -f (Format-Newline $winNewline), $winBom, $winEndsNL)
-Write-Host ("WSL:     newline={0}, bom={1}, trailing-nl={2}" -f (Format-Newline $wslNewline), $wslBom, $wslEndsNL)
-
-# Modification times
-$winMTime = (Get-Item -LiteralPath $WindowsSettingsPath).LastWriteTimeUtc
-$wslMTime = (Get-Item -LiteralPath $WslSettingsPath).LastWriteTimeUtc
-$newerSide = if ($winMTime -ge $wslMTime) { 'windows' } else { 'wsl' }
-Write-Host "Windows mtime (UTC): $winMTime"
-Write-Host "WSL mtime (UTC):     $wslMTime"
-Write-Host "Newer side:          $newerSide"
-
-# Backups
-if (-not $DryRun) {
-    $winBackup = Backup-SettingsFile -Path $WindowsSettingsPath -Stamp $stamp
-    $wslBackup = Backup-SettingsFile -Path $WslSettingsPath    -Stamp $stamp
-    Write-Host "Backup (Windows):    $winBackup"
-    Write-Host "Backup (WSL):        $wslBackup"
-}
-
-# Load JSON
-$win = Read-JsonOrdered -Path $WindowsSettingsPath
-$wsl = Read-JsonOrdered -Path $WslSettingsPath
-
-# Rule tables
-# Top-level keys kept per-file: each file keeps its own value and the key is
-# never copied to the other file, even when only one side has it. Each one
-# carries a shell command, an absolute path or an OS-only feature (checked
-# against https://code.claude.com/docs/en/settings-reference on 2026-09-22),
-# or is a machine-local choice: syncClaudeAiSkills / syncClaudeAiPlugins set
-# to false in user settings move that home's synced skills / plugins into
-# .trash/, so a copied `false` would trash the other home's content.
-$perFileKeys = @(
+# Paths kept per file: each file keeps its own value and the value never enters
+# the snapshot. Each top-level one carries a shell command, an absolute path or
+# an OS-only feature (checked against
+# https://code.claude.com/docs/en/settings-reference on 2026-09-22), or is a
+# machine-local choice: syncClaudeAiSkills / syncClaudeAiPlugins set to false in
+# user settings move that home's synced skills / plugins into .trash/, so a
+# copied `false` would trash the other home's content.
+$script:PerFilePaths = @(
     'hooks', 'statusLine', 'subagentStatusLine', 'fileSuggestion',
     'apiKeyHelper', 'awsAuthRefresh', 'awsCredentialExport', 'gcpAuthRefresh',
     'otelHeadersHelper', 'processWrapper', 'autoMemoryDirectory',
     'claudeMdExcludes', 'sandbox', 'defaultShell',
-    'syncClaudeAiSkills', 'syncClaudeAiPlugins'
+    'syncClaudeAiSkills', 'syncClaudeAiPlugins',
+    # permissions: directory paths are OS-bound.
+    'permissions.additionalDirectories',
+    # WSL auto-detects terminal width and must NOT be pinned, while Windows
+    # (win32) cannot auto-detect and needs a fixed value.
+    'env.CCSTATUSLINE_WIDTH',
+    # setup.sh (ADR 0015): the Windows/browser/document bundle is ON in Windows
+    # and `false` on Linux, under both keys it can arrive by.
+    'enabledPlugins.adam-non-coding-local@synced',
+    'enabledPlugins.adam-non-coding-local@adam-agentskills'
 )
-# permissions sub-keys: unioned, and kept per-file (directory paths are OS-bound).
-$unionPermissionKeys   = @('allow','ask','deny')
-$perFilePermissionKeys = @('additionalDirectories')
-# env sub-keys kept per-file (each side keeps its own; never copied across).
-# CCSTATUSLINE_WIDTH: WSL auto-detects terminal width and must NOT be pinned,
-# while Windows (win32) cannot auto-detect and needs a fixed value.
-$perFileEnvKeys      = @('CCSTATUSLINE_WIDTH')
-$autoScalarKeys      = @('showMessageTimestamps')           # merge w/o prompt
-$promptScalarKeys    = @(                                   # merge w/ prompt
-    'autoDreamEnabled','effortLevel','tui','skipDangerousModePermissionPrompt',
-    'theme','verbose','remoteControlAtStartup','agentPushNotifEnabled','model'
-)
+# Arrays merged as sets (a removal since the base propagates).
+$script:UnionPaths = @('permissions.allow', 'permissions.ask', 'permissions.deny', 'spinnerVerbs.verbs')
+# Conflicts here resolve to the newer file even in interactive mode.
+$script:AutoConflictPaths = @('showMessageTimestamps')
 
-# Collect all top-level keys
-$allKeys = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-foreach ($k in $win.Keys) { [void]$allKeys.Add($k) }
-foreach ($k in $wsl.Keys) { [void]$allKeys.Add($k) }
-
-# The two outputs are built side by side, so a per-file key or a skipped
-# conflict can hold a different value on each side.
-$winMerged = [ordered]@{}
-$wslMerged = [ordered]@{}
-$log       = [System.Collections.Generic.List[string]]::new()
-
-# Merge the sub-keys of an object-valued key (permissions, env, spinnerVerbs)
-# into one dictionary per side.
-function Merge-NestedKey {
-    param(
-        [Parameter(Mandatory)][string]$Prefix,
-        $WindowsObject,
-        $WslObject,
-        [string[]]$UnionKeys = @(),
-        [string[]]$PerFileSubKeys = @()
-    )
-    $wo = @{}; if ($WindowsObject -is [System.Collections.IDictionary]) { $wo = $WindowsObject }
-    $lo = @{}; if ($WslObject     -is [System.Collections.IDictionary]) { $lo = $WslObject }
-    $subKeys = [System.Collections.Generic.List[string]]::new()
-    foreach ($k in $wo.Keys) { $subKeys.Add($k) }
-    foreach ($k in $lo.Keys) { if (-not $subKeys.Contains($k)) { $subKeys.Add($k) } }
-
-    $outWin = [ordered]@{}
-    $outWsl = [ordered]@{}
-    foreach ($sk in $subKeys) {
-        $wsHas = $wo.Contains($sk)
-        $lsHas = $lo.Contains($sk)
-        $wsVal = $null; if ($wsHas) { $wsVal = $wo[$sk] }
-        $lsVal = $null; if ($lsHas) { $lsVal = $lo[$sk] }
-
-        if ($PerFileSubKeys -contains $sk) {
-            if ($wsHas) { $outWin[$sk] = $wsVal }
-            if ($lsHas) { $outWsl[$sk] = $lsVal }
-            $log.Add("[$Prefix.$sk] per-file (each file keeps its own value)") | Out-Null
-            continue
-        }
-        if ($UnionKeys -contains $sk) {
-            $u = Get-UnionArray -A $wsVal -B $lsVal
-            $outWin[$sk] = $u
-            $outWsl[$sk] = $u
-            $log.Add("[$Prefix.$sk] union (count=$($u.Count))") | Out-Null
-            continue
-        }
-        $r = Resolve-ScalarConflict -KeyPath "$Prefix.$sk" `
-                -WindowsValue $wsVal -WindowsHasKey $wsHas `
-                -WslValue $lsVal -WslHasKey $lsHas `
-                -Policy 'prompt' -NewerSide $newerSide -NonInteractive:$AssumeYes
-        Set-ResolvedValue -WindowsDict $outWin -WslDict $outWsl -Key $sk -Resolution $r `
-            -WindowsValue $wsVal -WindowsHasKey $wsHas -WslValue $lsVal -WslHasKey $lsHas
-        $log.Add("[$Prefix.$sk] -> $($r.Source)") | Out-Null
-    }
-    return [pscustomobject]@{ Windows = $outWin; Wsl = $outWsl }
+$script:Missing = [pscustomobject]@{ Missing = $true }
+function Test-Missing { param($V) return [object]::ReferenceEquals($V, $script:Missing) }
+function Get-ValueKey {
+    param($V)
+    if (Test-Missing $V) { return '<missing>' }
+    return (ConvertTo-ComparableJson $V)
 }
 
-foreach ($key in $allKeys) {
-    $wHas = $win.Contains($key)
-    $lHas = $wsl.Contains($key)
-    # Plain assignment, never `$x = if (...) { $h[$k] }`: an if-expression
-    # unrolls arrays ([] -> $null, ["x"] -> "x").
-    $wVal = $null; if ($wHas) { $wVal = $win[$key] }
-    $lVal = $null; if ($lHas) { $lVal = $wsl[$key] }
+$script:ConflictMode = 'prompt'
+if ($Unattended)     { $script:ConflictMode = 'skip' }
+elseif ($AssumeYes)  { $script:ConflictMode = 'newer' }
+$script:NewerSide  = 'windows'
+$script:Conflicts  = [System.Collections.Generic.List[string]]::new()
+$script:Decisions  = [System.Collections.Generic.List[string]]::new()
 
-    # --- per-file: preserve each file's own value, never copy across ---
-    if ($perFileKeys -contains $key) {
-        if ($wHas) { $winMerged[$key] = $wVal }
-        if ($lHas) { $wslMerged[$key] = $lVal }
-        $log.Add("[$key] per-file (each file keeps its own value)") | Out-Null
-        continue
+function Resolve-Conflict {
+    # Returns 'w', 'l' or 'skip'.
+    param([string]$Path, $W, $L)
+    $mode = $script:ConflictMode
+    if ($script:AutoConflictPaths -contains $Path -and $mode -ne 'skip') { $mode = 'newer' }
+    if ($mode -eq 'skip')  { return 'skip' }
+    if ($mode -eq 'newer') { if ($script:NewerSide -eq 'windows') { return 'w' } else { return 'l' } }
+    Write-Host ""
+    Write-Host "Conflict on: $Path" -ForegroundColor Yellow
+    Write-Host ("  windows : " + (Get-ValueKey $W))
+    Write-Host ("  wsl     : " + (Get-ValueKey $L))
+    Write-Host ("  newer   : $($script:NewerSide)")
+    while ($true) {
+        $choice = Read-Host "  [w]indows / [l]inux / [n]ewer / [s]kip (keep each file's current value)"
+        switch -Regex ($choice) {
+            '^[wW]' { return 'w' }
+            '^[lL]' { return 'l' }
+            '^[nN]' { if ($script:NewerSide -eq 'windows') { return 'w' } else { return 'l' } }
+            '^[sS]' { return 'skip' }
+        }
     }
-
-    # --- object-valued keys merged per sub-key ---
-    if ($key -eq 'permissions' -or $key -eq 'env' -or $key -eq 'spinnerVerbs') {
-        if ($key -eq 'permissions') {
-            $n = Merge-NestedKey -Prefix $key -WindowsObject $wVal -WslObject $lVal `
-                    -UnionKeys $unionPermissionKeys -PerFileSubKeys $perFilePermissionKeys
-            $order = $script:CanonicalPermissionsOrder
-        } elseif ($key -eq 'env') {
-            $n = Merge-NestedKey -Prefix $key -WindowsObject $wVal -WslObject $lVal `
-                    -PerFileSubKeys $perFileEnvKeys
-            $order = @()
-        } else {
-            $n = Merge-NestedKey -Prefix $key -WindowsObject $wVal -WslObject $lVal `
-                    -UnionKeys @('verbs')
-            $order = $script:CanonicalSpinnerVerbsOrder
-        }
-        if ($wHas -or $n.Windows.Count -gt 0) {
-            $winMerged[$key] = Sort-DictByCanonicalOrder -Dict $n.Windows -CanonicalOrder $order
-        }
-        if ($lHas -or $n.Wsl.Count -gt 0) {
-            $wslMerged[$key] = Sort-DictByCanonicalOrder -Dict $n.Wsl -CanonicalOrder $order
-        }
-        continue
-    }
-
-    # --- scalar keys: auto (no prompt), known prompt keys, unlisted (prompt) ---
-    $policy = 'prompt'; $label = 'unlisted'
-    if ($autoScalarKeys -contains $key)       { $policy = 'auto'; $label = 'auto' }
-    elseif ($promptScalarKeys -contains $key) { $label = 'prompt' }
-    $r = Resolve-ScalarConflict -KeyPath $key -WindowsValue $wVal -WindowsHasKey $wHas `
-            -WslValue $lVal -WslHasKey $lHas -Policy $policy -NewerSide $newerSide -NonInteractive:$AssumeYes
-    Set-ResolvedValue -WindowsDict $winMerged -WslDict $wslMerged -Key $key -Resolution $r `
-        -WindowsValue $wVal -WindowsHasKey $wHas -WslValue $lVal -WslHasKey $lHas
-    $log.Add("[$key] $label -> $($r.Source)") | Out-Null
 }
 
-$winOut = Sort-DictByCanonicalOrder -Dict $winMerged -CanonicalOrder $script:CanonicalTopOrder
-$wslOut = Sort-DictByCanonicalOrder -Dict $wslMerged -CanonicalOrder $script:CanonicalTopOrder
+# Three-way merge of one value. W, L and B (windows, wsl, base) may each be
+# $script:Missing. Returns W, L and S (the value to record in the snapshot),
+# each possibly Missing.
+function Merge-Node {
+    param([string]$Path, $W, $L, $B)
+    $wM = Test-Missing $W
+    $lM = Test-Missing $L
+    $bM = Test-Missing $B
 
-Write-Host ""
-Write-Host "Merge decisions:" -ForegroundColor Cyan
-foreach ($line in $log) { Write-Host "  $line" }
+    if ($script:PerFilePaths -contains $Path) {
+        $script:Decisions.Add("[$Path] per-file (each file keeps its own value)") | Out-Null
+        return [pscustomobject]@{ W = $W; L = $L; S = $script:Missing }
+    }
+
+    # --- arrays merged as sets, with removals since the base propagated ---
+    if ($script:UnionPaths -contains $Path -and -not ($wM -and $lM)) {
+        $wIn = $null; if (-not $wM) { $wIn = $W }
+        $lIn = $null; if (-not $lM) { $lIn = $L }
+        $removed = @{}
+        if (-not $bM -and $B -is [System.Collections.IEnumerable] -and $B -isnot [string]) {
+            $wk = @{}; $lk = @{}
+            foreach ($x in @($wIn)) { $wk[(ConvertTo-ComparableJson $x)] = $true }
+            foreach ($x in @($lIn)) { $lk[(ConvertTo-ComparableJson $x)] = $true }
+            foreach ($x in $B) {
+                $k = ConvertTo-ComparableJson $x
+                if (-not $wk.ContainsKey($k) -or -not $lk.ContainsKey($k)) { $removed[$k] = $true }
+            }
+        }
+        $u = Get-UnionArray -A $wIn -B $lIn
+        $keep = [System.Collections.Generic.List[object]]::new()
+        foreach ($x in $u) {
+            if (-not $removed.ContainsKey((ConvertTo-ComparableJson $x))) { $keep.Add($x) | Out-Null }
+        }
+        $arr = [object[]]$keep.ToArray()
+        $script:Decisions.Add("[$Path] set merge (count=$($arr.Count), removed=$($removed.Count))") | Out-Null
+        return [pscustomobject]@{ W = $arr; L = $arr; S = $arr }
+    }
+
+    # --- objects merge entry by entry (one side may be absent) ---
+    $wD = $W -is [System.Collections.IDictionary]
+    $lD = $L -is [System.Collections.IDictionary]
+    if (($wD -or $lD) -and ($wD -or $wM) -and ($lD -or $lM)) {
+        $bD = $B -is [System.Collections.IDictionary]
+        $names = [System.Collections.Generic.List[string]]::new()
+        foreach ($src in @($W, $L, $B)) {
+            if ($src -is [System.Collections.IDictionary]) {
+                foreach ($k in $src.Keys) { if (-not $names.Contains([string]$k)) { $names.Add([string]$k) } }
+            }
+        }
+        $outW = [ordered]@{}; $outL = [ordered]@{}; $outS = [ordered]@{}
+        foreach ($k in $names) {
+            $cw = $script:Missing; if ($wD -and $W.Contains($k)) { $cw = $W[$k] }
+            $cl = $script:Missing; if ($lD -and $L.Contains($k)) { $cl = $L[$k] }
+            $cb = $script:Missing; if ($bD -and $B.Contains($k)) { $cb = $B[$k] }
+            $childPath = $k
+            if ($Path) { $childPath = "$Path.$k" }
+            $r = Merge-Node -Path $childPath -W $cw -L $cl -B $cb
+            if (-not (Test-Missing $r.W)) { $outW[$k] = $r.W }
+            if (-not (Test-Missing $r.L)) { $outL[$k] = $r.L }
+            if (-not (Test-Missing $r.S)) { $outS[$k] = $r.S }
+        }
+        $order = @()
+        if ($Path -eq '' )             { $order = $script:CanonicalTopOrder }
+        elseif ($Path -eq 'permissions')  { $order = $script:CanonicalPermissionsOrder }
+        elseif ($Path -eq 'spinnerVerbs') { $order = $script:CanonicalSpinnerVerbsOrder }
+        $resW = Sort-DictByCanonicalOrder -Dict $outW -CanonicalOrder $order
+        $resL = Sort-DictByCanonicalOrder -Dict $outL -CanonicalOrder $order
+        $resS = Sort-DictByCanonicalOrder -Dict $outS -CanonicalOrder $order
+        # An object emptied by a delete (or never there) is absent, not `{}`.
+        if ($resW.Count -eq 0 -and ($wM -or ($lM -and -not $bM))) { $resW = $script:Missing }
+        if ($resL.Count -eq 0 -and ($lM -or ($wM -and -not $bM))) { $resL = $script:Missing }
+        if ($resS.Count -eq 0) { $resS = $script:Missing }
+        return [pscustomobject]@{ W = $resW; L = $resL; S = $resS }
+    }
+
+    # --- scalars, arrays and mixed types: one value ---
+    $wk = Get-ValueKey $W; $lk = Get-ValueKey $L; $bk = Get-ValueKey $B
+    if ($wk -eq $lk) {
+        return [pscustomobject]@{ W = $W; L = $L; S = $W }
+    }
+    if ($wk -eq $bk) {
+        $script:Decisions.Add("[$Path] changed in wsl -> windows") | Out-Null
+        return [pscustomobject]@{ W = $L; L = $L; S = $L }
+    }
+    if ($lk -eq $bk) {
+        $script:Decisions.Add("[$Path] changed in windows -> wsl") | Out-Null
+        return [pscustomobject]@{ W = $W; L = $W; S = $W }
+    }
+    $pick = Resolve-Conflict -Path $Path -W $W -L $L
+    if ($pick -eq 'w') {
+        $script:Decisions.Add("[$Path] conflict -> windows") | Out-Null
+        return [pscustomobject]@{ W = $W; L = $W; S = $W }
+    }
+    if ($pick -eq 'l') {
+        $script:Decisions.Add("[$Path] conflict -> wsl") | Out-Null
+        return [pscustomobject]@{ W = $L; L = $L; S = $L }
+    }
+    $script:Conflicts.Add($Path) | Out-Null
+    $script:Decisions.Add("[$Path] conflict skipped (each file keeps its own value)") | Out-Null
+    return [pscustomobject]@{ W = $W; L = $L; S = $B }
+}
 
 # Key names and a same/changed/added/removed marker per file, one level deep.
 # Never values: env values can be credentials, and a dry run is what an agent
@@ -574,7 +553,7 @@ function Write-PlanForSide {
         if (-not $bHas) { $mark = 'added' }
         elseif (-not $aHas) { $mark = 'removed' }
         elseif ((ConvertTo-ComparableJson $b) -ne (ConvertTo-ComparableJson $a)) { $mark = 'changed' }
-        Write-Host "$Indent$k : $mark"
+        Write-Info "$Indent$k : $mark"
         if ($Indent -eq '  ' -and ($b -is [System.Collections.IDictionary] -or $a -is [System.Collections.IDictionary])) {
             $bd = @{}; if ($b -is [System.Collections.IDictionary]) { $bd = $b }
             $ad = @{}; if ($a -is [System.Collections.IDictionary]) { $ad = $a }
@@ -583,22 +562,149 @@ function Write-PlanForSide {
     }
 }
 
+function Get-ChangedKeyCount {
+    param($Before, $After)
+    $n = 0
+    $names = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($k in $Before.Keys) { [void]$names.Add($k) }
+    foreach ($k in $After.Keys)  { [void]$names.Add($k) }
+    foreach ($k in $names) {
+        $b = $script:Missing; if ($Before.Contains($k)) { $b = $Before[$k] }
+        $a = $script:Missing; if ($After.Contains($k))  { $a = $After[$k] }
+        if ((Get-ValueKey $b) -ne (Get-ValueKey $a)) { $n++ }
+    }
+    return $n
+}
+
+# ---------- Main ----------
+
+foreach ($p in @($WindowsSettingsPath, $WslSettingsPath)) {
+    if (-not (Test-Path -LiteralPath $p)) {
+        throw "Settings file not found: $p"
+    }
+}
+
+$stamp = Get-EasternTimeStamp
+Write-Info "=== Claude Code settings sync ===" 'Cyan'
+Write-Info "Timestamp (Eastern): $stamp"
+Write-Info "Windows file:        $WindowsSettingsPath"
+Write-Info "WSL file:            $WslSettingsPath"
+Write-Info "Snapshot file:       $SnapshotPath"
+if ($DryRun)     { Write-Info "Mode:                DRY RUN (nothing will be written)" 'Magenta' }
+if ($AssumeYes)  { Write-Info "Mode:                -AssumeYes (a conflict goes to the newer file)" 'Magenta' }
+if ($Unattended) { Write-Info "Mode:                UNATTENDED (a conflict is skipped, never prompted)" 'Magenta' }
+
+# Read each file once; its bytes give the format, the content and the
+# fingerprint the pre-write check compares against.
+$winBytes = [System.IO.File]::ReadAllBytes($WindowsSettingsPath)
+$wslBytes = [System.IO.File]::ReadAllBytes($WslSettingsPath)
+$winNewline  = Get-FileNewline -Bytes $winBytes -Path $WindowsSettingsPath
+$wslNewline  = Get-FileNewline -Bytes $wslBytes -Path $WslSettingsPath
+$winEncoding = Get-BytesEncoding -Bytes $winBytes
+$wslEncoding = Get-BytesEncoding -Bytes $wslBytes
+$winEndsNL   = Test-EndsWithNewline -Bytes $winBytes
+$wslEndsNL   = Test-EndsWithNewline -Bytes $wslBytes
+$winHash = Get-BytesHash -Bytes $winBytes
+$wslHash = Get-BytesHash -Bytes $wslBytes
+
+function Format-Newline { param($nl) switch ($nl) { "`r`n" {'CRLF'} "`n" {'LF'} "`r" {'CR'} default {'?'} } }
+Write-Info ("Windows: newline={0}, bom={1}, trailing-nl={2}" -f (Format-Newline $winNewline), ($winEncoding.GetPreamble().Length -gt 0), $winEndsNL)
+Write-Info ("WSL:     newline={0}, bom={1}, trailing-nl={2}" -f (Format-Newline $wslNewline), ($wslEncoding.GetPreamble().Length -gt 0), $wslEndsNL)
+
+# The newer file decides only an -AssumeYes / [n]ewer conflict.
+$winMTime = (Get-Item -LiteralPath $WindowsSettingsPath).LastWriteTimeUtc
+$wslMTime = (Get-Item -LiteralPath $WslSettingsPath).LastWriteTimeUtc
+if ($winMTime -lt $wslMTime) { $script:NewerSide = 'wsl' }
+Write-Info "Newer file:          $($script:NewerSide)"
+
+$win = ConvertFrom-JsonText -Raw (Get-BytesText -Bytes $winBytes)
+$wsl = ConvertFrom-JsonText -Raw (Get-BytesText -Bytes $wslBytes)
+
+# The base: what the last live run wrote. Absent or unreadable means first run.
+$base = $script:Missing
+$snapshotState = 'absent'
+if (Test-Path -LiteralPath $SnapshotPath) {
+    try {
+        $base = ConvertFrom-JsonText -Raw ([System.IO.File]::ReadAllText($SnapshotPath))
+        $snapshotState = 'present'
+    } catch {
+        $base = $script:Missing
+        $snapshotState = 'unreadable'
+        Write-Info "Snapshot could not be read; treating this as a first run."
+    }
+}
+Write-Info "Snapshot:            $snapshotState"
+
+$merged = Merge-Node -Path '' -W $win -L $wsl -B $base
+$winOut = [ordered]@{}; if (-not (Test-Missing $merged.W)) { $winOut = $merged.W }
+$wslOut = [ordered]@{}; if (-not (Test-Missing $merged.L)) { $wslOut = $merged.L }
+$snapOut = [ordered]@{}; if (-not (Test-Missing $merged.S)) { $snapOut = $merged.S }
+
+Write-Info ""
+Write-Info "Merge decisions (only what changed or conflicted, plus per-file keys):" 'Cyan'
+foreach ($line in $script:Decisions) { Write-Info "  $line" }
+
+$winText = Get-JsonFinalText -Object $winOut -Newline $winNewline -EndsWithNewline $winEndsNL
+$wslText = Get-JsonFinalText -Object $wslOut -Newline $wslNewline -EndsWithNewline $wslEndsNL
+$winWrite = $winText -ne (Get-BytesText -Bytes $winBytes)
+$wslWrite = $wslText -ne (Get-BytesText -Bytes $wslBytes)
+$winKeys = Get-ChangedKeyCount -Before $win -After $winOut
+$wslKeys = Get-ChangedKeyCount -Before $wsl -After $wslOut
+
+Write-Info ""
+Write-Info "Windows would become:"; Write-PlanForSide -Before $win -After $winOut
+Write-Info "WSL would become:";     Write-PlanForSide -Before $wsl -After $wslOut
+
+function Write-SummaryAndReport {
+    param([string]$Outcome)
+    $mode = 'live'; if ($DryRun) { $mode = 'dry-run' }
+    $w = 'nochange'; if ($winWrite) { $w = "write($winKeys keys)" }
+    $l = 'nochange'; if ($wslWrite) { $l = "write($wslKeys keys)" }
+    $line = "{0} sync-claude-settings mode={1} outcome={2} snapshot={3} windows={4} wsl={5} conflicts={6}" -f `
+        [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ'), $mode, $Outcome, $snapshotState, $w, $l, $script:Conflicts.Count
+    if ($ReportPath) {
+        $dir = Split-Path -Parent $ReportPath
+        if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        [System.IO.File]::WriteAllText($ReportPath, (($script:Report -join "`n") + "`n" + $line + "`n"), [System.Text.UTF8Encoding]::new($false))
+    }
+    if ($Unattended) { Write-Host $line } else { Write-Host ""; Write-Host $line -ForegroundColor Green }
+    if ($script:Conflicts.Count -gt 0 -and -not $Unattended) {
+        Write-Host "Conflicts left alone: $($script:Conflicts -join ', ')" -ForegroundColor Yellow
+    }
+}
+
 if ($DryRun) {
-    Write-Host ""
-    Write-Host "DRY RUN - no files written. Values are not shown." -ForegroundColor Magenta
-    Write-Host "Windows would become:"; Write-PlanForSide -Before $win -After $winOut
-    Write-Host "WSL would become:";     Write-PlanForSide -Before $wsl -After $wslOut
+    Write-Info ""
+    Write-Info "DRY RUN - no files written. Values are not shown." 'Magenta'
+    Write-SummaryAndReport -Outcome 'planned'
     return
 }
 
-# Write outputs, preserving each side's native format.
-Write-JsonPreservingFormat -Path $WindowsSettingsPath -Object $winOut `
-    -Newline $winNewline -Encoding $winEncoding -EndsWithNewline:$winEndsNL
-Write-JsonPreservingFormat -Path $WslSettingsPath -Object $wslOut `
-    -Newline $wslNewline -Encoding $wslEncoding -EndsWithNewline:$wslEndsNL
+# Refuse to write over an edit made while this ran (Claude Code rewrites the
+# file itself); the next run starts clean.
+$winNow = Get-BytesHash -Bytes ([System.IO.File]::ReadAllBytes($WindowsSettingsPath))
+$wslNow = Get-BytesHash -Bytes ([System.IO.File]::ReadAllBytes($WslSettingsPath))
+if ($winNow -ne $winHash -or $wslNow -ne $wslHash) {
+    Write-SummaryAndReport -Outcome 'skipped-file-changed-during-run'
+    return
+}
 
-Write-Host ""
-Write-Host "Done." -ForegroundColor Green
-Write-Host "Backups:"
-Write-Host "  $winBackup"
-Write-Host "  $wslBackup"
+if ($winWrite) {
+    Backup-SettingsFile -Path $WindowsSettingsPath -Stamp $stamp -Keep $KeepBackups | Out-Null
+    [System.IO.File]::WriteAllText($WindowsSettingsPath, $winText, $winEncoding)
+}
+if ($wslWrite) {
+    Backup-SettingsFile -Path $WslSettingsPath -Stamp $stamp -Keep $KeepBackups | Out-Null
+    [System.IO.File]::WriteAllText($WslSettingsPath, $wslText, $wslEncoding)
+}
+
+# Record what was written as the next base (LF, no BOM, whatever the files use).
+$snapText = Get-JsonFinalText -Object $snapOut -Newline "`n" -EndsWithNewline $true
+$snapDir = Split-Path -Parent $SnapshotPath
+if ($snapDir -and -not (Test-Path -LiteralPath $snapDir)) { New-Item -ItemType Directory -Path $snapDir -Force | Out-Null }
+$oldSnap = ''; if (Test-Path -LiteralPath $SnapshotPath) { $oldSnap = [System.IO.File]::ReadAllText($SnapshotPath) }
+if ($snapText -ne $oldSnap) {
+    [System.IO.File]::WriteAllText($SnapshotPath, $snapText, [System.Text.UTF8Encoding]::new($false))
+}
+
+Write-SummaryAndReport -Outcome 'synced'

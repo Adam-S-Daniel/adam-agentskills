@@ -75,6 +75,13 @@ no backfill is planned; the file adds the fields git does not capture.
 - Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea` (with 13/13, without 1/13); post-merge routine run to follow in a correcting entry. One-line install pin; no fixture asserts it.
 - Outcome: pending review.
 
+## 2026-11-12 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
+
+- Motivation: the two settings files had drifted and the old merge could not run unattended: deletions came back, the newer file decided keys it never changed, `enabledPlugins` was copied whole (which would have turned `adam-non-coding-local` off in Windows).
+- Change: three-way merge against a last-synced snapshot, recursive object merge, per-OS `adam-non-coding-local` plugin entries, `-Unattended` / `-SnapshotPath` / `-ReportPath` / `-KeepBackups`, write only on change, refuse to write over a mid-run edit; bundle `adam-coding-local` 2.2.5 -> 2.2.6 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`); the skill's own pytest suite covers it (20 tests; the 10 new ones fail against the old script)
+- Outcome: pending
+
 ## 2026-11-10 — adam-coding-anywhere/workflow-path-audit — edit
 
 - Motivation: skills-evals description trim run `20261110T140514Z-a5cfb2`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).

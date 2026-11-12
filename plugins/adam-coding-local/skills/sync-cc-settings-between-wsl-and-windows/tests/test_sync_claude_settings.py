@@ -332,6 +332,18 @@ def test_permission_lists_propagate_adds_and_removals_per_item(tmp_path):
     assert _read(l)["permissions"]["allow"] == ["Bash(b)", "Read"]
 
 
+def test_machine_sized_env_vars_stay_per_file(tmp_path):
+    w, l = _pair(
+        tmp_path,
+        {"env": {"A": "1"}},
+        {"env": {"A": "1", "MAKEFLAGS": "-j8", "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1"}},
+    )
+    _run(w, l, "-Unattended")
+    assert _read(w)["env"] == {"A": "1"}
+    assert _read(l)["env"] == {"A": "1", "CLAUDE_CODE_USE_POWERSHELL_TOOL": "1", "MAKEFLAGS": "-j8"}
+    assert _snapshot(w)["env"] == {"A": "1"}
+
+
 def test_enabled_plugins_merge_per_entry_and_keep_the_os_bound_entries(tmp_path):
     w, l = _pair(
         tmp_path,

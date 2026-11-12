@@ -62,6 +62,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-12 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
+
+- Motivation: a dry run on a real machine showed `env.MAKEFLAGS` and `env.CLAUDE_CODE_USE_POWERSHELL_TOOL`, set in WSL only, would copy to Windows, where there is no `make` on PATH and the PowerShell tool is already native.
+- Change: both env entries are per-file paths in the sync script and the skill's per-file list, with a test; bundle `adam-coding-local` 2.2.6 -> 2.2.7 (PR pending).
+- Eval: exempt (skills-evals `evals/non-coverage.yml`); the skill's own pytest suite covers it
+- Outcome: pending
+
 ## 2026-11-12 — adam-coding-anywhere/debug-github-workflows — remove
 
 - Motivation: the retirement verdict is `retire` ([skills-evals#955](https://github.com/Adam-S-Daniel/skills-evals/issues/955), approved by the owner 2026-11-12): every cell with headroom shows no benefit (4 fixtures x 2 roster models; the loop could only file a proposal, so this is the hand removal).

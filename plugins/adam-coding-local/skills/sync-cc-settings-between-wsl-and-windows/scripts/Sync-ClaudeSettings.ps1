@@ -27,7 +27,8 @@
         awsAuthRefresh, awsCredentialExport, gcpAuthRefresh, otelHeadersHelper,
         processWrapper, autoMemoryDirectory, claudeMdExcludes, sandbox, defaultShell,
         syncClaudeAiSkills, syncClaudeAiPlugins, permissions.additionalDirectories,
-        env.CCSTATUSLINE_WIDTH, and the two enabledPlugins entries for
+        env.CCSTATUSLINE_WIDTH, env.MAKEFLAGS, env.CLAUDE_CODE_USE_POWERSHELL_TOOL,
+        and the two enabledPlugins entries for
         adam-non-coding-local (setup.sh turns them off on Linux and leaves them on
         for Windows, per ADR 0015, so the OS decides, not a sync).
 
@@ -386,6 +387,10 @@ $script:PerFilePaths = @(
     # WSL auto-detects terminal width and must NOT be pinned, while Windows
     # (win32) cannot auto-detect and needs a fixed value.
     'env.CCSTATUSLINE_WIDTH',
+    # Set on WSL only: MAKEFLAGS=-jN sizes a build to that machine and Windows has no make
+    # on PATH; the PowerShell tool is native on Windows and an opt-in on Linux.
+    'env.MAKEFLAGS',
+    'env.CLAUDE_CODE_USE_POWERSHELL_TOOL',
     # setup.sh (ADR 0015): the Windows/browser/document bundle is ON in Windows
     # and `false` on Linux, under both keys it can arrive by.
     'enabledPlugins.adam-non-coding-local@synced',

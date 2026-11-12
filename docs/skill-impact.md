@@ -18,7 +18,7 @@ skill content. Entries append in the same PR as the change, newest first.
 ## Entry format
 
 ```
-## YYYY-MM-DD — <plugin>/<skill> — <create|edit|rename|remove|rejected>
+## YYYY-MM-DD — <plugin>/<skill> — <create|edit|rename|remove|restore|rejected>
 - Motivation: one line — the incident, pattern, or issue that prompted it
 - Change: one line — what changed (PR #NNN)
 - Eval: the skill's eval result (exit code + counts), or "none — no eval
@@ -37,7 +37,11 @@ Rules:
 - **CI enforces the gates.** `scripts/check_skill_gates.py`, run in the
   required `pytest` check, reads each new entry's `- Eval:` line and fails a
   PR whose skill change is not covered. A removed SKILL.md needs a `remove`
-  entry. A new skill needs a `create` entry, a PURPOSE.md and a green arm:
+  entry. A skill brought back by `scripts/restore_skill.py` needs a `restore`
+  entry (naming the removal commit it came from, on its Eval line) and its
+  PURPOSE.md, and no new green arm: it is the content that already graduated,
+  byte for byte. Any other new skill needs a `create` entry, a PURPOSE.md and a
+  green arm:
   `with_skill objective X/Y, without_skill A/B` (X > 0, X/Y >= A/B) with the
   routine run id or results link; a skill in `adam-coding-local` or
   `adam-non-coding-local` may write `exempt` instead. An edited SKILL.md
@@ -48,6 +52,10 @@ Rules:
   fixture (a `skills-evals/pull/N` link or `evals/<skill>/`). When the
   census cannot decide, the check warns instead of failing. It also fails
   any change to an entry already on main.
+- **A restore is its own kind.** `scripts/restore_skill.py` puts a removed
+  skill back (for example one removed as unused, ADR 0025) from the commit
+  before its removal, bumps the plugin's MINOR version and prepends the
+  `restore` entry; do not write a `create` entry for it.
 
 Entries before 2026-08-25 predate this file and live only in git history —
 no backfill is planned; the file adds the fields git does not capture.
@@ -57,7 +65,7 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-11-12 — adam-coding-anywhere/ci-job-performance — edit
 
 - Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the section recommends dated tags such as `act-latest-20260815`, then says "Never use a `-latest` tag", which the recommended names contradict.
-- Change: the rule now reads "Never use an undated tag"; nothing else in the skill changed; bundle `adam-coding-anywhere` 1.3.11 -> 1.3.12 (PR pending).
+- Change: the rule now reads "Never use an undated tag"; nothing else in the skill changed; bundle `adam-coding-anywhere` 2.0.0 -> 2.0.1 (PR pending).
 - Eval: baseline on main before the edit: routine run `20261101T211416Z-706447` (browser-cache: with 5/7, without 5/7); post-merge routine run to follow in a correcting entry. One-phrase wording fix; no fixture asserts it.
 - Outcome: pending review.
 
@@ -74,6 +82,13 @@ no backfill is planned; the file adds the fields git does not capture.
 - Change: the SKILL.md install line pins `pypdf==6.21.4` (see the rename-pdfs entry above); `check_ocr.py`'s auto-install is untouched; same bundle bump.
 - Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea` (with 13/13, without 1/13); post-merge routine run to follow in a correcting entry. One-line install pin; no fixture asserts it.
 - Outcome: pending review.
+
+## 2026-11-12 — adam-coding-anywhere/debug-github-workflows — remove
+
+- Motivation: the retirement verdict is `retire` ([skills-evals#955](https://github.com/Adam-S-Daniel/skills-evals/issues/955), approved by the owner 2026-11-12): every cell with headroom shows no benefit (4 fixtures x 2 roster models; the loop could only file a proposal, so this is the hand removal).
+- Change: `plugins/adam-coding-anywhere/skills/debug-github-workflows/` removed, the skill dropped from `scripts/plugin_layout.json` and the README table, bundle `adam-coding-anywhere` 1.3.11 -> 2.0.0 (a removal is a breaking change); `skills.lock` re-pinned; the name is already in `scripts/shipped_names.json`. The skills-evals fixtures in `evals/debug-github-workflows/` stay.
+- Eval: n=358 pooled arm runs (with vs without the skill) as of 20261112T154432Z, fixtures evals/debug-github-workflows/git-identity, secret-name, swallowed-failure, wrong-branch, policy evals/gate-policy.yml; per-cell bounds in skills-evals#955.
+- Outcome: pending merge.
 
 ## 2026-11-12 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
 

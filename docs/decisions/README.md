@@ -114,3 +114,4 @@ Optional sections for high-impact decisions:
 | [0022](0022-install-the-newer-pin-when-one-lock-descends-from-the-other.md) | Install the newer pin when one lock descends from the other | Accepted |
 | [0023](0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md) | Deliver the fleet guidance from a plugin hook that fetches it | Accepted |
 | [0024](0024-leave-a-skill-to-the-account-plugin-that-already-delivers-it.md) | Leave a skill to the account plugin that already delivers it | Accepted |
+| [0025](0025-remove-a-skill-nobody-uses-and-restore-it-on-demand.md) | Remove a skill nobody uses, and restore it on demand | Accepted |

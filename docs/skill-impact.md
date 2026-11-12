@@ -54,6 +54,27 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-12 — adam-coding-anywhere/ci-job-performance — edit
+
+- Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the section recommends dated tags such as `act-latest-20260815`, then says "Never use a `-latest` tag", which the recommended names contradict.
+- Change: the rule now reads "Never use an undated tag"; nothing else in the skill changed; bundle `adam-coding-anywhere` 1.3.11 -> 1.3.12 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261101T211416Z-706447` (browser-cache: with 5/7, without 5/7); post-merge routine run to follow in a correcting entry. One-phrase wording fix; no fixture asserts it.
+- Outcome: pending review.
+
+## 2026-11-12 — adam-non-coding-local/rename-pdfs — edit
+
+- Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the install line was an unpinned `pip install`, against the fleet's pin-exact, 7-day rule.
+- Change: the SKILL.md install line pins `pypdf==6.21.4`, the newest release at least 7 days old on 2026-11-12 (7.0.0 was 6 days old); the helper script's own message and install are untouched; bundle `adam-non-coding-local` 1.0.7 -> 1.0.8 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232136Z-d58e9f`, with 8/8, without 4/8 objective checks (1 trial); post-merge run to follow in a correcting entry. One-line install pin; no fixture asserts it.
+- Outcome: pending review.
+
+## 2026-11-12 — adam-non-coding-local/pdf-ocr-audit — edit
+
+- Motivation: same sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): unpinned `pip install --user pypdf`.
+- Change: the SKILL.md install line pins `pypdf==6.21.4` (see the rename-pdfs entry above); `check_ocr.py`'s auto-install is untouched; same bundle bump.
+- Eval: baseline on main before the edit: routine run `20261102T232211Z-058dea` (with 13/13, without 1/13); post-merge routine run to follow in a correcting entry. One-line install pin; no fixture asserts it.
+- Outcome: pending review.
+
 ## 2026-11-10 — adam-coding-anywhere/workflow-path-audit — edit
 
 - Motivation: skills-evals description trim run `20261110T140514Z-a5cfb2`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).

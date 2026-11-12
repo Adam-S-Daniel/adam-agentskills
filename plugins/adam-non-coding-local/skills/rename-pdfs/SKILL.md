@@ -135,7 +135,7 @@ python3 scripts/extract_pdf_context.py "/path/to/file.pdf" --pages 3
 It outputs JSON with `text`, `dates_in_text`, `dates_in_filename`, and `mtime`. If `pypdf` is missing (if pip refuses with `externally-managed-environment`, create a venv, install `pypdf` there, and run the script with that venv's `python3`):
 
 ```bash
-pip install --user pypdf
+pip install --user pypdf==6.21.4
 ```
 
 For folders with mostly long PDFs, `--pages 2` is faster and usually enough.

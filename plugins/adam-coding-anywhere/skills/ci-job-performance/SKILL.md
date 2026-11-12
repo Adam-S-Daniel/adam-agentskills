@@ -166,7 +166,7 @@ runner images:
   `pwsh-latest-20260815` — on Docker Hub; `ghcr.io` carries the same digests
   but may lack dated `pwsh` tags; check its tag list before relying on it. Resolve a digest from
   `https://hub.docker.com/v2/repositories/catthehacker/ubuntu/tags/<tag>`.
-- **Never use a `-latest` tag.** These images' build scripts fetch "latest"
+- **Never use an undated tag.** These images' build scripts fetch "latest"
   upstream releases (e.g. PowerShell via its `releases/latest` API) at *build*
   time, so a floating tag silently adopts a brand-new upstream release the day
   it lands. What matters is the release's age at the moment **you** adopt it,

@@ -62,6 +62,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-12 — adam-coding-anywhere/debug-github-workflows — remove
+
+- Motivation: the retirement verdict is `retire` ([skills-evals#955](https://github.com/Adam-S-Daniel/skills-evals/issues/955), approved by the owner 2026-11-12): every cell with headroom shows no benefit (4 fixtures x 2 roster models; the loop could only file a proposal, so this is the hand removal).
+- Change: `plugins/adam-coding-anywhere/skills/debug-github-workflows/` removed, the skill dropped from `scripts/plugin_layout.json` and the README table, bundle `adam-coding-anywhere` 1.3.11 -> 2.0.0 (a removal is a breaking change); `skills.lock` re-pinned; the name is already in `scripts/shipped_names.json`. The skills-evals fixtures in `evals/debug-github-workflows/` stay.
+- Eval: n=358 pooled arm runs (with vs without the skill) as of 20261112T154432Z, fixtures evals/debug-github-workflows/git-identity, secret-name, swallowed-failure, wrong-branch, policy evals/gate-policy.yml; per-cell bounds in skills-evals#955.
+- Outcome: pending merge.
+
 ## 2026-11-12 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
 
 - Motivation: the two settings files had drifted and the old merge could not run unattended: deletions came back, the newer file decided keys it never changed, `enabledPlugins` was copied whole (which would have turned `adam-non-coding-local` off in Windows).

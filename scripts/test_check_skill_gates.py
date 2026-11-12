@@ -671,6 +671,22 @@ def test_restore_entry_for_another_skill_does_not_satisfy(tmp_path):
     assert code == 1, out
 
 
+def test_restore_of_a_never_removed_skill_fails(tmp_path):
+    """A brand-new skill cannot skip the green arm by calling itself a restore."""
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(skill_dir(repo, PLUGIN, "brand-new") / "SKILL.md", "# brand-new\n")
+    _write(skill_dir(repo, PLUGIN, "brand-new") / "PURPOSE.md", "# Purpose\n")
+    path = repo / "docs" / "skill-impact.md"
+    head, rest = path.read_text(encoding="utf-8").split("---\n", 1)
+    _write(path, head + "---\n\n" + entry("restore", "restored from `abc1234`",
+                                            skill="brand-new") + rest)
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "no `remove` entry" in out
+
+
 def test_restore_kind_parses():
     entries = csg.parse_entries(HEADER + "\n" + restore_entry())
     assert [(e["kind"], e["skill"]) for e in entries] == [("restore", SKILL)]

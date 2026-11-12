@@ -48,7 +48,7 @@ skill listing of every session, and the listing is re-read on every turn.
    `docs/skill-impact.md` naming the removal commit. The basename is reused and
    must already be in `scripts/shipped_names.json`, which stays append-only and
    is not modified. `scripts/check_skill_gates.py` accepts a `restore` entry for
-   a skill that reappears, with no new green arm, since the content already
+   a skill that reappears and that main records a `remove` entry for, with no new green arm, since the content already
    graduated.
 
 ## Consequences

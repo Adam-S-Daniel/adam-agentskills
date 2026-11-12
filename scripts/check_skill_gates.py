@@ -81,7 +81,8 @@ touch, census `covered`: RAN. `skipped`: RAN or EXEMPT. `gap`: RAN or
 FIRST_FIXTURE. create: GREEN, or EXEMPT in a machine-bound plugin
 (adam-coding-local, adam-non-coding-local), which passes with a warning to add
 a row to skills-evals' evals/non-coverage.yml. remove: a `remove` entry.
-restore: a `restore` entry with a non-empty Eval line (the skill is back from
+restore: a `restore` entry with a non-empty Eval line, for a skill main has a
+`remove` entry for (the skill is back from
 the commit before its removal, scripts/restore_skill.py, so it needs no new
 green arm), and a PURPOSE.md; a skill that is absent at the merge-base and
 present at head is "created" to this check, and a `restore` entry satisfies it
@@ -384,10 +385,18 @@ def check_remove(rep, added, plugin, skill):
                  f"Add `## <date> — {who} — remove` with Motivation, Change, Eval and Outcome lines")
 
 
-def check_create(rep, added, head_blobs, plugin, skill):
+def check_create(rep, added, head_blobs, plugin, skill, base_entries=()):
     who = f"{plugin}/{skill}"
     entries = _entries_for(added, plugin, skill, kinds={"create"})
     restores = _entries_for(added, plugin, skill, kinds={"restore"})
+    # A restore stands in for graduation only for a skill whose removal main
+    # already records; otherwise any new skill could skip the green arm by
+    # calling itself a restore.
+    if restores and not _entries_for(base_entries, plugin, skill, kinds={"remove"}):
+        rep.fail(who, "a `restore` entry names a skill main has no `remove` entry for",
+                 "only a skill removed earlier can be restored without a new green arm",
+                 f"Write a `create` entry for {who}, or restore it into the plugin it was removed from")
+        restores = []
     if not entries and not restores:
         rep.fail(who, "a new skill has no new `create` entry in docs/skill-impact.md (or `restore` entry, for a restored one)",
                  "AGENTS.md records every creation and restoration there",
@@ -519,7 +528,7 @@ def run(base: str, head: str, census_source: str) -> Tuple[int, List[str]]:
     for plugin, skill in removed:
         check_remove(rep, added, plugin, skill)
     for plugin, skill in created:
-        check_create(rep, added, head_blobs, plugin, skill)
+        check_create(rep, added, head_blobs, plugin, skill, base_entries)
     for plugin, skill in touched:
         check_touch(rep, added, head_blobs, plugin, skill, census, census_why)
     for src, dst, changed in moves:

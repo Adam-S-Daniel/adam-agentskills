@@ -596,3 +596,118 @@ def test_retire_loop_entry_passes(tmp_path):
     commit(repo)
     code, out = gate(repo)
     assert code == 0, out
+
+
+# ---------------------------------------------------------------------------
+# restore: a removed skill brought back by scripts/restore_skill.py
+# ---------------------------------------------------------------------------
+
+def restore_entry(eval_text: str = "restored unchanged from the commit before removal `abc1234`",
+                  skill: str = SKILL) -> str:
+    return entry("restore", eval_text, skill=skill)
+
+
+def removed_on_main(tmp_path: Path) -> Path:
+    """main where SKILL was removed (entry and all); `pr` branches from it."""
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "main")
+    remove_skill(repo)
+    impact(repo, entry("remove", "n=12 pooled arm runs", date="2026-10-31"), OLD_ENTRY, OTHER_OLD)
+    commit(repo, "remove")
+    _git(repo, "checkout", "-q", "-B", "pr")
+    return repo
+
+
+def bring_back(repo: Path, *entries: str, purpose: bool = True) -> None:
+    _write(skill_dir(repo, PLUGIN, SKILL) / "SKILL.md", f"# {SKILL}\n\nv1\n")
+    if purpose:
+        _write(skill_dir(repo, PLUGIN, SKILL) / "PURPOSE.md", "# Purpose\n")
+    if entries:
+        path = repo / "docs" / "skill-impact.md"
+        text = path.read_text(encoding="utf-8")
+        head, rest = text.split("---\n", 1)
+        _write(path, head + "---\n\n" + "\n".join(entries) + rest)
+    commit(repo)
+
+
+def test_restore_with_entry_passes(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry())
+    code, out = gate(repo)
+    assert code == 0, out
+    assert "1 created" in out
+
+
+def test_restore_without_entry_fails(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "no new `create` entry" in out
+
+
+def test_restore_without_purpose_fails(tmp_path):
+    repo = removed_on_main(tmp_path)
+    _git(repo, "rm", "-q", "-f", "-r", "--ignore-unmatch", "plugins")
+    bring_back(repo, restore_entry(), purpose=False)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "no PURPOSE.md" in out
+
+
+def test_restore_with_empty_eval_fails(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, "## 2026-11-12 — adam-coding-anywhere/widget-polisher — restore\n\n"
+                     "- Motivation: invented.\n- Outcome: pending\n")
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "`restore` entry has no Eval line" in out
+
+
+def test_restore_entry_for_another_skill_does_not_satisfy(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry(skill=OTHER))
+    code, out = gate(repo)
+    assert code == 1, out
+
+
+def test_restore_of_a_never_removed_skill_fails(tmp_path):
+    """A brand-new skill cannot skip the green arm by calling itself a restore."""
+    repo = make_repo(tmp_path)
+    _git(repo, "checkout", "-q", "-B", "pr")
+    _write(skill_dir(repo, PLUGIN, "brand-new") / "SKILL.md", "# brand-new\n")
+    _write(skill_dir(repo, PLUGIN, "brand-new") / "PURPOSE.md", "# Purpose\n")
+    path = repo / "docs" / "skill-impact.md"
+    head, rest = path.read_text(encoding="utf-8").split("---\n", 1)
+    _write(path, head + "---\n\n" + entry("restore", "restored from `abc1234`",
+                                            skill="brand-new") + rest)
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "no `remove` entry" in out
+
+
+def test_restore_of_changed_content_needs_the_normal_gate(tmp_path):
+    """A `restore` entry does not stand in when the directory differs from what
+    the removal commit deleted."""
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry())
+    _write(skill_dir(repo, PLUGIN, SKILL) / "SKILL.md", f"# {SKILL}\n\nv2 changed\n")
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 1, out
+    assert "does not count" in out and "no new `create` entry" in out
+
+
+def test_restore_of_changed_content_passes_with_a_create_entry(tmp_path):
+    repo = removed_on_main(tmp_path)
+    bring_back(repo, restore_entry(), entry("create", "routine run `20261112T000000Z-cccccc`, with_skill objective 3/3, without_skill 1/3."))
+    _write(skill_dir(repo, PLUGIN, SKILL) / "SKILL.md", f"# {SKILL}\n\nv2 changed\n")
+    commit(repo)
+    code, out = gate(repo)
+    assert code == 0, out
+
+
+def test_restore_kind_parses():
+    entries = csg.parse_entries(HEADER + "\n" + restore_entry())
+    assert [(e["kind"], e["skill"]) for e in entries] == [("restore", SKILL)]

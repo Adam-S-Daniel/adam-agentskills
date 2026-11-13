@@ -44,24 +44,26 @@ A pull request is GATED when any of these holds:
                           permission prompts. The frontmatter is parsed with
                           PyYAML (never a regex); one that does not parse, or
                           a missing PyYAML, is (g);
-  (j) skill-body-command  a changed SKILL.md (anywhere), command file
+  (j) skill-body-command  a changed SKILL.md (any case, anywhere), command file
                           (<plugin-root>/commands/**/*.md, .claude/commands/
-                          **/*.md) or file under a path a manifest `skills` or
-                          `commands` key names, whose text gains a line Claude
-                          Code runs when the skill loads: an exclamation mark
-                          then a backtick at line start or after whitespace,
-                          or a code fence opened with a backtick fence and an
-                          exclamation mark. The rule and its JS whitespace
-                          class are ported from _agent-guidance's agent-checks
-                          `skill-shell` check;
+                          **/*.md) or .md file under a path a manifest
+                          `skills` or `commands` key names, whose load-time
+                          shell commands differ between base and head (added,
+                          removed or edited). Claude Code runs a fenced block
+                          opened anywhere by three backticks and an
+                          exclamation mark, and an inline exclamation mark
+                          plus backtick command after whitespace or at a line
+                          start, spanning lines; its own two regexes are
+                          ported with the JS whitespace class, as in
+                          _agent-guidance's agent-checks `skill-shell`;
   (k) skill-body-bash     a body change in such a file whose `allowed-tools`
                           grants Bash (or PowerShell) at base or head;
   (l) the frontmatter keys of (i) are read at every such path, not only
-                          <root>/skills/<skill>/SKILL.md: <root>/skills/SKILL.md,
-                          commands/**/*.md, and named paths. A manifest's
-                          `skills` value and each `commands` entry's
-                          `allowedTools` / `allowed-tools` / inline `content`
-                          commands are compared as runtime keys too (c, d).
+                          <root>/skills/<skill>/SKILL.md. A manifest or
+                          marketplace entry's `skills` or `commands` value is
+                          a runtime key (c, d) in any shape, so a new entry
+                          with inline command `content`, or one retargeted at
+                          existing files, gates.
 
 Plugin roots are the union of every plugins/<name>/ the diff touches and every
 local `source` in marketplace.json, at base and at head.
@@ -98,10 +100,10 @@ MAX_FILE_BYTES = 1024 * 1024
 # The pull-request files API lists at most 3000 files. A diff that reaches the
 # cap may have been cut short, so reaching it is already "cannot decide".
 MAX_CHANGED_FILES = 3000
-RUNTIME_KEYS = ("hooks", "settings", "skills")
+RUNTIME_KEYS = ("hooks", "settings", "skills", "commands")
 SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
 # Files Claude Code loads as a skill or command, relative to a plugin root.
-SKILL_MD_RE = re.compile(r"^skills/(?:[^/]+/)?SKILL\.md$")
+SKILL_MD_RE = re.compile(r"^skills/(?:[^/]+/)?SKILL\.md$", re.IGNORECASE)
 COMMAND_MD_RE = re.compile(r"^commands/.+\.md$", re.IGNORECASE)
 # Project-level locations, at any depth of the repo.
 PROJECT_COMMAND_RE = re.compile(r"(?:^|/)\.claude/commands/.+\.md$", re.IGNORECASE)
@@ -361,39 +363,12 @@ def _manifests(root: str) -> Tuple[str, str]:
     return (_join(root, ".claude-plugin/plugin.json"), _join(root, "plugin.json"))
 
 
-def _commands_runtime(value) -> object:
-    """What a manifest's `commands` value can run, per entry: its allowedTools
-    and the command lines of inline `content`. _ABSENT when it names none (a
-    path or list of paths carries no such field; the files are read as files)."""
-    if value is _ABSENT or isinstance(value, (str, list)):
-        if isinstance(value, list) and not all(isinstance(v, str) for v in value):
-            raise GateError("a `commands` list holds a non-string")
-        return _ABSENT
-    if not isinstance(value, dict):
-        raise GateError("a `commands` value is not a path, a list or an object")
-    out = {}
-    for name, entry in value.items():
-        if isinstance(entry, str):
-            continue
-        if not isinstance(entry, dict):
-            raise GateError("a `commands` entry is not a path or an object")
-        content = entry.get("content", "")
-        if not isinstance(content, str):
-            raise GateError("a `commands` entry's content is not a string")
-        out[name] = (json.dumps(entry.get("allowedTools", None), sort_keys=True),
-                     json.dumps(entry.get("allowed-tools", None), sort_keys=True),
-                     tuple(sorted(_command_lines(content).elements())))
-    return out or _ABSENT
-
-
 def _runtime_values(data) -> Dict[str, object]:
     if data is _ABSENT:
-        return {key: _ABSENT for key in RUNTIME_KEYS + ("commands-runtime",)}
+        return {key: _ABSENT for key in RUNTIME_KEYS}
     if not isinstance(data, dict):
         raise GateError("a manifest or marketplace entry is not a JSON object")
-    values = {key: data.get(key, _ABSENT) for key in RUNTIME_KEYS}
-    values["commands-runtime"] = _commands_runtime(data.get("commands", _ABSENT))
-    return values
+    return {key: data.get(key, _ABSENT) for key in RUNTIME_KEYS}
 
 
 # Claude Code's own frontmatter split, ported from its source, anchored at the
@@ -404,17 +379,21 @@ _CLAUDE_CODE_FRONTMATTER = re.compile(
     rf"---[{_JS_WS}]*\n(.*?)---[{_JS_WS}]*\n?", re.DOTALL)
 
 
-# The line forms Claude Code runs when a skill or command loads, ported from
-# _agent-guidance's agent-checks `skill-shell`, with JS `\\s` for whitespace.
-_SHELL_INLINE = re.compile(rf"(?:^|[{_JS_WS}])!`")
-_SHELL_FENCE = re.compile(rf"^[{_JS_WS}]*```!")
-_JS_LINE_BREAK = re.compile("[\n\r\u2028\u2029]")
+# What Claude Code (v2.1.323) runs when a skill or command loads: a fenced
+# block, opened anywhere (not only at line start) by three backticks and an
+# exclamation mark, and an inline `!`...`` after whitespace or at a line start.
+# They are its own two regexes, `/```!\s*\n?([\s\S]*?)\n?```/g` and
+# `/(?<=^|\s)!`([^`]+)`/gm`, with JS `\s` spelled out. _agent-guidance's
+# agent-checks `skill-shell` check flags the same two forms.
+_SHELL_FENCE = re.compile(rf"```!(?:[{_JS_WS}]*)\n?(.*?)\n?```", re.DOTALL)
+_SHELL_INLINE = re.compile(
+    rf"(?:(?<![^\n\r\u2028\u2029])|(?<=[{_JS_WS}]))!`([^`]+)`")
 
 
 def _command_lines(text: str) -> Counter:
-    """The lines of text that Claude Code would run as shell at load."""
-    return Counter(line for line in _JS_LINE_BREAK.split(text)
-                   if _SHELL_INLINE.search(line) or _SHELL_FENCE.search(line))
+    """The command texts Claude Code would run as shell at load. Compared as a
+    whole between base and head, so an edit inside an existing command counts."""
+    return Counter(_SHELL_FENCE.findall(text) + _SHELL_INLINE.findall(text))
 
 
 class _Skill:
@@ -522,7 +501,7 @@ def _named_paths(snap: Snapshot, root: str, entry: Optional[dict], key: str) -> 
 
 def _is_skill_file(path: str, roots: Set[str], named: Set[str]) -> bool:
     """Whether Claude Code may load this path as a skill or command."""
-    if posixpath.basename(path) == "SKILL.md" or PROJECT_COMMAND_RE.search(path):
+    if posixpath.basename(path).lower() == "skill.md" or PROJECT_COMMAND_RE.search(path):
         return True
     if path.lower().endswith(".md") and any(_under(path, n) for n in named):
         return True
@@ -629,7 +608,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             after = _read_skill(head_snap.raw(path), path)
             if before.values != after.values:
                 reasons.add(("skill-frontmatter-runtime-key", path))
-            if any(after.commands[line] > before.commands[line] for line in after.commands):
+            if before.commands != after.commands:
                 reasons.add(("skill-body-command", path))
             if before.body != after.body and any(
                     _grants_bash(skill.values["allowed-tools"]) for skill in (before, after)):

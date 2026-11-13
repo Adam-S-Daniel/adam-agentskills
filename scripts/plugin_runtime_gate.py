@@ -113,7 +113,8 @@ LAYOUT_NAMES = {"hooks": "hook-file", "bin": "bin-file", "commands": "plugin-lay
 # under hooks/ or bin/. A README, LICENSE or CHANGELOG is inert only as plain
 # text (no extension, .md or .txt); `README.js` or `license_check.py` is code.
 INERT_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
-# Binary images the mention scan never reads. An .svg is text, so it is read.
+# A raster-named file that does not decode as text is skipped by the mention
+# scan; every other file that does not decode blocks the exemption.
 RASTER_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
 INERT_TEXT_EXTENSIONS = ("", ".md", ".txt")
 INERT_TEXT_PREFIXES = ("readme", "license", "changelog")
@@ -252,11 +253,15 @@ class Snapshot:
         self.side = side
         self.changes = changes  # path -> "present-base-only" / "present-head-only" / "both" / "any"
         self._cache: Dict[str, object] = {}
+        self.listed: Optional[Set[str]] = None  # every path in this side's tree
 
     def raw(self, path: str) -> Optional[bytes]:
         data = self.fetcher.read(path, self.sha)
         if data is not None and len(data) > MAX_FILE_BYTES:
             raise GateError(f"{json.dumps(path)} at {self.side} is larger than {MAX_FILE_BYTES} bytes")
+        if data is None and self.listed is not None and path in self.listed:
+            # The tree lists it, so a 404 is a failure, not an absence.
+            raise GateError(f"{json.dumps(path)} is listed at {self.side} but could not be read")
         expected = self.changes.get(path)
         if expected is not None:
             must_exist = expected == "both" or expected == f"present-{self.side}-only"
@@ -308,6 +313,23 @@ def _under(path: str, prefix: str) -> bool:
     # Case-insensitive: macOS and Windows resolve Hooks/ to hooks/.
     path, prefix = path.lower(), prefix.lower()
     return prefix == "" or path == prefix or path.startswith(prefix + "/")
+
+
+def _decode_text(data: bytes) -> Optional[str]:
+    """UTF-8, or UTF-32 / UTF-16 after a BOM; None when it is neither or the
+    text holds a NUL (which also catches UTF-16 written without a BOM)."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        codec = ("utf-32" if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"))
+                 else "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else None)
+        if codec is None:
+            return None
+        try:
+            text = data.decode(codec)
+        except UnicodeDecodeError:
+            return None
+    return None if "\x00" in text else text
 
 
 def _inert_name(path: str) -> bool:
@@ -654,6 +676,8 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
 
     base_snap = Snapshot(fetcher, base, "base", expect)
     head_snap = Snapshot(fetcher, head, "head", expect)
+    for snap in (base_snap, head_snap):
+        snap.listed = set(fetcher.list_files(snap.sha))
     reasons: Set[Tuple[str, str]] = set()
 
     # (f) first: it needs nothing fetched.
@@ -701,12 +725,8 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 any(k.values["hooks"] is not _ABSENT or k.commands for k in found))
         return skill_cache[skill_dir]
 
-    listing_cache: Dict[str, List[str]] = {}
-
     def files_at(snap):
-        if snap.sha not in listing_cache:
-            listing_cache[snap.sha] = list(fetcher.list_files(snap.sha))
-        return listing_cache[snap.sha]
+        return sorted(snap.listed)
 
     def fully_deleted(path, root):
         """Whether `path` is in a skill directory retired whole: the pull
@@ -737,43 +757,29 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
 
     texts_cache: Dict[str, list] = {}
 
-    def read_listed(snap, name):
-        data = snap.raw(name)
-        if data is None:
-            # The tree lists it, so a 404 is a failure, not an absence.
-            raise GateError(f"{json.dumps(name)} is listed at {snap.side} but could not be read")
-        return data
-
     def texts(root):
         """(path, normalized text or None) of every file under `root`, plus the
-        marketplace file, at base and at head, but for raster images. JSON is
+        marketplace file, at base and at head. JSON is
         read twice, raw and decoded (so \\/ and \\uXXXX spell the same path).
-        Text is UTF-8, or UTF-16 after a BOM; a file that is neither is None."""
+        Text is UTF-8, or UTF-32 or UTF-16 after a BOM, with no NUL; anything
+        else is None, and blocks unless it is a raster-named file."""
         if root not in texts_cache:
             out = []
             for snap in (base_snap, head_snap):
                 listed = set(files_at(snap))
                 names = [n for n in [MARKETPLACE] + sorted(listed)
-                         if (n == MARKETPLACE or _under(n, root))
-                         and not n.lower().endswith(RASTER_EXTENSIONS)]
+                         if n == MARKETPLACE or _under(n, root)]
                 with ThreadPoolExecutor(max_workers=8) as pool:
                     blobs = list(pool.map(snap.raw, names))
                 for name, data in zip(names, blobs):
                     if data is None:
-                        if name in listed:
-                            raise GateError(
-                                f"{json.dumps(name)} is listed at {snap.side} but could not be read")
-                        continue
-                    try:
-                        text = data.decode("utf-8")
-                    except UnicodeDecodeError:
-                        try:
-                            if not data.startswith((b"\xff\xfe", b"\xfe\xff")):
-                                raise UnicodeDecodeError("utf-16", b"", 0, 1, "no BOM")
-                            text = data.decode("utf-16")
-                        except UnicodeDecodeError:
+                        continue  # a listed file that 404s already failed in raw()
+                    text = _decode_text(data)
+                    if text is None:
+                        # Only a raster-named file that is not text is harmless.
+                        if not name.lower().endswith(RASTER_EXTENSIONS):
                             out.append((name.lower(), None))
-                            continue
+                        continue
                     forms = [text]
                     try:
                         forms.append(json.dumps(json.loads(text), ensure_ascii=False))
@@ -791,17 +797,18 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             for snap in (base_snap, head_snap):
                 for name in files_at(snap):
                     if _under(name, root) and name.lower().endswith(".md"):
-                        md = _read_skill(read_listed(snap, name), name)
+                        md = _read_skill(snap.raw(name), name)
                         found |= _grants_bash(md.values["allowed-tools"]) or _grants_bash(md.tools)
             shell_cache[root] = found
         return shell_cache[root]
 
-    def named_elsewhere(root, skill):
+    def named_elsewhere(root, skill, whole=False):
         """Whether any text file under the root, outside this skill's own
-        scripts/ and tests/, mentions the skill's directory."""
+        scripts/ and tests/ (its whole directory when it is being retired),
+        mentions the skill's directory."""
         own = f"{root + '/' if root else ''}skills/{skill}/".lower()
         patterns = mention_patterns(skill)
-        return any(not (name.startswith(own) and name[len(own):].split("/")[0] in ("scripts", "tests"))
+        return any(not (name.startswith(own) and (whole or name[len(own):].split("/")[0] in ("scripts", "tests")))
                    and (text is None or any(pat.search(text) for pat in patterns))
                    for name, text in texts(root))
 
@@ -816,6 +823,15 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         if any(_under(path, ref) for ref in referenced):
             reasons.add(("hook-referenced", path))
 
+    def retired(path, root):
+        """A skill retired whole gates on nothing of its own, unless a hook
+        names the path or any text file outside the skill still names its
+        directory (an .mcp.json launching its script, a hook reading its data)."""
+        if not fully_deleted(path, root) or any(_under(path, ref) for ref in referenced):
+            return False
+        rel = path[len(root) + 1:] if root else path
+        return not named_elsewhere(root, rel.split("/")[1], whole=True)
+
     # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
         for root in roots:
@@ -823,7 +839,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 continue
             rel = path[len(root) + 1:] if root else path
             low = rel.lower()
-            if fully_deleted(path, root) and not any(_under(path, ref) for ref in referenced):
+            if retired(path, root):
                 continue  # a skill retired whole does not gate on its own
             if low in LAYOUT_NAMES:
                 # A file or symlink at the directory's own name (plugins/x/hooks
@@ -894,8 +910,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
 
     for path in sorted(changed):                              # (6)
         if _is_skill_file(path, roots, named) and not any(
-                _under(path, r) and fully_deleted(path, r)
-                and not any(_under(path, ref) for ref in referenced) for r in roots):
+                _under(path, r) and retired(path, r) for r in roots):
             # A renamed file's old name is in `changed` too; reading a side
             # where the path is absent gives "no keys", so the pair compares.
             before = _read_skill(base_snap.raw(path), path)

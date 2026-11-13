@@ -1831,6 +1831,57 @@ def test_r4_a_404_on_a_listed_file_fails_closed():
     assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
 
 
+# Round 5 of the #164 review.
+
+
+def test_r5_utf32_text_with_a_bom_is_decoded_and_scanned():
+    assert edit_only_the_script({PR + "/lib/u.txt": "run skills/s/scripts/f".encode("utf-32")})[0]
+    assert_not_gated(edit_only_the_script({PR + "/lib/u.txt": "nothing".encode("utf-32")}))
+
+
+@pytest.mark.parametrize("data", ["run skills/s/scripts/f".encode("utf-16-le"),
+                                  b"run skills/s/scripts/f\x00 more", b"\x00\x00\xfe\xff\xd8\x00\x00"])
+def test_r5_text_holding_a_nul_is_undecodable_and_blocks(data):
+    assert edit_only_the_script({PR + "/lib/u.txt": data})[0]
+
+
+def test_r5_a_raster_named_file_that_is_text_is_scanned():
+    assert edit_only_the_script({PR + "/lib/a.png": b"run skills/s/scripts/f"})[0]
+    assert_not_gated(edit_only_the_script({PR + "/lib/a.png": b"plain text, no mention"}))
+
+
+def test_r5_a_404_on_a_hook_config_the_tree_lists_fails_closed():
+    class Ghost(FakeFetcher):
+        def list_files(self, sha):
+            return super().list_files(sha) + [PR + "/config/hooks.json"]
+
+    man = {"name": "p", "hooks": "./config/hooks.json"}
+    base = base_p(**{PR + "/.claude-plugin/plugin.json": man, PR + "/README.md": b"a\n"})
+    head = dict(base, **{PR + "/README.md": b"b\n"})
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
+    assert_not_gated(run(base, head))
+
+
+def retire(extra):
+    base = base_p(**{PR + "/skills/old/SKILL.md": skill_md(), PR + "/skills/old/scripts/srv.js": b"1\n"},
+                  **extra)
+    head = {k: v for k, v in base.items() if "/skills/old/" not in k}
+    return run(base, head)
+
+
+def test_r5_a_retired_skill_still_named_by_a_config_gates():
+    assert retire({PR + "/.mcp.json": {"mcpServers": {"x": {"args": ["skills/old/scripts/srv.js"]}}}})[0]
+
+
+def test_r5_a_retired_skill_whose_data_a_hook_script_reads_gates():
+    assert retire({PR + "/hooks/run.sh": b"cat ../skills/old/deny.txt\n"})[0]
+
+
+def test_r5_a_retired_skill_named_only_inside_itself_does_not_gate():
+    own = {PR + "/skills/old/references/r.md": b"see skills/old/scripts/srv.js\n"}
+    assert_not_gated(retire(own))
+
+
 # =================================================================================
 # main(): output and exit status
 # =================================================================================

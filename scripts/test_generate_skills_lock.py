@@ -4633,7 +4633,8 @@ _TESTS_IN_ANOTHER_REPO = {
 }
 
 # Files _agent-guidance's sync owns byte for byte and pushes straight to main,
-# past this repo's CI. Their comments cite tests in _agent-guidance, and this
+# past this repo's CI, plus a verbatim copy of a sync-owned file (the plugin's
+# fleet-memory.sh below). Their comments cite tests in _agent-guidance, and this
 # repo can neither check nor edit them (the next sync overwrites any edit), so
 # the citation scan skips them. Scanning them turned main's pytest red for
 # every pull request the moment a sync delivered a new citation (27994ee,

@@ -996,7 +996,7 @@ def test_the_detect_job_installs_pyyaml_from_the_base_requirements_before_the_ga
     installs = [i for i, st in enumerate(steps) if "pip install" in st.get("run", "")]
     assert installs and installs[0] < gate_at
     run_text = steps[installs[0]]["run"]
-    assert "requirements-dev.txt" in run_text and "pyyaml==" in run_text.lower()
-    # The pinned line is exact, and the file is the base checkout's (no head ref).
+    assert "-r requirements-dev.txt" in run_text
+    # The file is the base checkout's (no head ref) and pins PyYAML exactly.
     pins = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").lower()
     assert re.search(r"^pyyaml==\d+(\.\d+)*$", pins, re.M)

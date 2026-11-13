@@ -77,6 +77,9 @@ class FakeFetcher:
                 files.append({"filename": path, "status": "modified", "previous_filename": None})
         return files
 
+    def list_files(self, sha):
+        return sorted(self.trees[sha])
+
     def changed_files(self):
         if self.fail_on == "list":
             raise gate.GateError("listing the pull request's files failed (gh exit 1)")
@@ -152,11 +155,11 @@ def test_a_version_only_manifest_change_does_not_gate():
     assert_not_gated(run(base, head))
 
 
-def test_a_script_no_hook_calls_under_a_skill_without_a_shell_does_not_gate():
+def test_a_script_beside_one_a_hook_calls_gates_because_the_hook_names_its_skill():
     base = tree(**{"plugins/alpha/hooks/hooks.json":
                    hook_config('"${CLAUDE_PLUGIN_ROOT}"/skills/one/scripts/hook.sh')})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert_not_gated(run(base, head))
+    assert_gated(run(base, head), "plugin-path")
 
 
 def test_an_empty_pull_request_does_not_gate():
@@ -363,11 +366,11 @@ def test_a_bare_plugin_root_reference_covers_the_whole_plugin():
     assert_gated(run(base, head), "hook-referenced")
 
 
-def test_a_sibling_with_a_matching_prefix_does_not_gate():
+def test_a_sibling_with_a_matching_prefix_gates_because_the_hook_names_its_skill():
     base = tree(**{"plugins/alpha/hooks/hooks.json":
                    hook_config("${CLAUDE_PLUGIN_ROOT}/skills/one/scripts/tool")})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert_not_gated(run(base, head))
+    assert_gated(run(base, head), "plugin-path")
 
 
 def test_rests_after_the_plugin_root_are_read_as_paths():
@@ -393,14 +396,14 @@ def test_a_script_a_windows_command_names_gates_when_it_changes():
     assert ("hook-referenced", "plugins/alpha/skills/one/scripts/tool.sh") in result[1], result
 
 
-def test_a_windows_command_naming_another_script_does_not_gate():
+def test_a_windows_command_naming_another_script_gates_because_it_names_the_skill():
     config = {"hooks": {"SessionStart": [{"hooks": [{
         "type": "command", "command": "./x.sh",
         "commandWindows": '"C:\\Program Files\\Git\\bin\\bash.exe" '
                           '"%PLUGIN_ROOT%/skills/one/scripts/other.sh"'}]}]}}
     base = tree(**{"plugins/alpha/hooks/hooks.json": config})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert_not_gated(run(base, head))
+    assert_gated(run(base, head), "plugin-path")
 
 
 def test_every_spelling_of_the_plugin_root_is_read():
@@ -1547,6 +1550,89 @@ def test_a_script_a_hook_names_still_gates_under_a_skill_without_a_shell():
     base = base_p(**{PR + "/hooks/hooks.json": hook_config('"${CLAUDE_PLUGIN_ROOT}"/skills/s/scripts/a.py'),
                      PR + "/skills/s/scripts/a.py": b"1\n"})
     assert_gated(run(base, dict(base, **{PR + "/skills/s/scripts/a.py": b"2\n"})), "hook-referenced")
+
+
+# Round 2 of the #164 review: exemption (b) fails open when anything other than
+# the skill's own frontmatter can run the script. Each case edits only the script.
+
+SCRIPT = PR + "/skills/s/scripts/f"
+CALL = "${CLAUDE_PLUGIN_ROOT}/skills/s/scripts/f"
+
+
+def edit_only_the_script(extra_base, extra_head=None):
+    base = base_p(**{SCRIPT: b"1\n"}, **extra_base)
+    head = dict(base if extra_head is None else base_p(**{SCRIPT: b"1\n"}, **extra_head))
+    head[SCRIPT] = b"2\n"
+    return run(base, head)
+
+
+def test_f1_a_hook_config_a_manifest_names_inside_the_skill_gates():
+    cfg = PR + "/skills/s/scripts/hooks.json"
+    man = {"name": "p", "hooks": "./skills/s/scripts/hooks.json"}
+    base = base_p(**{PR + "/.claude-plugin/plugin.json": man, cfg: HOOKS_OK})
+    assert run(base, dict(base, **{cfg: HOOKS_BAD}))[0]
+
+
+@pytest.mark.parametrize("name, files", [
+    ("mcp", {PR + "/.mcp.json": {"mcpServers": {"x": {"command": "node", "args": [CALL]}}}}),
+    ("manifest-mcp", {PR + "/.claude-plugin/plugin.json":
+                      {"name": "p", "mcpServers": {"x": {"command": "node", "args": [CALL]}}}}),
+    ("lsp", {PR + "/.lsp.json": {"lspServers": {"x": {"command": CALL}}}}),
+    ("monitors", {PR + "/monitors/monitors.json": [{"command": CALL}]}),
+])
+def test_f2_a_config_that_names_the_script_gates(name, files):
+    assert edit_only_the_script(files)[0]
+
+
+def test_f2_a_marketplace_entry_that_names_the_script_gates():
+    entry = dict(ENTRY, mcpServers={"x": {"command": CALL}})
+    base = {MP: mk(entry), PR + "/skills/s/SKILL.md": skill_md(), SCRIPT: b"1\n"}
+    assert run(base, dict(base, **{SCRIPT: b"2\n"}))[0]
+
+
+@pytest.mark.parametrize("name, files", [
+    ("other-skill", {PR + "/skills/o/SKILL.md": skill_md("hooks:\n  Stop:\n    - command: " + CALL + "\n")}),
+    ("agent", {PR + "/agents/a.md": skill_md("hooks:\n  Stop:\n    - command: " + CALL + "\n")}),
+    ("command-file", {PR + "/commands/c.md": skill_md(body="!`" + CALL + "`\n")}),
+])
+def test_f3_a_frontmatter_hook_or_load_time_command_that_names_the_script_gates(name, files):
+    assert edit_only_the_script(files)[0]
+
+
+def test_f3_a_load_time_command_in_the_skills_own_skill_md_gates():
+    own = {PR + "/skills/s/SKILL.md": skill_md(body="!`echo hi`\n")}
+    assert edit_only_the_script(own)[0]
+
+
+def test_f4_an_unchanged_hook_script_that_execs_the_script_gates():
+    files = {PR + "/hooks/run.sh": b"#!/bin/sh\nexec ../skills/s/scripts/f\n"}
+    assert_gated(edit_only_the_script(files), "plugin-path")
+
+
+def test_a_mention_of_another_skill_does_not_stop_the_exemption():
+    files = {PR + "/.mcp.json": {"mcpServers": {"x": {"args": ["${CLAUDE_PLUGIN_ROOT}/skills/other/f"]}}}}
+    assert_not_gated(edit_only_the_script(files))
+
+
+def test_a_mention_in_markdown_prose_does_not_stop_the_exemption():
+    files = {PR + "/docs/notes.md": skill_md(body="see skills/s/scripts/f\n")}
+    assert_not_gated(edit_only_the_script(files))
+
+
+@pytest.mark.parametrize("out, ok", [
+    ('{"truncated": false, "paths": ["a/b"]}', True),
+    ('{"truncated": true, "paths": ["a/b"]}', False),
+    ("not json", False),
+])
+def test_the_tree_listing_fails_closed_when_truncated_or_unreadable(monkeypatch, out, ok):
+    done = subprocess.CompletedProcess([], 0, stdout=out.encode(), stderr=b"")
+    monkeypatch.setattr(gate.subprocess, "run", lambda *a, **k: done)
+    fetcher = gate.GhFetcher("owner/repo", 1)
+    if ok:
+        assert fetcher.list_files(BASE) == ["a/b"]
+    else:
+        with pytest.raises((gate.GateError, ValueError)):
+            fetcher.list_files(BASE)
 
 
 # =================================================================================

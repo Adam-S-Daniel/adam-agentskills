@@ -180,6 +180,20 @@ class GhFetcher:
             raise GateError(f"listing the pull request's files failed (gh exit {proc.returncode})")
         return _json_values(proc.stdout.decode("utf-8"))
 
+    def list_files(self, sha: str) -> List[str]:
+        """Every file path in the tree at sha."""
+        proc = subprocess.run(
+            ["gh", "api", f"repos/{self.repo}/git/trees/{sha}?recursive=1",
+             "--jq", "{truncated, paths: [.tree[] | select(.type == \"blob\") | .path]}"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+        if proc.returncode != 0:
+            raise GateError(f"listing the tree at {sha[:7]} failed (gh exit {proc.returncode})")
+        values = _json_values(proc.stdout.decode("utf-8"))
+        if len(values) != 1 or not isinstance(values[0], dict) or values[0].get("truncated") \
+                or not isinstance(values[0].get("paths"), list):
+            raise GateError(f"the tree at {sha[:7]} is truncated or unreadable")
+        return values[0]["paths"]
+
     def read(self, path: str, sha: str) -> Optional[bytes]:
         """The file's bytes at sha, or None when it does not exist there."""
         proc = subprocess.run(
@@ -452,7 +466,8 @@ def _command_lines(text: str) -> Counter:
 class _Skill:
     """What the gate reads from one SKILL.md or command file."""
 
-    def __init__(self, values, body, commands):
+    def __init__(self, values, body, commands, frontmatter=""):
+        self.frontmatter = frontmatter  # the frontmatter text, for static mentions
         self.values = values      # {hooks, allowed-tools: value or _ABSENT}
         self.body = body          # the text after the frontmatter
         self.commands = commands  # Counter of load-time shell lines
@@ -526,10 +541,10 @@ def _read_skill(data: Optional[bytes], path: str) -> _Skill:
         raise GateError(f"the frontmatter of {json.dumps(path)} does not parse") from None
     body = text[match.end():]
     if meta is None:
-        return _Skill(absent, body, commands)
+        return _Skill(absent, body, commands, strict)
     if not isinstance(meta, dict):
         raise GateError(f"the frontmatter of {json.dumps(path)} is not a mapping")
-    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands)
+    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands, strict)
 
 
 def _named_paths(snap: Snapshot, root: str, entry: Optional[dict], key: str) -> Set[str]:
@@ -656,8 +671,35 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                      if snap.raw(skill_dir + "/SKILL.md") is not None]
             skill_cache[skill_dir] = None if not found else (
                 any(_grants_bash(k.values["allowed-tools"]) for k in found),
-                any(k.values["hooks"] is not _ABSENT for k in found))
+                any(k.values["hooks"] is not _ABSENT or k.commands for k in found))
         return skill_cache[skill_dir]
+
+    corpus_cache: Dict[str, str] = {}
+
+    def corpus(root):
+        """Lowercased text of everything under `root`, at base and head, that
+        can start a script: every JSON file (manifest, hook configs, .mcp.json,
+        .lsp.json, monitors), every .md file's frontmatter and load-time
+        commands, every file under hooks/ and bin/, and the marketplace file."""
+        if root not in corpus_cache:
+            chunks = []
+            for snap in (base_snap, head_snap):
+                for name in [MARKETPLACE] + sorted(fetcher.list_files(snap.sha)):
+                    low = name.lower()
+                    if name != MARKETPLACE and not _under(name, root):
+                        continue
+                    rel = low[len(root) + 1:] if root else low
+                    data = None
+                    if name == MARKETPLACE or low.endswith(".json") \
+                            or rel.startswith(("hooks/", "bin/")):
+                        data = snap.raw(name)
+                        if data is not None:
+                            chunks.append(data.decode("utf-8", "replace"))
+                    elif low.endswith(".md"):
+                        md = _read_skill(snap.raw(name), name)
+                        chunks.append(md.frontmatter + "\n" + "\n".join(md.commands))
+            corpus_cache[root] = "\n".join(chunks).lower().replace("\\", "/")
+        return corpus_cache[root]
 
     # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
@@ -690,12 +732,15 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 skill = skill_of(path, root)
                 shell_skill = bool(skill and skill[0])
                 scripts = len(low.split("/")) > 3 and low.split("/")[2] in ("scripts", "tests")
-                if skill and scripts and not skill[0] and not skill[1]:
+                if skill and scripts and not skill[0] and not skill[1] and \
+                        "skills/" + low.split("/")[1] not in corpus(root):
                     # This accepts the same risk as the skill-body-bash rule
                     # in reverse: the model may run a script a skill ships under
                     # the session's own permissions, and a skill that grants no
-                    # shell and has no hooks is taken to leave that to the
-                    # user's own prompt. A path a hook names still gates, in (3).
+                    # shell, has no hooks or load-time commands and is named by
+                    # no config is taken to leave that to the user's own prompt.
+                    # Only static mentions are seen: a path built at run time
+                    # or named from outside the plugin root is not.
                     continue
                 if low.endswith(".md"):
                     # Frontmatter and commands are read on every .md, whatever

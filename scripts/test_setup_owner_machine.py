@@ -213,14 +213,16 @@ def launcher_path(tmp_path: Path, xdg: Path = None) -> Path:
     return base / "fleet-guidance" / "codex-session-start.sh"
 
 
-def run_launcher(tmp_path: Path, launcher: Path, registry=None) -> subprocess.CompletedProcess:
+def run_launcher(tmp_path: Path, launcher: Path, registry=None, env_extra=None) -> subprocess.CompletedProcess:
     home = tmp_path / "launcher-home"
     (home / ".claude" / "plugins").mkdir(parents=True, exist_ok=True)
     if registry is not None:
         (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
             json.dumps(registry), encoding="utf-8")
     env = dict(os.environ, HOME=str(home))
-    env.pop("FLEET_GUIDANCE_OWNER", None)
+    for name in ("FLEET_GUIDANCE_OWNER", "CODEX_HOME", "CLAUDE_CONFIG_DIR", "FLEET_GUIDANCE_PAYLOAD"):
+        env.pop(name, None)
+    env.update(env_extra or {})
     return subprocess.run([shutil.which("bash") or "bash", str(launcher)],
                           env=env, capture_output=True, text=True, cwd=str(tmp_path),
                           stdin=subprocess.DEVNULL)
@@ -308,6 +310,48 @@ def test_the_launcher_runs_the_newest_installed_plugin_hook_with_the_owner_signa
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout == "ran 1.2.2 owner=1\n"
     assert proc.stderr == ""
+
+
+def test_the_launcher_ignores_a_relative_install_path(tmp_path):
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    # A relative installPath would resolve against Codex's cwd; plant a hook there.
+    cwd = tmp_path / "cwd"
+    hook = cwd / "rel" / "hooks" / "fleet-guidance" / "on-session-start.sh"
+    hook.parent.mkdir(parents=True)
+    hook.write_text('echo "ran from a relative path"\n', encoding="utf-8")
+    registry = {"plugins": {"adam-anything-anywhere@adam-agentskills": [
+        {"scope": "user", "version": "9.9.9", "installPath": "rel"}]}}
+    launcher = launcher_path(tmp_path)
+    home = tmp_path / "launcher-home"
+    (home / ".claude" / "plugins").mkdir(parents=True)
+    (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+        json.dumps(registry), encoding="utf-8")
+    env = dict(os.environ, HOME=str(home))
+    env.pop("CLAUDE_CONFIG_DIR", None)
+    proc = subprocess.run([shutil.which("bash") or "bash", str(launcher)], env=env,
+                          capture_output=True, text=True, cwd=str(cwd),
+                          stdin=subprocess.DEVNULL)
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert "not installed" in proc.stderr
+
+
+def test_the_launcher_runs_the_real_plugin_hook_and_writes_codex_agents_md(tmp_path):
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    home = tmp_path / "launcher-home"
+    (home / ".codex").mkdir(parents=True)
+    registry = {"plugins": {"adam-anything-anywhere@adam-agentskills": [
+        {"scope": "user", "version": "1.2.2",
+         "installPath": str(REPO / "plugins" / "adam-anything-anywhere")}]}}
+    proc = run_launcher(tmp_path, launcher_path(tmp_path), registry, env_extra={
+        "FLEET_GUIDANCE_FETCH": "0", "FLEET_GUIDANCE_RECEIPT": "0", "FLEET_GIT_HOOKS": "off",
+        "XDG_STATE_HOME": str(tmp_path / "state"), "XDG_CONFIG_HOME": str(tmp_path / "xdgc")})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    agents = home / ".codex" / "AGENTS.md"
+    assert agents.is_file(), proc.stdout + proc.stderr
+    text = agents.read_text(encoding="utf-8")
+    assert "fleet-guidance-delivered" in text
+    assert "fleet-guidance:" in proc.stdout
 
 
 def test_a_plain_run_does_not_touch_a_stale_hook_section(tmp_path):

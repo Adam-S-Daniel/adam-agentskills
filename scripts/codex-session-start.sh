@@ -41,10 +41,10 @@ find_python() {
 # first, then newest first (lastUpdated, an ISO time, else the version string).
 # JSON is parsed with json, never matched as text.
 install_paths() {
-  local py="$1" registry="$HOME/.claude/plugins/installed_plugins.json"
+  local py="$1" registry="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/plugins/installed_plugins.json"
   [[ -f "$registry" ]] || return 0
-  "$py" - "$registry" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null
-import json, sys
+  PYTHONIOENCODING=utf-8 "$py" - "$registry" "$PLUGIN_KEY" <<'PYEOF' 2>/dev/null
+import json, re, sys
 try:
     with open(sys.argv[1], encoding="utf-8-sig") as handle:
         data = json.load(handle)
@@ -53,8 +53,11 @@ except Exception:
     sys.exit(0)
 if not isinstance(entries, list):
     sys.exit(0)
+# Only an absolute path: a relative one would resolve against Codex's cwd, which
+# can be any repo a stranger gave the user.
 entries = [e for e in entries if isinstance(e, dict) and isinstance(e.get("installPath"), str)
-           and "\n" not in e["installPath"]]
+           and "\n" not in e["installPath"]
+           and re.match(r"^(/|[A-Za-z]:[\\/])", e["installPath"])]
 def newest(e):
     return (str(e.get("lastUpdated") or ""), str(e.get("version") or ""))
 entries.sort(key=newest, reverse=True)
@@ -78,8 +81,8 @@ while IFS= read -r root; do
   script="$root/$HOOK_REL"
   if [[ -f "$script" ]]; then
     # stdin closed: Codex pipes the hook's input here and the plugin hook never reads it.
-    FLEET_GUIDANCE_OWNER=1 "$BASH" "$script" </dev/null
-    exit 0
+    # exec, so a timeout signal from Codex reaches the hook's own trap.
+    FLEET_GUIDANCE_OWNER=1 exec "$BASH" "$script" </dev/null
   fi
 done < <(install_paths "$py")
 

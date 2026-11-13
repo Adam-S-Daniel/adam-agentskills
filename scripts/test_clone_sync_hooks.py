@@ -876,7 +876,7 @@ def run_register(tmp_path, git_bash):
                            "-DryRun", "-WhatIf"], env=env, capture_output=True, text=True)
 
 
-@pytest.mark.skipif(PWSH is None, reason="no pwsh on this machine")
+@pytest.mark.needs_pwsh(PWSH)
 def test_the_register_dry_run_prints_the_task_and_changes_nothing(tmp_path):
     git_bash = tmp_path / "bash.exe"
     git_bash.write_text("", encoding="utf-8")
@@ -896,7 +896,7 @@ def test_the_register_dry_run_prints_the_task_and_changes_nothing(tmp_path):
     assert not (tmp_path / "localappdata").exists()
 
 
-@pytest.mark.skipif(PWSH is None, reason="no pwsh on this machine")
+@pytest.mark.needs_pwsh(PWSH)
 def test_the_register_script_refuses_a_missing_git_bash(tmp_path):
     proc = run_register(tmp_path, tmp_path / "no-such-bash.exe")
     assert proc.returncode != 0

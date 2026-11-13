@@ -741,7 +741,7 @@ def sign(tmp_path, key, out, *extra):
                           capture_output=True, text=True, env=dict(os.environ, HOME=str(tmp_path)))
 
 
-@pytest.mark.skipif(PWSH is None, reason="no pwsh on this machine")
+@pytest.mark.needs_pwsh(PWSH)
 def test_the_signer_writes_a_verifiable_rs256_jwt(tmp_path):
     key = SoftwareKey(tmp_path)
     out = tmp_path / "run" / "assertion.jwt"
@@ -771,7 +771,7 @@ def test_the_signer_writes_a_verifiable_rs256_jwt(tmp_path):
     assert claims2["exp"] - claims2["iat"] == 3610
 
 
-@pytest.mark.skipif(PWSH is None, reason="no pwsh on this machine")
+@pytest.mark.needs_pwsh(PWSH)
 def test_the_signer_refuses_a_lifetime_over_an_hour(tmp_path):
     key = SoftwareKey(tmp_path)
     out = tmp_path / "assertion.jwt"

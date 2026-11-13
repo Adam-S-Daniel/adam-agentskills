@@ -52,7 +52,9 @@
 # `disableSkillShellExecution: true`, and applies the per-OS
 # policy for `adam-non-coding-local` (off in WSL/Linux, left on in Windows;
 # ADR 0015); and, in Windows Git Bash, registering the `adam-clone-sync`
-# scheduled task (ADR 0017). They run only with `--owner-machine` or
+# scheduled task (ADR 0017); and installing the local Codex fleet-guidance launcher under
+# ${XDG_DATA_HOME:-~/.local/share}/fleet-guidance (_agent-guidance ADR 0043).
+# They run only with `--owner-machine` or
 # AGENTSKILLS_OWNER_MACHINE=1.
 #
 # Safe to re-run (idempotent). Run on Windows (Git Bash) AND in WSL
@@ -73,7 +75,8 @@ for arg in "$@"; do
       echo "                   ~/.agent/skills, ~/.cursor/skills, ~/.gemini and ~/.claude/skills"
       echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook, set up"
       echo "                   WSL git for the Windows clones (WSL), write the fleet-guidance owner"
-      echo "                   marker (fleet-guidance/owner under the config dir), converge"
+      echo "                   marker (fleet-guidance/owner under the config dir), install the local Codex"
+      echo "                   fleet-guidance launcher (fleet-guidance/ under the data dir), converge"
       echo "                   ~/.claude/settings.json, and register the adam-clone-sync"
       echo "                   scheduled task (Windows Git Bash), for the registry owner's own"
       echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
@@ -370,6 +373,32 @@ if [[ ! -f "$owner_marker" ]]; then
   fi
 fi
 
+echo ""
+echo "=== Fleet-guidance launcher for local Codex ==="
+# _agent-guidance's register-codex-hook.sh points Codex's hooks.json at this
+# fixed per-user path (ADR 0043). The launcher runs the installed
+# adam-anything-anywhere plugin's fleet-guidance hook, which writes
+# ~/.codex/AGENTS.md. XDG_DATA_HOME counts only when absolute. It is rewritten
+# only when it differs from this checkout's copy, so a re-run says nothing.
+if [[ "${XDG_DATA_HOME:-}" == /* ]]; then
+  codex_launcher_dir="$XDG_DATA_HOME/fleet-guidance"
+else
+  codex_launcher_dir="$HOME/.local/share/fleet-guidance"
+fi
+codex_launcher="$codex_launcher_dir/codex-session-start.sh"
+codex_launcher_src="$REPO_ROOT/scripts/codex-session-start.sh"
+if [[ -f "$codex_launcher" ]] && cmp -s "$codex_launcher_src" "$codex_launcher"; then
+  chmod +x "$codex_launcher" 2>/dev/null || true
+elif mkdir -p "$codex_launcher_dir" \
+    && cp "$codex_launcher_src" "$codex_launcher.tmp.$$" \
+    && chmod +x "$codex_launcher.tmp.$$" \
+    && mv -f "$codex_launcher.tmp.$$" "$codex_launcher"; then
+  echo "INSTALLED $codex_launcher"
+else
+  rm -f "$codex_launcher.tmp.$$" 2>/dev/null
+  echo "WARNING: could not install $codex_launcher" >&2
+fi
+
 if [[ "$HOST_KIND" == wsl ]]; then
 echo ""
 echo "=== WSL git for the Windows clones under /mnt/ ==="
@@ -406,7 +435,7 @@ fi
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
   echo "Skipped the owner-machine steps (retired global hook cleanup, WSL git for Windows clones,"
-  echo "the fleet-guidance owner marker,"
+  echo "the fleet-guidance owner marker, the local Codex fleet-guidance launcher,"
   echo "the ~/.claude/settings.json convergence, the adam-clone-sync scheduled task)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else

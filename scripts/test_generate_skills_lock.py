@@ -13709,7 +13709,7 @@ def test_setup_script_survives_a_failed_install(tmp_path):
     assert settings_json["hooks"]["SessionStart"]
 
 
-@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
+@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh"])
 def test_setup_script_sessionstart_matcher_includes_fork(script_name):
     document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
         encoding="utf-8"
@@ -13742,6 +13742,16 @@ def _documented_commands():
         for group in groups:
             for hook in group["hooks"]:
                 yield hook["command"]
+
+
+def test_setup_script_wires_only_bootstrap_and_the_commit_guard():
+    # _agent-guidance ADR 0043: the owner's guidance comes from the plugin (and
+    # later the environment setup script), so the snippet no longer runs a
+    # consumer repo's fleet-memory or guidance-load-record hooks.
+    commands = list(_documented_commands())
+    names = sorted(re.search(r"/hooks/([\w-]+\.sh)", c).group(1) for c in commands)
+    assert names == ["agent-checks-guard.sh", "skills-bootstrap.sh"]
+    assert "Stop" not in _documented_settings()["hooks"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")

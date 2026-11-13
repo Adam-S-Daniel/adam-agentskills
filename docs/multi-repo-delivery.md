@@ -197,16 +197,6 @@ cat > "$user_claude/settings.json" <<'JSON'
         "hooks": [
           {
             "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/fleet-memory.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|fork",
-        "hooks": [
-          {
-            "type": "command",
             "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 90
           }
@@ -221,18 +211,6 @@ cat > "$user_claude/settings.json" <<'JSON'
             "type": "command",
             "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
             "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/guidance-load-record.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 20
           }
         ]
       }
@@ -291,42 +269,28 @@ pending in [issue #8](https://github.com/Adam-S-Daniel/adam-agentskills/issues/8
 one is expanded at hook time, by Claude Code, which does set it. Only the outer
 `project=` cannot rely on it.
 
-### Why there are now TWO groups
+### Where the fleet guidance comes from now
 
-The second one is `fleet-memory`, and in the multi-repo shape it is not
-optional — it is the only thing that delivers the fleet's guidance at all.
-
-Each repo's `AGENTS.md` used to inline the whole ~52 kB managed block, so a
-session with 19 repos attached loaded 19 identical copies: 332.3k tokens across
-37 memory files, measured 2026-08-29. The block now lives in user memory
-(`~/.claude/CLAUDE.md`), written at session start by
-`.claude/hooks/fleet-memory.sh`, and each repo keeps a ~2.9 kB stub instead.
-
-That makes this file load-bearing in a way it was not before. **A single-repo
-session fires the repo's own committed `settings.json` and is fine either way.
-A MULTI-repo session, or a project thread, fires only this file** — the same ADR 0005 finding the
-section above rests on — so without the `fleet-memory` group here, every
-multi-repo session runs on the stub alone and opens with
-`fleet-guidance: DEGRADED`. The stub carries the load-bearing rules inline, so
-such a session is diminished rather than blind; it is still not what you want.
-
-The `adam-anything-anywhere` plugin also delivers the guidance
+The wiring no longer delivers the fleet guidance: `_agent-guidance` is moving
+the owner-only guidance out of the consumer repos
+([ADR 0043](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)),
+so there is no per-repo `fleet-memory` hook for it to run, and the `Stop`
+record of which guidance loaded moves to the owner's plugin. The owner
+gets the guidance from the account-synced `adam-anything-anywhere` plugin
 ([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
-its own SessionStart hook fetches `main`'s HEAD commit with a commit-only git
-fetch and `base.md` from `raw.githubusercontent.com`, and installs it, so a
-session that has the plugin enabled is not left on the stub alone when this
-wiring finds no repo. The wiring still matters for a repo's own pinned bundles
-and for a session without the plugin.
+its SessionStart hook fetches `main`'s HEAD commit and `base.md` and installs
+it. After ADR 0043's step 3, the environment's setup script also installs it,
+from a reviewed `fleet-memory.sh` fetched by commit and SHA-256. Anyone else's
+session reads the repo stub alone, which is the intended state.
 
-They are two GROUPS, not two commands in one, for the reason the registrar in
-`_agent-guidance` gives: a group carries one `matcher` and one `timeout`, and
-these two need different ones. `fleet-memory` copies a local file and wants 30
-seconds; `skills-bootstrap` fetches two registries and needs its 90. Putting
-them in one group would silently impose one budget on both. `exec` is also why
-they cannot share: it replaces the shell, so the first hook found would be the
-only one that ever ran.
+What stays here is two groups, `skills-bootstrap` and the `agent-checks` guard,
+and they are separate GROUPS, not one, because a group carries one `matcher`
+and one `timeout` and they need different ones. `skills-bootstrap` fetches two
+registries and needs its 90 seconds; the guard is a local check and wants 10.
+`exec` is also why they cannot share a command: it replaces the shell, so the
+first hook found would be the only one that ever ran.
 
-Four things about it are deliberate:
+Things about it that are deliberate:
 
 - **It resolves the hook at session start, not at setup time, and only in the
   project dir's children.** In a single-repo session the project dir is the
@@ -406,20 +370,6 @@ the snapshot keeps it for later sessions.
   A repo's own registration of the guard does not fire in a multi-repo session
   for the same reason its `SessionStart` hooks do not, so the wiring runs the
   first attached copy. With none attached it does nothing.
-- **The `Stop` group records which guidance the session loaded**
-  (`.claude/hooks/guidance-load-record.sh`, delivered by the same sync). Once
-  per session it reads its own transcript and writes one line: the full
-  guidance, only the repo stub, neither, or unknown. It also uploads that line
-  to the private repository's `persistent/usage-events` branch, because a
-  cloud container's files do not outlive it. The upload uses the session's own
-  GitHub access, so it works only when the private repository is attached;
-  otherwise it goes to the private S3 drop bucket when the environment sets
-  `USAGE_SINK_BUCKET`, `USAGE_SINK_REGION` and `USAGE_SINK_SIGNING=proxy`
-  and holds the writer key as an AWS SigV4 **network secret**
-  (`_agent-guidance` ADR 0037). Never put a key, token or App private key in
-  a cloud environment's variables or in this setup script: every session in
-  the environment can read them. With no copy of the hook attached it does
-  nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

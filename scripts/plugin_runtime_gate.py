@@ -34,7 +34,10 @@ The gate denies by default. A pull request is GATED when any of these holds:
                           ${CLAUDE_PLUGIN_ROOT}, $CLAUDE_PLUGIN_ROOT,
                           ${PLUGIN_ROOT}, $PLUGIN_ROOT, or cmd.exe's
                           %PLUGIN_ROOT% / %CLAUDE_PLUGIN_ROOT%.
-  (4) gate-itself         the gate's own workflow, this script or its tests.
+  (4) gate-itself         the gate's own workflow, this script or its tests,
+                          and scripts/codex-session-start.sh (setup.sh copies
+                          it to where local Codex runs it at every session
+                          start, so it is runtime code too).
   (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
                           3000-file cap, or anything unexpected.
@@ -137,10 +140,12 @@ ROOT_FILES = frozenset({
 # Under pull_request_target the BASE branch's workflow and script run, so a
 # change to either takes effect only after it merges — which is why changing
 # them is itself gated. The action lockfile is listed too: it chooses the
-# commit each tag-pinned action (the gate's checkout among them) runs at.
+# commit each tag-pinned action (the gate's checkout among them) runs at. The
+# local-Codex launcher is listed because it runs at every Codex session start.
 GATE_FILES = frozenset({
     ".github/workflows/actions.lock",
     ".github/workflows/plugin-runtime-review.yml",
+    "scripts/codex-session-start.sh",
     "scripts/plugin_runtime_gate.py",
     "scripts/test_plugin_runtime_gate.py",
 })

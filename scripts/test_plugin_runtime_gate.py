@@ -1614,9 +1614,9 @@ def test_a_mention_of_another_skill_does_not_stop_the_exemption():
     assert_not_gated(edit_only_the_script(files))
 
 
-def test_a_mention_in_markdown_prose_does_not_stop_the_exemption():
+def test_a_mention_in_markdown_prose_stops_the_exemption():
     files = {PR + "/docs/notes.md": skill_md(body="see skills/s/scripts/f\n")}
-    assert_not_gated(edit_only_the_script(files))
+    assert edit_only_the_script(files)[0]
 
 
 @pytest.mark.parametrize("out, ok", [
@@ -1633,6 +1633,134 @@ def test_the_tree_listing_fails_closed_when_truncated_or_unreadable(monkeypatch,
     else:
         with pytest.raises((gate.GateError, ValueError)):
             fetcher.list_files(BASE)
+
+
+# Round 3 of the #164 review.
+
+
+def test_r3_a_sibling_skill_that_grants_a_shell_stops_the_exemption():
+    files = {PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n", "run skills/s/scripts/f\n")}
+    assert edit_only_the_script(files)[0]
+    files = {PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n", "unrelated\n")}
+    assert edit_only_the_script(files)[0]
+
+
+def test_r3_a_shell_grant_removed_at_head_still_counts_from_base():
+    base = base_p(**{SCRIPT: b"1\n", PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n")})
+    head = dict(base, **{SCRIPT: b"2\n", PR + "/skills/t/SKILL.md": skill_md()})
+    assert run(base, head)[0]
+
+
+@pytest.mark.parametrize("path", [PR + "/workflows/w.js", PR + "/monitors/m.sh", PR + "/lib/x.mjs",
+                                  PR + "/config.yaml", PR + "/skills/o/references/r.txt"])
+def test_r3_every_text_file_under_the_root_is_scanned(path):
+    assert edit_only_the_script({path: b"node ${CLAUDE_PLUGIN_ROOT}/skills/s/scripts/f\n"})[0]
+
+
+@pytest.mark.parametrize("text", [
+    '{"command": "${CLAUDE_PLUGIN_ROOT}\\/skills\\/s\\/scripts\\/f"}',
+    '{"command": "${CLAUDE_PLUGIN_ROOT}/\\u0073kills/s/scripts/f"}',
+    "%PLUGIN_ROOT%\\skills\\S\\scripts\\f",
+    "$ROOT/skills//s///scripts/f",
+    "$ROOT/skills/./s/scripts/f",
+    "${CLAUDE_SKILL_DIR}/../s/scripts/f",
+    "cd skills/s && ./scripts/f",
+])
+def test_r3_a_mention_is_found_through_escapes_case_and_separators(text):
+    assert edit_only_the_script({PR + "/lib/x.js": text.encode()})[0]
+
+
+@pytest.mark.parametrize("text", ["skills/s2/scripts/f", "skills/ss/", "$ROOT/class/x", "skills/other/s2"])
+def test_r3_a_longer_component_is_not_a_mention(text):
+    assert_not_gated(edit_only_the_script({PR + "/lib/x.js": text.encode()}))
+
+
+def test_r3_a_file_that_is_not_utf8_is_skipped():
+    assert_not_gated(edit_only_the_script({PR + "/lib/blob.bin": b"\xff\xfe skills/s/scripts"}))
+
+
+def test_r3_the_candidates_own_scripts_and_tests_are_not_scanned():
+    files = {PR + "/skills/s/tests/t.py": b"run skills/s/scripts/f\n",
+             PR + "/skills/s/scripts/g": b"skills/s/scripts/f\n"}
+    assert_not_gated(edit_only_the_script(files))
+
+
+def test_r3_a_skill_retired_whole_does_not_gate_whatever_its_grant():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n"),
+                     PR + "/skills/t/scripts/x.sh": b"1\n", PR + "/skills/t/references/r.md": b"r\n"})
+    head = {k: v for k, v in base.items() if "/skills/t/" not in k}
+    assert_not_gated(run(base, head))
+
+
+def test_r3_a_partial_removal_from_a_shell_skill_gates():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n"),
+                     PR + "/skills/t/scripts/x.sh": b"1\n"})
+    head = {k: v for k, v in base.items() if not k.endswith("x.sh")}
+    assert run(base, head)[0]
+
+
+def test_r3_other_changes_in_a_retiring_pull_request_are_still_judged():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n")})
+    head = {k: v for k, v in base.items() if "/skills/t/" not in k}
+    head[PR + "/lib/x.js"] = b"x\n"
+    assert_gated(run(base, head), "plugin-path")
+
+
+def test_r3_a_file_added_into_a_retiring_skill_means_it_is_not_retired():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md("allowed-tools: Bash\n")})
+    head = {k: v for k, v in base.items() if "/skills/t/" not in k}
+    head[PR + "/skills/t/lib.py"] = b"x\n"
+    assert run(base, head)[0]
+
+
+def test_r3_an_eval_improve_skill_md_prose_edit_does_not_gate():
+    base = base_p()
+    assert_not_gated(run(base, dict(base, **{PR + "/skills/s/SKILL.md": skill_md(body="better words\n")})))
+
+
+class _Runs:
+    """A scripted subprocess.run: each call pops the next outcome."""
+
+    def __init__(self, *outcomes):
+        self.outcomes, self.calls, self.timeouts = list(outcomes), 0, []
+
+    def __call__(self, args, **kwargs):
+        self.calls += 1
+        self.timeouts.append(kwargs.get("timeout"))
+        outcome = self.outcomes.pop(0)
+        if outcome == "timeout":
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout"))
+        code, out, err = outcome
+        return subprocess.CompletedProcess(args, code, stdout=out, stderr=err)
+
+
+@pytest.fixture
+def no_backoff(monkeypatch):
+    waits = []
+    monkeypatch.setattr(gate, "_sleep", waits.append)
+    return waits
+
+
+def test_r3_a_transient_failure_is_retried_and_then_succeeds(monkeypatch, no_backoff):
+    runs = _Runs((1, b"", b"HTTP 502"), "timeout", (0, b'{"a": 1}', b""))
+    monkeypatch.setattr(gate.subprocess, "run", runs)
+    assert gate.GhFetcher("o/r", 1).changed_files() == [{"a": 1}]
+    assert runs.calls == 3 and len(no_backoff) == 2 and set(runs.timeouts) == {60}
+
+
+def test_r3_three_failures_fail_closed(monkeypatch, no_backoff):
+    runs = _Runs((1, b"", b"x"), (1, b"", b"x"), (1, b"", b"x"))
+    monkeypatch.setattr(gate.subprocess, "run", runs)
+    with pytest.raises(gate.GateError):
+        gate.GhFetcher("o/r", 1).changed_files()
+    assert runs.calls == 3
+
+
+def test_r3_a_404_on_a_read_is_an_answer_and_is_not_retried(monkeypatch, no_backoff):
+    runs = _Runs((1, b"", b"gh: Not Found (HTTP 404)"))
+    monkeypatch.setattr(gate.subprocess, "run", runs)
+    assert gate.GhFetcher("o/r", 1).read("a/b", BASE) is None
+    assert runs.calls == 1
 
 
 # =================================================================================

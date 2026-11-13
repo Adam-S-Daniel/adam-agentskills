@@ -90,7 +90,9 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import quote
 
@@ -163,31 +165,51 @@ class GateError(Exception):
     """A condition this script cannot decide. The message names paths only."""
 
 
+GH_ATTEMPTS = 3
+GH_TIMEOUT_SECONDS = 60
+_sleep = time.sleep  # tests replace it, so none of them waits
+
+
 class GhFetcher:
-    """The network side, behind two methods so tests can inject a fake."""
+    """The network side, behind a few methods so tests can inject a fake."""
 
     def __init__(self, repo: str, pr: int):
         self.repo = repo
         self.pr = pr
 
+    def _gh(self, args: List[str], what: str, ok_404: bool = False):
+        """One `gh` call, retried on a transient failure (a non-zero exit or a
+        timeout) with a short backoff, then failing closed. A 404 is an
+        answer, not a failure, when the caller asked for it."""
+        for attempt in range(GH_ATTEMPTS):
+            try:
+                proc = subprocess.run(
+                    ["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    check=False, timeout=GH_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc = None
+            if proc is not None and proc.returncode == 0:
+                return proc
+            if proc is not None and ok_404 and b"HTTP 404" in proc.stderr:
+                return None
+            if attempt + 1 < GH_ATTEMPTS:
+                _sleep(attempt + 1)
+        code = "timeout" if proc is None else f"gh exit {proc.returncode}"
+        raise GateError(f"{what} failed ({code})")
+
     def changed_files(self) -> List[dict]:
-        proc = subprocess.run(
-            ["gh", "api", "--paginate",
-             f"repos/{self.repo}/pulls/{self.pr}/files?per_page=100",
+        proc = self._gh(
+            ["api", "--paginate", f"repos/{self.repo}/pulls/{self.pr}/files?per_page=100",
              "--jq", ".[] | {filename, status, previous_filename}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            raise GateError(f"listing the pull request's files failed (gh exit {proc.returncode})")
+            "listing the pull request's files")
         return _json_values(proc.stdout.decode("utf-8"))
 
     def list_files(self, sha: str) -> List[str]:
         """Every file path in the tree at sha."""
-        proc = subprocess.run(
-            ["gh", "api", f"repos/{self.repo}/git/trees/{sha}?recursive=1",
+        proc = self._gh(
+            ["api", f"repos/{self.repo}/git/trees/{sha}?recursive=1",
              "--jq", "{truncated, paths: [.tree[] | select(.type == \"blob\") | .path]}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            raise GateError(f"listing the tree at {sha[:7]} failed (gh exit {proc.returncode})")
+            f"listing the tree at {sha[:7]}")
         values = _json_values(proc.stdout.decode("utf-8"))
         if len(values) != 1 or not isinstance(values[0], dict) or values[0].get("truncated") \
                 or not isinstance(values[0].get("paths"), list):
@@ -196,15 +218,11 @@ class GhFetcher:
 
     def read(self, path: str, sha: str) -> Optional[bytes]:
         """The file's bytes at sha, or None when it does not exist there."""
-        proc = subprocess.run(
-            ["gh", "api", "-H", "Accept: application/vnd.github.raw",
+        proc = self._gh(
+            ["api", "-H", "Accept: application/vnd.github.raw",
              f"repos/{self.repo}/contents/{quote(path, safe='/')}?ref={sha}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            if b"HTTP 404" in proc.stderr:
-                return None
-            raise GateError(f"reading {json.dumps(path)} failed (gh exit {proc.returncode})")
-        return proc.stdout
+            f"reading {json.dumps(path)}", ok_404=True)
+        return None if proc is None else proc.stdout
 
 
 def _json_values(text: str) -> List[object]:
@@ -674,32 +692,85 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 any(k.values["hooks"] is not _ABSENT or k.commands for k in found))
         return skill_cache[skill_dir]
 
-    corpus_cache: Dict[str, str] = {}
+    listing_cache: Dict[str, List[str]] = {}
 
-    def corpus(root):
-        """Lowercased text of everything under `root`, at base and head, that
-        can start a script: every JSON file (manifest, hook configs, .mcp.json,
-        .lsp.json, monitors), every .md file's frontmatter and load-time
-        commands, every file under hooks/ and bin/, and the marketplace file."""
-        if root not in corpus_cache:
-            chunks = []
+    def files_at(snap):
+        if snap.sha not in listing_cache:
+            listing_cache[snap.sha] = list(fetcher.list_files(snap.sha))
+        return listing_cache[snap.sha]
+
+    def fully_deleted(path, root):
+        """Whether `path` is in a skill directory that has no file left at head
+        (a skill retired whole, nothing added or renamed into it)."""
+        parts = path[len(root) + 1:].split("/") if root else path.split("/")
+        if len(parts) < 3 or parts[0].lower() != "skills":
+            return False
+        prefix = "/".join(([root] if root else []) + parts[:2]).lower() + "/"
+        return not any(f.lower().startswith(prefix) for f in files_at(head_snap))
+
+    def mention_patterns(skill):
+        name = re.escape(skill.lower())
+        return (re.compile(rf"(?<![a-z0-9._-]){name}/"),
+                re.compile(rf"skills/{name}(?![a-z0-9_-])"))
+
+    def normalized(text: str) -> str:
+        text = text.lower().replace("\\", "/")
+        text = re.sub(r"/+", "/", text)
+        while "/./" in text:
+            text = text.replace("/./", "/")
+        return text
+
+    texts_cache: Dict[str, list] = {}
+
+    def texts(root):
+        """(path, normalized text) of every text file under `root`, plus the
+        marketplace file, at base and at head. JSON is read twice, raw and
+        decoded (so \\/ and \\uXXXX spell the same path); a file that is not
+        UTF-8 is skipped."""
+        if root not in texts_cache:
+            out = []
             for snap in (base_snap, head_snap):
-                for name in [MARKETPLACE] + sorted(fetcher.list_files(snap.sha)):
-                    low = name.lower()
-                    if name != MARKETPLACE and not _under(name, root):
+                names = [n for n in [MARKETPLACE] + sorted(files_at(snap))
+                         if (n == MARKETPLACE or _under(n, root))
+                         and not n.lower().endswith(INERT_IMAGE_EXTENSIONS)]
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    blobs = list(pool.map(snap.raw, names))
+                for name, data in zip(names, blobs):
+                    if data is None:
                         continue
-                    rel = low[len(root) + 1:] if root else low
-                    data = None
-                    if name == MARKETPLACE or low.endswith(".json") \
-                            or rel.startswith(("hooks/", "bin/")):
-                        data = snap.raw(name)
-                        if data is not None:
-                            chunks.append(data.decode("utf-8", "replace"))
-                    elif low.endswith(".md"):
-                        md = _read_skill(snap.raw(name), name)
-                        chunks.append(md.frontmatter + "\n" + "\n".join(md.commands))
-            corpus_cache[root] = "\n".join(chunks).lower().replace("\\", "/")
-        return corpus_cache[root]
+                    try:
+                        text = data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        continue
+                    forms = [text]
+                    try:
+                        forms.append(json.dumps(json.loads(text), ensure_ascii=False))
+                    except ValueError:
+                        pass
+                    out.append((name.lower(), normalized("\n".join(forms))))
+            texts_cache[root] = out
+        return texts_cache[root]
+
+    shell_cache: Dict[str, bool] = {}
+
+    def any_skill_grants_a_shell(root):
+        if root not in shell_cache:
+            found = False
+            for snap in (base_snap, head_snap):
+                for name in files_at(snap):
+                    if _under(name, root) and posixpath.basename(name).lower() == "skill.md":
+                        found |= _grants_bash(_read_skill(snap.raw(name), name).values["allowed-tools"])
+            shell_cache[root] = found
+        return shell_cache[root]
+
+    def named_elsewhere(root, skill):
+        """Whether any text file under the root, outside this skill's own
+        scripts/ and tests/, mentions the skill's directory."""
+        own = f"{root + '/' if root else ''}skills/{skill}/".lower()
+        patterns = mention_patterns(skill)
+        return any(not (name.startswith(own) and name[len(own):].split("/")[0] in ("scripts", "tests"))
+                   and any(pat.search(text) for pat in patterns)
+                   for name, text in texts(root))
 
     # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
@@ -708,6 +779,8 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 continue
             rel = path[len(root) + 1:] if root else path
             low = rel.lower()
+            if fully_deleted(path, root):
+                continue  # a skill retired whole does not gate on its own
             if low in LAYOUT_NAMES:
                 # A file or symlink at the directory's own name (plugins/x/hooks
                 # as a link to somewhere else) has no "hooks/" prefix.
@@ -732,15 +805,17 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 skill = skill_of(path, root)
                 shell_skill = bool(skill and skill[0])
                 scripts = len(low.split("/")) > 3 and low.split("/")[2] in ("scripts", "tests")
-                if skill and scripts and not skill[0] and not skill[1] and \
-                        "skills/" + low.split("/")[1] not in corpus(root):
+                if skill and scripts and not skill[1] and \
+                        not any_skill_grants_a_shell(root) and \
+                        not named_elsewhere(root, rel.split("/")[1]):
                     # This accepts the same risk as the skill-body-bash rule
                     # in reverse: the model may run a script a skill ships under
-                    # the session's own permissions, and a skill that grants no
-                    # shell, has no hooks or load-time commands and is named by
-                    # no config is taken to leave that to the user's own prompt.
-                    # Only static mentions are seen: a path built at run time
-                    # or named from outside the plugin root is not.
+                    # the session's own permissions. No skill in the plugin
+                    # grants a shell, the skill has no hooks or load-time
+                    # commands, and no text file in the plugin root names its
+                    # directory. Only static mentions inside the plugin root are
+                    # seen: a path built at run time, or named from outside it
+                    # (the repo's own .claude/settings.json), is not.
                     continue
                 if low.endswith(".md"):
                     # Frontmatter and commands are read on every .md, whatever
@@ -780,7 +855,8 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             reasons.add(("hook-referenced", path))
 
     for path in sorted(changed):                              # (6)
-        if _is_skill_file(path, roots, named):
+        if _is_skill_file(path, roots, named) and not any(
+                _under(path, r) and fully_deleted(path, r) for r in roots):
             # A renamed file's old name is in `changed` too; reading a side
             # where the path is absent gives "no keys", so the pair compares.
             before = _read_skill(base_snap.raw(path), path)

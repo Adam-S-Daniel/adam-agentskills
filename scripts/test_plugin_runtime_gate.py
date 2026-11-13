@@ -591,11 +591,69 @@ def test_a_skill_md_whose_frontmatter_does_not_parse_gates():
 
 
 def test_a_renamed_skill_md_is_compared_with_its_old_name():
+    """The base file carries the gated keys and is renamed unchanged: the old
+    name's own comparison (keys -> gone) must flag it, not only the new name."""
     old, new = "plugins/alpha/skills/one/SKILL.md", "plugins/alpha/skills/uno/SKILL.md"
-    base = tree()
+    base = tree(**{old: HOOKED})
     head = {k: v for k, v in base.items() if k != old}
     head[new] = HOOKED
-    assert_gated(run(base, head, renames={new: old}), "skill-frontmatter-runtime-key")
+    gated, reasons = run(base, head, renames={new: old})
+    assert gated
+    assert ("skill-frontmatter-runtime-key", old) in reasons
+    assert ("skill-frontmatter-runtime-key", new) in reasons
+
+
+@pytest.mark.parametrize("closing", ["----", " ---", "--- x", "---\t x"])
+@pytest.mark.parametrize("key", ["allowed-tools: Bash", "hooks: {PreToolUse: []}"])
+def test_a_closing_line_other_than_bare_dashes_gates(closing, key):
+    """Claude Code closes frontmatter at the first '---' anywhere, so these all
+    activate the key while a strict line split sees no frontmatter."""
+    after = f"---\nname: one\n{key}\n{closing}\nbody\n".encode()
+    assert_gated(_skill_run(b"---\nname: one\n---\n", after), "fail-closed")
+
+
+def test_dashes_inside_a_value_gate():
+    after = b"---\nname: one\ndescription: a ---\nallowed-tools: Bash\n---\nbody\n"
+    assert_gated(_skill_run(b"---\nname: one\n---\n", after), "fail-closed")
+
+
+def test_unterminated_frontmatter_gates():
+    after = b"---\nname: one\nallowed-tools: Bash\nbody with no close\n"
+    assert_gated(_skill_run(b"---\nname: one\n---\n", after), "fail-closed")
+
+
+def test_ambiguous_frontmatter_on_the_base_side_gates_too():
+    before = b"---\nname: one\nallowed-tools: Bash\n----\nbody\n"
+    assert_gated(_skill_run(before, b"---\nname: one\n---\n"), "fail-closed")
+
+
+def test_a_blank_line_after_the_opening_dashes_does_not_gate():
+    before = b"---\nname: one\n---\nold\n"
+    after = b"---\n\nname: one\n---\nnew\n"
+    assert_not_gated(_skill_run(before, after))
+
+
+def test_without_pyyaml_a_skill_md_change_gates(monkeypatch):
+    monkeypatch.setitem(sys.modules, "yaml", None)  # `import yaml` raises ImportError
+    assert_gated(_skill_run(b"---\nname: one\n---\n", b"---\nname: one\n---\nnew\n"),
+                 "fail-closed")
+
+
+def test_non_mapping_frontmatter_gates():
+    assert_gated(_skill_run(b"---\nname: one\n---\n", b"---\n- a\n- b\n---\n"), "fail-closed")
+
+
+def test_a_non_utf8_skill_md_gates():
+    assert_gated(_skill_run(b"---\nname: one\n---\n", b"---\nname: \xff\xfe\n---\n"),
+                 "fail-closed")
+
+
+def test_a_skill_md_with_no_frontmatter_does_not_gate():
+    assert_not_gated(_skill_run(b"plain body\n", b"another plain body\n"))
+
+
+def test_adding_frontmatter_keys_to_a_skill_md_that_had_none_gates():
+    assert_gated(_skill_run(b"plain body\n", HOOKED), "skill-frontmatter-runtime-key")
 
 
 # =================================================================================
@@ -930,3 +988,15 @@ def test_a_job_impersonating_the_approval_context_is_found(tmp_path, job):
     (tmp_path / "ci.yml").write_text(
         yaml.safe_dump({"on": {"pull_request": None}, "jobs": job}), encoding="utf-8")
     assert len(_impersonating_jobs(tmp_path)) == 1
+
+
+def test_the_detect_job_installs_pyyaml_from_the_base_requirements_before_the_gate():
+    steps = load_workflow()["jobs"]["detect"]["steps"]
+    gate_at = next(i for i, st in enumerate(steps) if "plugin_runtime_gate.py" in st.get("run", ""))
+    installs = [i for i, st in enumerate(steps) if "pip install" in st.get("run", "")]
+    assert installs and installs[0] < gate_at
+    run_text = steps[installs[0]]["run"]
+    assert "requirements-dev.txt" in run_text and "pyyaml==" in run_text.lower()
+    # The pinned line is exact, and the file is the base checkout's (no head ref).
+    pins = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").lower()
+    assert re.search(r"^pyyaml==\d+(\.\d+)*$", pins, re.M)

@@ -346,6 +346,11 @@ def _runtime_values(data) -> Dict[str, object]:
     return {key: data.get(key, _ABSENT) for key in RUNTIME_KEYS}
 
 
+# Claude Code's own frontmatter split, ported from its source, anchored at the
+# file start.
+_CLAUDE_CODE_FRONTMATTER = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
+
+
 def _skill_runtime_values(data: Optional[bytes], path: str) -> Dict[str, object]:
     """The runtime keys of a SKILL.md's frontmatter ({key: _ABSENT} when the
     file or the frontmatter is missing). Raises GateError on frontmatter that
@@ -358,16 +363,24 @@ def _skill_runtime_values(data: Optional[bytes], path: str) -> Dict[str, object]
     except ImportError:
         raise GateError("PyYAML is not installed, so SKILL.md frontmatter cannot be read") from None
     try:
-        lines = data.decode("utf-8-sig").split("\n")
+        text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
         raise GateError(f"{json.dumps(path)} is not valid UTF-8") from None
-    if not lines or lines[0].rstrip() != "---":
+    lines = text.split("\n")
+    if lines[0].rstrip() != "---":
         return absent
     end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
     if end is None:
-        return absent
+        raise GateError(f"the frontmatter of {json.dumps(path)} has no closing '---' line")
+    strict = "\n".join(lines[1:end])
+    # Claude Code closes frontmatter at the first '---' anywhere (mid-line,
+    # indented, the start of '----'), not only on a line of its own. If the two
+    # readings differ, the file's runtime keys are ambiguous: fail closed.
+    match = _CLAUDE_CODE_FRONTMATTER.match(text)
+    if match is None or match.group(1).strip() != strict.strip():
+        raise GateError(f"the frontmatter of {json.dumps(path)} is delimited ambiguously")
     try:
-        meta = yaml.safe_load("\n".join(lines[1:end]))
+        meta = yaml.safe_load(strict)
     except yaml.YAMLError:
         raise GateError(f"the frontmatter of {json.dumps(path)} does not parse") from None
     if meta is None:

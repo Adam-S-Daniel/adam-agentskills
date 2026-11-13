@@ -4630,6 +4630,9 @@ _TESTS_IN_ANOTHER_REPO = {
     # `report_digest_format`'s docstring as the far end of a contract this
     # repo cannot run.
     "test_bump_format_gate_empty_skills",
+    # _agent-guidance's test/run-tests.sh; named by a comment in
+    # .claude/hooks/fleet-memory.sh, which that repo's sync delivers here.
+    "test_fleet_memory_git_hooks",
 }
 
 

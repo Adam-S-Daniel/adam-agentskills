@@ -72,7 +72,8 @@ for arg in "$@"; do
       echo "  (default)        remove the skill links earlier versions made in ~/.agents/skills,"
       echo "                   ~/.agent/skills, ~/.cursor/skills, ~/.gemini and ~/.claude/skills"
       echo "  --owner-machine  also clean up the retired global sync-skills pre-push hook, set up"
-      echo "                   WSL git for the Windows clones (WSL), converge"
+      echo "                   WSL git for the Windows clones (WSL), write the fleet-guidance owner"
+      echo "                   marker (fleet-guidance/owner under the config dir), converge"
       echo "                   ~/.claude/settings.json, and register the adam-clone-sync"
       echo "                   scheduled task (Windows Git Bash), for the registry owner's own"
       echo "                   machines (same as AGENTSKILLS_OWNER_MACHINE=1)"
@@ -346,6 +347,29 @@ echo "=== Fleet agent-checks git hooks (ADR 0020) ==="
 # include file or runner is a no-op, so they cannot break pushes.
 bash "$REPO_ROOT/scripts/install-agent-hooks.sh" || echo "WARNING: install-agent-hooks.sh failed" >&2
 
+echo ""
+echo "=== Fleet-guidance owner marker ==="
+# The fleet repos' delivered fleet-memory.sh hooks install the guidance into user
+# memory on a durable machine only when an owner signal is present; this empty
+# file is the standing one (_agent-guidance ADR 0042:
+# https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md).
+# XDG_CONFIG_HOME counts only when absolute, as the hook reads it. An existing
+# file is never modified. Git Bash and WSL each have their own $HOME, so each
+# gets its own marker when setup.sh runs there.
+if [[ "${XDG_CONFIG_HOME:-}" == /* ]]; then
+  owner_marker_dir="$XDG_CONFIG_HOME/fleet-guidance"
+else
+  owner_marker_dir="$HOME/.config/fleet-guidance"
+fi
+owner_marker="$owner_marker_dir/owner"
+if [[ ! -f "$owner_marker" ]]; then
+  if mkdir -p "$owner_marker_dir" && : > "$owner_marker"; then
+    echo "CREATED  $owner_marker"
+  else
+    echo "WARNING: could not create $owner_marker" >&2
+  fi
+fi
+
 if [[ "$HOST_KIND" == wsl ]]; then
 echo ""
 echo "=== WSL git for the Windows clones under /mnt/ ==="
@@ -382,6 +406,7 @@ fi
 if [[ "${OWNER_MACHINE:-0}" != 1 ]]; then
   echo ""
   echo "Skipped the owner-machine steps (retired global hook cleanup, WSL git for Windows clones,"
+  echo "the fleet-guidance owner marker,"
   echo "the ~/.claude/settings.json convergence, the adam-clone-sync scheduled task)."
   echo "On the registry owner's own machines, re-run: bash setup.sh --owner-machine"
 else

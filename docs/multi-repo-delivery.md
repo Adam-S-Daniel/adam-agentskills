@@ -237,6 +237,51 @@ fi
 for f in "$project"/*/scripts/install-agent-hooks.sh; do
   [ -f "$f" ] && { bash "$f" --system || true; break; }
 done
+
+# ---- BEGIN owner block: fleet guidance (_agent-guidance ADR 0043) ----
+# The pin is these two variables and nothing else. To bump it, take
+# _agent-guidance's current main commit and that file's digest:
+#   git -C <checkout> rev-parse origin/main
+#   git -C <checkout> show origin/main:.claude/hooks/fleet-memory.sh | sha256sum
+fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
+fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
+fleet_guidance_install() (
+  fail() { echo "fleet-guidance: setup skipped ($1)"; exit 0; }
+  raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
+  command -v curl >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
+    && command -v sha256sum >/dev/null 2>&1 || fail "curl, git or sha256sum missing"
+  tmp=$(mktemp -d) || fail "no temporary directory"
+  trap 'rm -rf "$tmp"' EXIT
+  # The installer: fetched at the pin and run only if its bytes match.
+  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+    --max-filesize 4194304 -o "$tmp/fleet-memory.sh" \
+    "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh" || fail "installer download failed"
+  [ "$(sha256sum < "$tmp/fleet-memory.sh" | cut -d' ' -f1)" = "$fleet_pin_sha256" ] \
+    || fail "installer digest mismatch; not run"
+  # The payload: main's HEAD commit (a commit-only fetch; the proxy refuses the
+  # REST API for repos not attached to the session), base.md at that commit, and
+  # its committer time as the stamp, as the plugin's hook does.
+  git init -q --bare --template= "$tmp/g" >/dev/null 2>&1 || fail "commit lookup failed"
+  GIT_TERMINAL_PROMPT=0 timeout 30 git --git-dir="$tmp/g" -c credential.helper= \
+    fetch -q --no-tags --depth=1 --filter=tree:0 \
+    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main >/dev/null 2>&1 \
+    || fail "commit lookup failed"
+  line=$(git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD 2>/dev/null) \
+    || fail "commit lookup failed"
+  head_sha=${line%% *}
+  stamp=${line#* }
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]] || fail "commit lookup failed"
+  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+    --max-filesize 1048576 -o "$tmp/base.md" \
+    "$raw/$head_sha/agents-md/base.md" || fail "base.md download failed"
+  [ "$(head -c 2 "$tmp/base.md")" = "# " ] || fail "base.md failed validation"
+  # HOME is the home the session runs as, the parent of the .claude dir above.
+  env HOME="${user_claude%/.claude}" FLEET_GUIDANCE_OWNER=1 \
+    FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" \
+    bash "$tmp/fleet-memory.sh" || fail "installer exited nonzero"
+)
+fleet_guidance_install || echo "fleet-guidance: setup skipped (unexpected failure)"
+# ---- END owner block ----
 exit 0
 ```
 
@@ -279,9 +324,19 @@ record of which guidance loaded moves to the owner's plugin. The owner
 gets the guidance from the account-synced `adam-anything-anywhere` plugin
 ([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
 its SessionStart hook fetches `main`'s HEAD commit and `base.md` and installs
-it. After ADR 0043's step 3, the environment's setup script also installs it,
-from a reviewed `fleet-memory.sh` fetched by commit and SHA-256. Anyone else's
-session reads the repo stub alone, which is the intended state.
+it. The environment's setup script also installs it, in the owner block at
+the end of the snippet above: that is the guaranteed route (ADR 0043), because
+it does not depend on the account sync reaching the surface. The block fetches
+`fleet-memory.sh` at a pinned `_agent-guidance` commit and runs it only if its
+SHA-256 matches, so the setup script never executes unreviewed code; the
+guidance text itself comes from `main`'s HEAD, stamped with that commit's
+committer time. Where the plugin's hook and the block both run, the
+[freshest-stamp rule](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
+(ADR 0016) arbitrates and the second reports `current`. The block never fails
+the setup: any problem prints one `fleet-guidance: setup skipped` line and the
+script goes on. Bump the pin (two variables, commented in the block) when
+`fleet-memory.sh` changes in `_agent-guidance`. Anyone else's session reads the
+repo stub alone, which is the intended state.
 
 What stays here is two groups, `skills-bootstrap` and the `agent-checks` guard,
 and they are separate GROUPS, not one, because a group carries one `matcher`

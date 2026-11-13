@@ -191,8 +191,7 @@ The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker
   run time rather than from the collected module — `test_every_test_this_repo_cites_by_name_exists`
   is one. Edit during the run and it judges the new tree against the old run,
   so a failure it reports may be from a file the run never started with.
-  (A "pre-existing" red once turned out to be a dangling citation written
-  mid-run; see the evidence file linked above.) Take the baseline before editing,
+  (The dangling-citation case is in the evidence file linked above.) Take the baseline before editing,
   or re-run it after — never read one that overlapped the edits.
 
 ### The freshness lint runs on a schedule

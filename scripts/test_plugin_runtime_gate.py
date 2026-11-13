@@ -617,6 +617,16 @@ def test_dashes_inside_a_value_gate():
     assert_gated(_skill_run(b"---\nname: one\n---\n", after), "fail-closed")
 
 
+def test_a_byte_order_mark_after_the_opening_dashes_gates():
+    """U+FEFF is JS whitespace, so Claude Code opens frontmatter on this line
+    and captures allowed-tools; Python's rstrip() leaves it, so a strict split
+    saw no frontmatter."""
+    bomb = "---\ufeff\nname: one\nallowed-tools: Bash\n---\nbody\n".encode()
+    plain = b"---\nname: one\n---\n"
+    assert_gated(_skill_run(plain, bomb), "fail-closed")
+    assert_gated(_skill_run(bomb, plain), "fail-closed")
+
+
 def test_unterminated_frontmatter_gates():
     after = b"---\nname: one\nallowed-tools: Bash\nbody with no close\n"
     assert_gated(_skill_run(b"---\nname: one\n---\n", after), "fail-closed")
@@ -988,6 +998,15 @@ def test_a_job_impersonating_the_approval_context_is_found(tmp_path, job):
     (tmp_path / "ci.yml").write_text(
         yaml.safe_dump({"on": {"pull_request": None}, "jobs": job}), encoding="utf-8")
     assert len(_impersonating_jobs(tmp_path)) == 1
+
+
+def test_the_detect_job_sets_up_python_before_installing_and_running_the_gate():
+    steps = load_workflow()["jobs"]["detect"]["steps"]
+    uses = [str(st.get("uses", "")).split("@")[0] for st in steps]
+    setup = uses.index("actions/setup-python")
+    install = next(i for i, st in enumerate(steps) if "pip install" in st.get("run", ""))
+    gate_at = next(i for i, st in enumerate(steps) if "plugin_runtime_gate.py" in st.get("run", ""))
+    assert setup < install < gate_at
 
 
 def test_the_detect_job_installs_pyyaml_from_the_base_requirements_before_the_gate():

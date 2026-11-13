@@ -348,7 +348,10 @@ def _runtime_values(data) -> Dict[str, object]:
 
 # Claude Code's own frontmatter split, ported from its source, anchored at the
 # file start.
-_CLAUDE_CODE_FRONTMATTER = re.compile(r"---\s*\n([\s\S]*?)---\s*\n?")
+_JS_WS = "\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
+# JS `\s`, spelled out: Python's `\s` differs (it lacks U+FEFF, adds U+001C-1F, U+0085).
+_CLAUDE_CODE_FRONTMATTER = re.compile(
+    rf"---[{_JS_WS}]*\n(.*?)---[{_JS_WS}]*\n?", re.DOTALL)
 
 
 def _skill_runtime_values(data: Optional[bytes], path: str) -> Dict[str, object]:
@@ -367,8 +370,14 @@ def _skill_runtime_values(data: Optional[bytes], path: str) -> Dict[str, object]
     except UnicodeDecodeError:
         raise GateError(f"{json.dumps(path)} is not valid UTF-8") from None
     lines = text.split("\n")
-    if lines[0].rstrip() != "---":
+    if not text.startswith("---"):
         return absent
+    # From here the file may be frontmatter to Claude Code, so the strict
+    # reading must be clean or the gate fails closed. Python's rstrip() and
+    # JS's `\s` disagree on U+FEFF and other code points, so "---" + U+FEFF is
+    # an opening line to Claude Code and not to a strict split.
+    if lines[0].rstrip() != "---":
+        raise GateError(f"the frontmatter of {json.dumps(path)} has an unusual opening line")
     end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
     if end is None:
         raise GateError(f"the frontmatter of {json.dumps(path)} has no closing '---' line")

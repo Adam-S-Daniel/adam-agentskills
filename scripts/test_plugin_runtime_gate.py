@@ -293,7 +293,8 @@ def test_an_added_entry_carrying_a_runtime_key_gates():
 def test_a_marketplace_change_without_runtime_keys_does_not_gate():
     base = tree(**{".claude-plugin/marketplace.json": marketplace("alpha", alpha={"hooks": {}})})
     head = dict(base, **{".claude-plugin/marketplace.json":
-                         marketplace("alpha", "beta", alpha={"hooks": {}, "description": "new"})})
+                         marketplace("alpha", "beta", alpha={"hooks": {}, "description": "new"}),
+                         "plugins/beta/plugin.json": manifest("beta")})
     assert_not_gated(run(base, head))
 
 
@@ -989,6 +990,86 @@ def test_a_marketplace_entry_command_allowed_tools_gates():
     head = dict(base, **{".claude-plugin/marketplace.json": marketplace(
         "alpha", alpha={"commands": {"go": {"source": "./go.md", "allowedTools": ["Bash"]}}})})
     assert_gated(run(base, head), "marketplace-runtime-key")
+
+
+# =================================================================================
+# (m) marketplace sources, directory-named paths and letter case
+# =================================================================================
+
+HOOK_JSON = hook_config("./run.sh")
+
+
+def _market_run(base_market, head_market, **extra):
+    base = tree(**{".claude-plugin/marketplace.json": base_market}, **extra)
+    return run(base, dict(base, **{".claude-plugin/marketplace.json": head_market}))
+
+
+@pytest.mark.parametrize("source", [
+    "./plugins/other", {"source": "github", "repo": "example/evil"}, "./", 3, None])
+def test_an_existing_entrys_source_changing_gates(source):
+    other = {"plugins/other/hooks/hooks.json": HOOK_JSON}
+    assert_gated(_market_run(marketplace("alpha"),
+                             {"name": "m", "plugins": [{"name": "alpha", "source": source}]},
+                             **other), "marketplace-runtime-key")
+
+
+def test_an_existing_entrys_unchanged_source_does_not_gate():
+    assert_not_gated(_market_run(marketplace("alpha"), marketplace("alpha", alpha={"x": 1})))
+
+
+def test_changing_metadata_plugin_root_gates():
+    before = dict(marketplace("alpha"), metadata={"pluginRoot": "./plugins"})
+    after = dict(marketplace("alpha"), metadata={"pluginRoot": "./elsewhere"})
+    assert_gated(_market_run(before, after), "marketplace-runtime-key")
+    assert_gated(_market_run(marketplace("alpha"), before), "marketplace-runtime-key")
+    assert_not_gated(_market_run(before, before))
+
+
+def test_a_new_entry_pointing_at_an_existing_directory_gates():
+    existing = {"fixtures/evil/hooks/hooks.json": HOOK_JSON}
+    market = {"name": "m", "plugins": marketplace("alpha")["plugins"] + [
+        {"name": "evil", "source": "./fixtures/evil"}]}
+    assert_gated(_market_run(marketplace("alpha"), market, **existing), "marketplace-runtime-key")
+    remote = {"name": "m", "plugins": [{"name": "r", "source": {"source": "github", "repo": "a/b"}}]}
+    assert_gated(_market_run(marketplace("alpha"), remote), "marketplace-runtime-key")
+
+
+@pytest.mark.parametrize("name,code", [
+    ("hooks", "hook-file"), ("bin", "bin-file"), ("commands", "plugin-layout-path"),
+    ("skills", "plugin-layout-path"), (".claude-plugin", "plugin-layout-path")])
+def test_a_file_or_symlink_at_a_layout_directorys_own_name_gates(name, code):
+    base = tree(**{"docs/target/x.sh": b"echo\n"})
+    head = dict(base, **{f"plugins/alpha/{name}": b"../../docs/target"})
+    assert_gated(run(base, head), code)
+
+
+@pytest.mark.parametrize("path,code", [
+    ("plugins/alpha/Hooks/hooks.json", "hook-file"),
+    ("plugins/alpha/HOOKS/run.sh", "hook-file"),
+    ("plugins/alpha/Bin/tool", "bin-file"),
+    ("plugins/alpha/Settings.json", "package-or-settings"),
+    ("plugins/alpha/Package.JSON", "package-or-settings"),
+    ("plugins/alpha/.Claude-Plugin/Plugin.json", "manifest-runtime-key"),
+    ("plugins/alpha/Plugin.json", "manifest-runtime-key"),
+    ("Plugins/beta/hooks/hooks.json", "hook-file"),
+])
+def test_runtime_paths_match_without_regard_to_case(path, code):
+    base = tree()
+    assert_gated(run(base, dict(base, **{path: {"hooks": {}}})), code)
+
+
+def test_a_script_a_hook_names_matches_without_regard_to_case():
+    base = tree(**{"plugins/alpha/hooks/hooks.json": hook_config('"${CLAUDE_PLUGIN_ROOT}"/lib/run.sh'),
+                   "plugins/alpha/lib/run.sh": b"a\n"})
+    head = dict(base, **{"plugins/alpha/LIB/run.sh": b"b\n"})
+    assert_gated(run(base, head), "hook-referenced")
+
+
+def test_a_path_a_manifest_names_matches_without_regard_to_case():
+    path = "plugins/alpha/.claude-plugin/plugin.json"
+    base = tree(**{path: manifest(commands="./cmds"), "plugins/alpha/cmds/go.md": PLAIN_FM})
+    head = dict(base, **{"plugins/alpha/Cmds/go.md": BASH_FM})
+    assert_gated(run(base, head), "skill-frontmatter-runtime-key")
 
 
 # =================================================================================

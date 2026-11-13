@@ -58,6 +58,16 @@ A pull request is GATED when any of these holds:
                           _agent-guidance's agent-checks `skill-shell`;
   (k) skill-body-bash     a body change in such a file whose `allowed-tools`
                           grants Bash (or PowerShell) at base or head;
+  (m) layout and case       a changed path that is, not only lies under, a plugin
+                          root's hooks, bin, commands, skills or .claude-plugin
+                          (a symlink has no trailing slash); a marketplace
+                          entry's `source` (any shape, existing entries) and
+                          `metadata.pluginRoot`; a new entry whose local
+                          source this PR adds no files under. Plugin-root
+                          names and hook/bin/manifest paths match without
+                          regard to case. (check_consistency.py already refuses
+                          any symlink under plugins/; the gate cannot see file
+                          modes, and a root can sit outside plugins/.)
   (l) the frontmatter keys of (i) are read at every such path, not only
                           <root>/skills/<skill>/SKILL.md. A manifest or
                           marketplace entry's `skills` or `commands` value is
@@ -101,6 +111,13 @@ MAX_FILE_BYTES = 1024 * 1024
 # cap may have been cut short, so reaching it is already "cannot decide".
 MAX_CHANGED_FILES = 3000
 RUNTIME_KEYS = ("hooks", "settings", "skills", "commands")
+# A marketplace entry's `source` chooses which directory (or remote repo) the
+# plugin's hooks and bin/ come from, so it is a runtime key there, in any shape.
+ENTRY_RUNTIME_KEYS = RUNTIME_KEYS + ("source",)
+# Plugin-root names Claude Code reads; a file or symlink AT one of these names
+# (not only a path under it) changes what loads from the directory.
+LAYOUT_NAMES = {"hooks": "hook-file", "bin": "bin-file", "commands": "plugin-layout-path",
+                "skills": "plugin-layout-path", ".claude-plugin": "plugin-layout-path"}
 SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
 # Files Claude Code loads as a skill or command, relative to a plugin root.
 SKILL_MD_RE = re.compile(r"^skills/(?:[^/]+/)?SKILL\.md$", re.IGNORECASE)
@@ -244,6 +261,8 @@ def _join(root: str, rel: str) -> Optional[str]:
 
 
 def _under(path: str, prefix: str) -> bool:
+    # Case-insensitive: macOS and Windows resolve Hooks/ to hooks/.
+    path, prefix = path.lower(), prefix.lower()
     return prefix == "" or path == prefix or path.startswith(prefix + "/")
 
 
@@ -363,12 +382,12 @@ def _manifests(root: str) -> Tuple[str, str]:
     return (_join(root, ".claude-plugin/plugin.json"), _join(root, "plugin.json"))
 
 
-def _runtime_values(data) -> Dict[str, object]:
+def _runtime_values(data, keys=RUNTIME_KEYS) -> Dict[str, object]:
     if data is _ABSENT:
-        return {key: _ABSENT for key in RUNTIME_KEYS}
+        return {key: _ABSENT for key in keys}
     if not isinstance(data, dict):
         raise GateError("a manifest or marketplace entry is not a JSON object")
-    return {key: data.get(key, _ABSENT) for key in RUNTIME_KEYS}
+    return {key: data.get(key, _ABSENT) for key in keys}
 
 
 # Claude Code's own frontmatter split, ported from its source, anchored at the
@@ -555,7 +574,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     roots = set(entry_roots["base"]) | set(entry_roots["head"])
     for path in changed:
         parts = path.split("/")
-        if len(parts) >= 3 and parts[0] == "plugins":
+        if len(parts) >= 2 and parts[0].lower() == "plugins":
             roots.add("plugins/" + parts[1])
 
     for path in sorted(changed):
@@ -563,12 +582,21 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             if not _under(path, root):
                 continue
             rel = path[len(root) + 1:] if root else path
-            if rel.startswith("hooks/"):                      # (a)
+            low = rel.lower()
+            if low.startswith("hooks/"):                      # (a)
                 reasons.add(("hook-file", path))
-            if rel.startswith("bin/"):                        # (h)
+            if low.startswith("bin/"):                        # (h)
                 reasons.add(("bin-file", path))
-            if rel in ROOT_FILES:                             # (b)
+            if low in {name.lower() for name in ROOT_FILES}:  # (b)
                 reasons.add(("package-or-settings", path))
+            # A file or symlink at the directory's own name (plugins/x/hooks
+            # as a link to somewhere else) has no "hooks/" prefix.
+            if low in LAYOUT_NAMES:
+                reasons.add((LAYOUT_NAMES[low], path))
+            # A manifest spelled in another case still names runtime keys.
+            if low in (".claude-plugin/plugin.json", "plugin.json") \
+                    and path not in _manifests(root):
+                reasons.add(("manifest-runtime-key", path))
 
     for root in sorted(roots):                                # (c)
         for manifest in _manifests(root):
@@ -583,8 +611,22 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             if before is _ABSENT:
                 if any(key in entry for key in RUNTIME_KEYS):
                     reasons.add(("marketplace-runtime-key", MARKETPLACE))
-            elif _runtime_values(before) != _runtime_values(entry):
+                # A new entry may point `source` at a directory that already
+                # exists; one whose files this pull request adds is gated by
+                # those files, anything else is not.
+                src = entry.get("source")
+                local = [_norm(src)] if isinstance(src, str) else []
+                if not isinstance(src, str) or any(
+                        r is None or not any(_under(c, r) for c in changed) for r in local):
+                    reasons.add(("marketplace-runtime-key", MARKETPLACE))
+            elif _runtime_values(before, ENTRY_RUNTIME_KEYS) != _runtime_values(entry, ENTRY_RUNTIME_KEYS):
                 reasons.add(("marketplace-runtime-key", MARKETPLACE))
+        # `metadata.pluginRoot` rebases every relative `source`.
+        def plugin_root(market):
+            meta = market.get("metadata") if isinstance(market, dict) else None
+            return meta.get("pluginRoot", _ABSENT) if isinstance(meta, dict) else _ABSENT
+        if plugin_root(markets["base"]) != plugin_root(markets["head"]):
+            reasons.add(("marketplace-runtime-key", MARKETPLACE))
 
     referenced: Set[str] = set()                              # (e)
     for side, snap in (("base", base_snap), ("head", head_snap)):

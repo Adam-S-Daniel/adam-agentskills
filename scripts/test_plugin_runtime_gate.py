@@ -1675,8 +1675,8 @@ def test_r3_a_longer_component_is_not_a_mention(text):
     assert_not_gated(edit_only_the_script({PR + "/lib/x.js": text.encode()}))
 
 
-def test_r3_a_file_that_is_not_utf8_is_skipped():
-    assert_not_gated(edit_only_the_script({PR + "/lib/blob.bin": b"\xff\xfe skills/s/scripts"}))
+def test_r3_a_file_that_is_not_utf8_blocks_the_exemption():
+    assert edit_only_the_script({PR + "/lib/blob.bin": b"\xff\x00 skills/s/scripts"})[0]
 
 
 def test_r3_the_candidates_own_scripts_and_tests_are_not_scanned():
@@ -1761,6 +1761,74 @@ def test_r3_a_404_on_a_read_is_an_answer_and_is_not_retried(monkeypatch, no_back
     monkeypatch.setattr(gate.subprocess, "run", runs)
     assert gate.GhFetcher("o/r", 1).read("a/b", BASE) is None
     assert runs.calls == 1
+
+
+# Round 4 of the #164 review.
+
+
+def test_r4_utf16_text_with_a_bom_is_decoded_and_scanned():
+    mention = "run skills/s/scripts/f".encode("utf-16")
+    clean = "nothing here".encode("utf-16")
+    assert edit_only_the_script({PR + "/lib/u.txt": mention})[0]
+    assert_not_gated(edit_only_the_script({PR + "/lib/u.txt": clean}))
+
+
+@pytest.mark.parametrize("name", ["a.png", "a.jpg", "a.jpeg", "a.gif", "a.webp", "a.ico"])
+def test_r4_a_raster_image_is_not_scanned_and_does_not_block(name):
+    assert_not_gated(edit_only_the_script({PR + "/lib/" + name: b"\x89\xff\x00\xfe"}))
+
+
+def test_r4_an_undecodable_file_in_the_candidates_own_tests_does_not_block():
+    assert_not_gated(edit_only_the_script({PR + "/skills/s/tests/fixture.bin": b"\xff\x00"}))
+
+
+def test_r4_an_svg_is_scanned_as_text():
+    svg = b'<svg><a href="skills/s/scripts/f"/></svg>'
+    assert edit_only_the_script({PR + "/lib/a.svg": svg})[0]
+
+
+@pytest.mark.parametrize("path, content", [
+    (PR + "/commands/c.md", skill_md("allowed-tools: Bash\n")),
+    (PR + "/agents/a.md", skill_md("tools: Read, Bash\n")),
+    (PR + "/docs/d.md", skill_md("allowed-tools: PowerShell\n")),
+])
+def test_r4_a_shell_grant_in_any_markdown_frontmatter_blocks_the_exemption(path, content):
+    assert edit_only_the_script({path: content})[0]
+
+
+def test_r4_a_hook_config_a_manifest_names_inside_a_retired_skill_still_gates():
+    man = {"name": "p", "hooks": "./skills/one/guard.json"}
+    base = base_p(**{PR + "/.claude-plugin/plugin.json": man, PR + "/skills/one/SKILL.md": skill_md(),
+                     PR + "/skills/one/guard.json": HOOKS_OK})
+    head = {k: v for k, v in base.items() if "/skills/one/" not in k}
+    assert run(base, head)[0]
+
+
+def test_r4_a_removed_file_the_head_tree_still_holds_fails_closed():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md(), PR + "/skills/t/x": b"1\n"})
+    head = {k: v for k, v in base.items() if not k.endswith("/skills/t/SKILL.md")}
+    files = [{"filename": PR + "/skills/t/SKILL.md", "status": "removed", "previous_filename": None},
+             {"filename": PR + "/skills/t/x", "status": "removed", "previous_filename": None}]
+    assert_gated(run(base, head, files=files), "fail-closed")
+
+
+def test_r4_a_changed_path_that_is_not_removed_in_an_empty_head_directory_fails_closed():
+    base = base_p(**{PR + "/skills/t/SKILL.md": skill_md()})
+    head = {k: v for k, v in base.items() if "/skills/t/" not in k}
+    files = [{"filename": PR + "/skills/t/SKILL.md", "status": "removed", "previous_filename": None},
+             {"filename": PR + "/skills/t/new.py", "status": "removed", "previous_filename": None},
+             {"filename": PR + "/skills/t/mod.py", "status": "modified", "previous_filename": None}]
+    assert_gated(run(base, head, files=files), "fail-closed")
+
+
+def test_r4_a_404_on_a_listed_file_fails_closed():
+    class Ghost(FakeFetcher):
+        def list_files(self, sha):
+            return super().list_files(sha) + [PR + "/lib/ghost.js"]
+
+    base = base_p(**{SCRIPT: b"1\n"})
+    head = dict(base, **{SCRIPT: b"2\n"})
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
 
 
 # =================================================================================

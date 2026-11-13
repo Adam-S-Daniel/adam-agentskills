@@ -113,6 +113,8 @@ LAYOUT_NAMES = {"hooks": "hook-file", "bin": "bin-file", "commands": "plugin-lay
 # under hooks/ or bin/. A README, LICENSE or CHANGELOG is inert only as plain
 # text (no extension, .md or .txt); `README.js` or `license_check.py` is code.
 INERT_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+# Binary images the mention scan never reads. An .svg is text, so it is read.
+RASTER_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
 INERT_TEXT_EXTENSIONS = ("", ".md", ".txt")
 INERT_TEXT_PREFIXES = ("readme", "license", "changelog")
 # Plugin-root directories whose contents Claude Code loads as components; any
@@ -407,9 +409,10 @@ def _hook_paths(config, root: str) -> Set[str]:
     return paths
 
 
-def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[object]:
-    """Every hook config one plugin root carries at one side: hooks/hooks.json,
-    each file a `hooks` value names, and each inline hook object."""
+def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[Tuple[Optional[str], object]]:
+    """Every hook config one plugin root carries at one side, as (file path or
+    None for an inline object, config): hooks/hooks.json, each file a `hooks`
+    value names, and each inline hook object."""
     sources = []
     if entry is not None and "hooks" in entry:
         sources.append(entry["hooks"])
@@ -423,11 +426,11 @@ def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[
             if isinstance(item, str):
                 files.append(_join(root, item))
             elif isinstance(item, dict):
-                yield item
+                yield None, item
     for path in sorted({f for f in files if f is not None}):
         data = snap.json(path)
         if data is not _ABSENT:
-            yield data
+            yield path, data
 
 
 def _manifests(root: str) -> Tuple[str, str]:
@@ -484,8 +487,9 @@ def _command_lines(text: str) -> Counter:
 class _Skill:
     """What the gate reads from one SKILL.md or command file."""
 
-    def __init__(self, values, body, commands, frontmatter=""):
+    def __init__(self, values, body, commands, frontmatter="", tools=_ABSENT):
         self.frontmatter = frontmatter  # the frontmatter text, for static mentions
+        self.tools = tools        # an agent's `tools` value, which can grant a shell
         self.values = values      # {hooks, allowed-tools: value or _ABSENT}
         self.body = body          # the text after the frontmatter
         self.commands = commands  # Counter of load-time shell lines
@@ -562,7 +566,8 @@ def _read_skill(data: Optional[bytes], path: str) -> _Skill:
         return _Skill(absent, body, commands, strict)
     if not isinstance(meta, dict):
         raise GateError(f"the frontmatter of {json.dumps(path)} is not a mapping")
-    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands, strict)
+    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands,
+                  strict, meta.get("tools", _ABSENT))
 
 
 def _named_paths(snap: Snapshot, root: str, entry: Optional[dict], key: str) -> Set[str]:
@@ -624,6 +629,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         return [("fail-closed", f"{len(files)} changed files reaches the API's {MAX_CHANGED_FILES}-file cap")]
 
     changed: Set[str] = set()
+    removed: Set[str] = set()  # deleted, or the old name of a rename
     expect: Dict[str, str] = {}
     for item in files:
         if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
@@ -634,12 +640,15 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             expect[name] = "present-head-only"
         elif status == "removed":
             expect[name] = "present-base-only"
+            removed.add(name)
         elif status == "modified":
             expect[name] = "both"
         elif status == "renamed":
             expect[name] = "present-head-only"
         if isinstance(previous, str):
             changed.add(previous)
+            if status == "renamed":
+                removed.add(previous)
             if status == "renamed":
                 expect.setdefault(previous, "present-base-only")
 
@@ -700,13 +709,19 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         return listing_cache[snap.sha]
 
     def fully_deleted(path, root):
-        """Whether `path` is in a skill directory that has no file left at head
-        (a skill retired whole, nothing added or renamed into it)."""
+        """Whether `path` is in a skill directory retired whole: the pull
+        request's file list shows every changed path under it removed, and the
+        head tree has nothing left under it. A pair of answers that cannot both
+        be true fails closed."""
         parts = path[len(root) + 1:].split("/") if root else path.split("/")
         if len(parts) < 3 or parts[0].lower() != "skills":
             return False
         prefix = "/".join(([root] if root else []) + parts[:2]).lower() + "/"
-        return not any(f.lower().startswith(prefix) for f in files_at(head_snap))
+        under = {p for p in changed if p.lower().startswith(prefix)}
+        left = {f for f in files_at(head_snap) if f.lower().startswith(prefix)}
+        if left & removed or (not left and under - removed):
+            raise GateError(f"the file list and the head tree disagree about {json.dumps(prefix)}")
+        return not left and bool(under)
 
     def mention_patterns(skill):
         name = re.escape(skill.lower())
@@ -722,26 +737,43 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
 
     texts_cache: Dict[str, list] = {}
 
+    def read_listed(snap, name):
+        data = snap.raw(name)
+        if data is None:
+            # The tree lists it, so a 404 is a failure, not an absence.
+            raise GateError(f"{json.dumps(name)} is listed at {snap.side} but could not be read")
+        return data
+
     def texts(root):
-        """(path, normalized text) of every text file under `root`, plus the
-        marketplace file, at base and at head. JSON is read twice, raw and
-        decoded (so \\/ and \\uXXXX spell the same path); a file that is not
-        UTF-8 is skipped."""
+        """(path, normalized text or None) of every file under `root`, plus the
+        marketplace file, at base and at head, but for raster images. JSON is
+        read twice, raw and decoded (so \\/ and \\uXXXX spell the same path).
+        Text is UTF-8, or UTF-16 after a BOM; a file that is neither is None."""
         if root not in texts_cache:
             out = []
             for snap in (base_snap, head_snap):
-                names = [n for n in [MARKETPLACE] + sorted(files_at(snap))
+                listed = set(files_at(snap))
+                names = [n for n in [MARKETPLACE] + sorted(listed)
                          if (n == MARKETPLACE or _under(n, root))
-                         and not n.lower().endswith(INERT_IMAGE_EXTENSIONS)]
+                         and not n.lower().endswith(RASTER_EXTENSIONS)]
                 with ThreadPoolExecutor(max_workers=8) as pool:
                     blobs = list(pool.map(snap.raw, names))
                 for name, data in zip(names, blobs):
                     if data is None:
+                        if name in listed:
+                            raise GateError(
+                                f"{json.dumps(name)} is listed at {snap.side} but could not be read")
                         continue
                     try:
                         text = data.decode("utf-8")
                     except UnicodeDecodeError:
-                        continue
+                        try:
+                            if not data.startswith((b"\xff\xfe", b"\xfe\xff")):
+                                raise UnicodeDecodeError("utf-16", b"", 0, 1, "no BOM")
+                            text = data.decode("utf-16")
+                        except UnicodeDecodeError:
+                            out.append((name.lower(), None))
+                            continue
                     forms = [text]
                     try:
                         forms.append(json.dumps(json.loads(text), ensure_ascii=False))
@@ -758,8 +790,9 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             found = False
             for snap in (base_snap, head_snap):
                 for name in files_at(snap):
-                    if _under(name, root) and posixpath.basename(name).lower() == "skill.md":
-                        found |= _grants_bash(_read_skill(snap.raw(name), name).values["allowed-tools"])
+                    if _under(name, root) and name.lower().endswith(".md"):
+                        md = _read_skill(read_listed(snap, name), name)
+                        found |= _grants_bash(md.values["allowed-tools"]) or _grants_bash(md.tools)
             shell_cache[root] = found
         return shell_cache[root]
 
@@ -769,8 +802,19 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         own = f"{root + '/' if root else ''}skills/{skill}/".lower()
         patterns = mention_patterns(skill)
         return any(not (name.startswith(own) and name[len(own):].split("/")[0] in ("scripts", "tests"))
-                   and any(pat.search(text) for pat in patterns)
+                   and (text is None or any(pat.search(text) for pat in patterns))
                    for name, text in texts(root))
+
+    referenced: Set[str] = set()                              # (3)
+    for side, snap in (("base", base_snap), ("head", head_snap)):
+        for root in sorted(roots):
+            for config_path, config in _hook_configs(snap, root, entry_roots[side].get(root)):
+                referenced |= _hook_paths(config, root)
+                if config_path is not None:
+                    referenced.add(config_path)
+    for path in changed:
+        if any(_under(path, ref) for ref in referenced):
+            reasons.add(("hook-referenced", path))
 
     # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
@@ -779,7 +823,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                 continue
             rel = path[len(root) + 1:] if root else path
             low = rel.lower()
-            if fully_deleted(path, root):
+            if fully_deleted(path, root) and not any(_under(path, ref) for ref in referenced):
                 continue  # a skill retired whole does not gate on its own
             if low in LAYOUT_NAMES:
                 # A file or symlink at the directory's own name (plugins/x/hooks
@@ -815,7 +859,10 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                     # commands, and no text file in the plugin root names its
                     # directory. Only static mentions inside the plugin root are
                     # seen: a path built at run time, or named from outside it
-                    # (the repo's own .claude/settings.json), is not.
+                    # (the repo's own .claude/settings.json), is not. A module
+                    # path (`python -m pkg.mod`) and a path split by quoting
+                    # (`skills/"s"/x`) are dynamic in the same way. A file that
+                    # cannot be decoded blocks the exemption.
                     continue
                 if low.endswith(".md"):
                     # Frontmatter and commands are read on every .md, whatever
@@ -845,18 +892,10 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     elif markets["base"] is not _ABSENT and markets["head"] is _ABSENT:
         reasons.add(("marketplace-runtime-key", MARKETPLACE))
 
-    referenced: Set[str] = set()                              # (3)
-    for side, snap in (("base", base_snap), ("head", head_snap)):
-        for root in sorted(roots):
-            for config in _hook_configs(snap, root, entry_roots[side].get(root)):
-                referenced |= _hook_paths(config, root)
-    for path in changed:
-        if any(_under(path, ref) for ref in referenced):
-            reasons.add(("hook-referenced", path))
-
     for path in sorted(changed):                              # (6)
         if _is_skill_file(path, roots, named) and not any(
-                _under(path, r) and fully_deleted(path, r) for r in roots):
+                _under(path, r) and fully_deleted(path, r)
+                and not any(_under(path, ref) for ref in referenced) for r in roots):
             # A renamed file's old name is in `changed` too; reading a side
             # where the path is absent gives "no keys", so the pair compares.
             before = _read_skill(base_snap.raw(path), path)

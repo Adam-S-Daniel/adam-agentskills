@@ -335,13 +335,12 @@ _WRAPPER_PS1 = textwrap.dedent(
 
 
 @pytest.fixture()
-def ps1_argv(tmp_path):
+def ps1_argv(tmp_path, require_pwsh):
     """Returns a function that runs the real .ps1 script (via the stub
     wrapper above) with -PrintArgs and returns the final command line wt.exe
     (or, with -NoWindowsTerminal, wsl.exe) would have received.
     """
-    if not PWSH:
-        pytest.skip("pwsh (PowerShell 7+) is not on PATH")
+    require_pwsh(PWSH)
 
     wrapper = tmp_path / "wrapper.ps1"
     wrapper.write_text(_WRAPPER_PS1)
@@ -476,9 +475,8 @@ def _decode_encoded_command(cmdline: str) -> str:
 
 
 @pytest.fixture()
-def native(tmp_path):
-    if not PWSH:
-        pytest.skip("pwsh (PowerShell 7+) is not on PATH")
+def native(tmp_path, require_pwsh):
+    require_pwsh(PWSH)
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     stub = _write_claude_stub(bin_dir)
@@ -717,8 +715,6 @@ def test_ps1_no_windows_terminal_remains_direct_in_session0(ps1_argv):
 
 
 def _stub_windows_ps_for_bash(sh_argv):
-    if not PWSH:
-        pytest.skip("pwsh is not on PATH")
     wrapper = sh_argv.tmp / "bash-ps-wrapper.ps1"
     wrapper.write_text(
         "function Register-ScheduledTask { throw 'No registration in tests' }\n"
@@ -731,6 +727,7 @@ def _stub_windows_ps_for_bash(sh_argv):
     sh_argv.env["TEST_PWSH"] = PWSH
 
 
+@pytest.mark.needs_pwsh(PWSH)
 def test_sh_session0_task_preserves_argv_and_hides_prompt(sh_argv):
     _stub_windows_ps_for_bash(sh_argv)
     sh_argv.env["LAUNCH_CLAUDE_FORCE_SESSION0"] = "1"
@@ -811,9 +808,8 @@ catch { 'FAIL: ' + $_.Exception.Message; exit 1 }
     ("start-fails", True, 1), ("result-fails", True, 1),
     ("timeout", True, 1), ("poll-fails", True, 1),
 ])
+@pytest.mark.needs_pwsh(PWSH)
 def test_session0_task_lifecycle_is_always_cleaned_up(tmp_path, scenario, registered, expected):
-    if not PWSH:
-        pytest.skip("pwsh is not on PATH")
     wrapper = tmp_path / "task-stubs.ps1"
     wrapper.write_text(_TASK_STUBS)
     env = dict(os.environ, TEST_SESSION0_HELPER=str(SESSION0_HELPER), TEST_TASK_SCENARIO=scenario)
@@ -827,9 +823,8 @@ def test_session0_task_lifecycle_is_always_cleaned_up(tmp_path, scenario, regist
         assert "did not start" in proc.stdout
 
 
+@pytest.mark.needs_pwsh(PWSH)
 def test_session0_override_is_ignored_outside_dry_run(tmp_path):
-    if not PWSH:
-        pytest.skip("pwsh is not on PATH")
     wrapper = tmp_path / "session-id.ps1"
     wrapper.write_text(". $env:TEST_SESSION0_HELPER\nGet-LaunchSessionId -DryRun $false\n")
     env = dict(os.environ, TEST_SESSION0_HELPER=str(SESSION0_HELPER), LAUNCH_CLAUDE_FORCE_SESSION0="1")
@@ -845,9 +840,8 @@ def test_session0_override_is_ignored_outside_dry_run(tmp_path):
 
 
 @pytest.mark.parametrize("content", [b"", b"wsl.exe", b"\x00", b"wt.exe\x00"])
+@pytest.mark.needs_pwsh(PWSH)
 def test_session0_rejects_malformed_argument_handoff(tmp_path, content):
-    if not PWSH:
-        pytest.skip("pwsh is not on PATH")
     handoff = tmp_path / "argv.bin"
     handoff.write_bytes(content)
     wrapper = tmp_path / "bad-handoff.ps1"

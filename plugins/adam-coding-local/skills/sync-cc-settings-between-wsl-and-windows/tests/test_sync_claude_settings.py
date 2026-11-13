@@ -36,6 +36,8 @@ SCRIPT = Path(
 PWSH = os.environ.get("SYNC_CC_PWSH") or shutil.which("pwsh")
 if not PWSH:
     pytest.skip("pwsh (PowerShell 7+) is not on PATH", allow_module_level=True)
+# A pwsh that is on PATH but cannot start skips locally and fails in CI.
+pytestmark = pytest.mark.needs_pwsh(PWSH)
 
 # A Windows pwsh.exe driven from Linux (WSL interop) needs Windows paths.
 _WINDOWS_PWSH_FROM_LINUX = sys.platform.startswith("linux") and PWSH.lower().endswith(".exe")

@@ -103,18 +103,6 @@ waivers:
   - skill: cms-platform/code-quality
     cite: "code-quality.yml"
     reason: "the skill says no repo in the fleet has this workflow any more"
-  - skill: cms-platform/github-actions-sha-pinning
-    cite: "actions.lock"
-    reason: "the skill says cms-platform does not use a lockfile"
-  - skill: cms-platform/github-actions-sha-pinning
-    cite: ".github/workflows/dependabot-comment-sync.yml"
-    reason: "the skill says this workflow was deleted"
-  - skill: cms-platform/github-actions-sha-pinning
-    cite: "scripts/sync-action-pin-comments.sh"
-    reason: "the skill says this script was deleted"
-  - skill: cms-platform/github-actions-sha-pinning
-    cite: "sync-action-pin-comments.sh"
-    reason: "the skill says this script was deleted"
   - skill: cms-platform/preview-environments
     cite: "teardown-preview.yml"
     reason: "the skill says there is no separate teardown-preview.yml"

@@ -40,7 +40,8 @@ def run_inner(tmp_path, fake_pwsh_body, extra_env=None):
     (work / "conftest.py").write_text(ROOT_CONFTEST.read_text())
     (work / "test_inner.py").write_text(INNER_TEST)
     env = {k: v for k, v in os.environ.items() if k not in ("CI", "GITHUB_ACTIONS")}
-    env["PATH"] = f"{bin_dir}{os.pathsep}/usr/bin{os.pathsep}/bin"
+    # Only the temp dir: a pwsh elsewhere on the machine must be unreachable.
+    env["PATH"] = str(bin_dir)
     env.update(extra_env or {})
     return subprocess.run(
         [sys.executable, "-m", "pytest", "-q", "-rsf", "-p", "no:cacheprovider", str(work)],

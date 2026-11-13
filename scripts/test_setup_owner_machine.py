@@ -41,7 +41,7 @@ def run_setup(tmp_path: Path, *args: str, env_extra=None, path_first=None) -> su
     home.mkdir(exist_ok=True)
     env = {k: v for k, v in os.environ.items()
            if k not in ("AGENTSKILLS_OWNER_MACHINE", "AGENTSKILLS_REPOS", "WSL_DISTRO_NAME",
-                        "AGENTSKILLS_HOST_KIND")}
+                        "AGENTSKILLS_HOST_KIND", "XDG_CONFIG_HOME")}
     path = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p and "/mnt/" not in p]
     if path_first is not None:
         path.insert(0, str(path_first))
@@ -145,6 +145,67 @@ def test_only_the_owner_machine_opt_in_installs_the_agent_checks_hooks(tmp_path)
     listing = git_global(tmp_path, "--list").stdout
     assert "hasconfig:remote.*.url:https://github.com/Adam-S-Daniel/**.path=~/.config/git/agent-hooks.inc" in listing
     assert not re.search(r"^hook\.", listing, re.M)
+
+
+def owner_marker_lines(proc) -> list:
+    return [line for line in proc.stdout.splitlines() if line.startswith("CREATED  ")]
+
+
+def test_owner_mode_creates_an_empty_owner_marker_under_home_config(tmp_path):
+    proc = run_setup(tmp_path, "--owner-machine")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    marker = tmp_path / "home" / ".config" / "fleet-guidance" / "owner"
+    assert marker.is_file() and marker.read_bytes() == b""
+    assert f"CREATED  {marker}" in owner_marker_lines(proc)
+
+
+def test_owner_mode_puts_the_marker_under_an_absolute_xdg_config_home(tmp_path):
+    xdg = tmp_path / "xdg-config"
+    proc = run_setup(tmp_path, "--owner-machine", env_extra={"XDG_CONFIG_HOME": str(xdg)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    marker = xdg / "fleet-guidance" / "owner"
+    assert marker.is_file() and marker.read_bytes() == b""
+    assert f"CREATED  {marker}" in owner_marker_lines(proc)
+    assert not (tmp_path / "home" / ".config" / "fleet-guidance").exists()
+
+
+def test_a_relative_xdg_config_home_is_ignored_for_the_marker(tmp_path):
+    proc = run_setup(tmp_path, "--owner-machine", env_extra={"XDG_CONFIG_HOME": "relative/cfg"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert (tmp_path / "home" / ".config" / "fleet-guidance" / "owner").is_file()
+    assert not (tmp_path / "relative").exists()
+
+
+def test_a_second_owner_run_leaves_the_marker_alone_and_says_nothing(tmp_path):
+    first = run_setup(tmp_path, "--owner-machine")
+    assert first.returncode == 0, first.stdout + first.stderr
+    marker = tmp_path / "home" / ".config" / "fleet-guidance" / "owner"
+    before = marker.stat()
+    second = run_setup(tmp_path, "--owner-machine")
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert owner_marker_lines(second) == []
+    after = marker.stat()
+    assert (after.st_ino, after.st_mtime_ns, after.st_size) == \
+        (before.st_ino, before.st_mtime_ns, before.st_size)
+
+
+def test_an_existing_owner_marker_with_content_is_left_byte_identical(tmp_path):
+    marker = tmp_path / "home" / ".config" / "fleet-guidance" / "owner"
+    marker.parent.mkdir(parents=True)
+    marker.write_bytes(b"kept\xff\n")
+    proc = run_setup(tmp_path, "--owner-machine")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert marker.read_bytes() == b"kept\xff\n"
+    assert owner_marker_lines(proc) == []
+
+
+def test_a_plain_run_creates_no_owner_marker(tmp_path):
+    xdg = tmp_path / "xdg-config"
+    proc = run_setup(tmp_path, env_extra={"XDG_CONFIG_HOME": str(xdg)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not (tmp_path / "home" / ".config").exists()
+    assert not xdg.exists()
+    assert "owner marker" in proc.stdout
 
 
 def test_a_plain_run_does_not_touch_a_stale_hook_section(tmp_path):

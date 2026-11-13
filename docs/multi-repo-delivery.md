@@ -237,6 +237,82 @@ fi
 for f in "$project"/*/scripts/install-agent-hooks.sh; do
   [ -f "$f" ] && { bash "$f" --system || true; break; }
 done
+
+# ---- BEGIN owner block: fleet guidance (_agent-guidance ADR 0043) ----
+# The pin is these two variables and nothing else. To bump it, fetch first,
+# then take _agent-guidance's current main commit and that file's digest:
+#   git -C <checkout> rev-parse origin/main
+#   git -C <checkout> show origin/main:.claude/hooks/fleet-memory.sh | sha256sum
+# Then re-paste this whole script into every environment that uses it.
+fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
+fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
+# The verified installer stays here: it re-reads its own file after it exits
+# (to write a delivery receipt), so it must outlive this script's temp dir.
+fleet_hook_dir=/opt/fleet-guidance
+fleet_guidance_install() (
+  fail() { echo "fleet-guidance: setup skipped ($1)"; exit 0; }
+  raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
+  command -v curl >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
+    && command -v sha256sum >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 \
+    || fail "curl, git, timeout or sha256sum missing"
+  case "$user_claude" in
+    */.claude) ;;
+    *) fail "unexpected Claude directory" ;;
+  esac
+  umask 077
+  mkdir -p "$fleet_hook_dir" && chmod 700 "$fleet_hook_dir" || fail "no installer directory"
+  tmp=$(mktemp -d) || fail "no temporary directory"
+  dl=$(mktemp "$fleet_hook_dir/.download.XXXXXX") || fail "no installer directory"
+  trap 'rm -rf "$tmp"; rm -f "$dl"' EXIT
+  hook="$fleet_hook_dir/fleet-memory-$fleet_pin_sha256.sh"
+  # The installer: reuse a verified copy, else fetch the pin, verify, then move
+  # it into place (same directory, so the move is atomic). Run only verified bytes.
+  if [ -f "$hook" ] && [ ! -L "$hook" ] \
+      && [ "$(sha256sum < "$hook" | cut -d' ' -f1)" = "$fleet_pin_sha256" ]; then
+    :
+  else
+    curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+      --max-filesize 4194304 -o "$dl" \
+      "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh" || fail "installer download failed"
+    [ "$(sha256sum < "$dl" | cut -d' ' -f1)" = "$fleet_pin_sha256" ] \
+      || fail "installer digest mismatch; not run"
+    mv -f "$dl" "$hook" || fail "installer could not be stored"
+  fi
+  # The payload: main's HEAD commit (a commit-only fetch; the proxy refuses the
+  # REST API for repos not attached to the session), base.md at that commit, and
+  # its committer time as the stamp, as the plugin's hook does.
+  g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE
+     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES
+     -u GIT_SHALLOW_FILE -u GIT_NAMESPACE -u GIT_GRAFT_FILE
+     GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=)
+  "${g[@]}" git init -q --bare --template= "$tmp/g" >/dev/null 2>&1 || fail "commit lookup failed"
+  "${g[@]}" timeout -k 5 30 git --git-dir="$tmp/g" \
+    -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
+    -c protocol.allow=never -c protocol.https.allow=always \
+    fetch -q --no-tags --depth=1 --filter=tree:0 \
+    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main >/dev/null 2>&1 \
+    || fail "commit lookup failed"
+  line=$("${g[@]}" git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD 2>/dev/null) \
+    || fail "commit lookup failed"
+  line=${line//$'\r'/}
+  head_sha=${line%% *}
+  stamp=${line#* }
+  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]] || fail "commit lookup failed"
+  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
+    --max-filesize 1048576 -o "$tmp/base.md" \
+    "$raw/$head_sha/agents-md/base.md" || fail "base.md download failed"
+  # The plugin's own check: the exact header every base.md starts with.
+  header=$'# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**'
+  n="$(LC_ALL=C; printf '%s' "${#header}")"
+  [ "$(head -c "$n" "$tmp/base.md"; printf x)" = "${header}x" ] || fail "base.md failed validation"
+  # HOME is the home the session runs as, the parent of the .claude dir above.
+  env HOME="${user_claude%/.claude}" FLEET_GUIDANCE_OWNER=1 \
+    FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" \
+    bash "$hook" || fail "installer exited nonzero"
+  echo "fleet-guidance-source: _agent-guidance@$head_sha"
+)
+fleet_guidance_install || echo "fleet-guidance: setup skipped (unexpected failure)"
+# ---- END owner block ----
 exit 0
 ```
 
@@ -279,9 +355,26 @@ record of which guidance loaded moves to the owner's plugin. The owner
 gets the guidance from the account-synced `adam-anything-anywhere` plugin
 ([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
 its SessionStart hook fetches `main`'s HEAD commit and `base.md` and installs
-it. After ADR 0043's step 3, the environment's setup script also installs it,
-from a reviewed `fleet-memory.sh` fetched by commit and SHA-256. Anyone else's
-session reads the repo stub alone, which is the intended state.
+it. The environment's setup script also installs it, in the owner block at
+the end of the snippet above: that is the guaranteed route (ADR 0043), because
+it does not depend on the account sync reaching the surface. The block fetches
+`fleet-memory.sh` at a pinned `_agent-guidance` commit and runs it only if its
+SHA-256 matches, so the setup script never executes unreviewed code; the
+guidance text itself comes from `main`'s HEAD, stamped with that commit's
+committer time. Where the plugin's hook and the block both run, the
+[freshest-stamp rule](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
+(ADR 0016) arbitrates and the second reports `current`. The block never fails
+the setup: any problem prints one `fleet-guidance: setup skipped` line and the
+script goes on. Bump the pin (two variables, commented in the block) when
+`fleet-memory.sh` changes in `_agent-guidance` (fetch first), and re-paste the
+whole script into every environment. A test holds the pin to the bundled copy
+of `fleet-memory.sh` in this repo, so the two move together.
+
+The environment snapshot is cached after setup (about 7 days), so this route
+serves `base.md` as of setup time; the account-synced plugin refreshes it every
+session. "The second reports `current`" holds only when both deliveries carry
+the same digest; a newer plugin copy wins on its stamp and replaces this one. Anyone else's session reads the
+repo stub alone, which is the intended state.
 
 What stays here is two groups, `skills-bootstrap` and the `agent-checks` guard,
 and they are separate GROUPS, not one, because a group carries one `matcher`

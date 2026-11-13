@@ -13651,7 +13651,9 @@ def _documented_setup_script(project: Path, user_claude: Path) -> str:
     script = scripts[0]
     for line, value in (("\nproject=/home/user\n", f"\nproject={project}\n"),
                         ("\nuser_claude=/root/.claude\n",
-                         f"\nuser_claude={user_claude}\n")):
+                         f"\nuser_claude={user_claude}\n"),
+                        ("\nfleet_hook_dir=/opt/fleet-guidance\n",
+                         f"\nfleet_hook_dir={user_claude.parent}/fleet-hook\n")):
         assert script.count(line) == 1, line
         script = script.replace(line, value)
     return script
@@ -13675,6 +13677,11 @@ def _run_setup_script(tmp_path: Path, apt_exit: int):
     git = stubs / "git"
     git.write_text('#!/bin/bash\necho "git version 2.56.0"\n', encoding="utf-8")
     git.chmod(0o755)
+    # The owner block downloads from the network; a failing curl keeps the
+    # test offline and exercises its never-fatal path.
+    curl = stubs / "curl"
+    curl.write_text("#!/bin/bash\nexit 22\n", encoding="utf-8")
+    curl.chmod(0o755)
     script = tmp_path / "setup.sh"
     script.write_text(_documented_setup_script(project, user_claude),
                       encoding="utf-8")
@@ -13811,3 +13818,116 @@ def test_setup_script_doubles_the_skill_listing_budget():
     # At the default 1% the listing drops descriptions for the skills listed
     # last, which then cannot trigger; 0.02 keeps every description.
     assert _documented_settings()["skillListingBudgetFraction"] == 0.02
+
+
+def _owner_block(hook_dir: Path = None) -> str:
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    begin = "# ---- BEGIN owner block"
+    end = "# ---- END owner block ----"
+    assert document.count(begin) == 1 and document.count(end) == 1
+    block = begin + document.split(begin, 1)[1].split(end, 1)[0]
+    if hook_dir is not None:
+        line = "\nfleet_hook_dir=/opt/fleet-guidance\n"
+        assert block.count(line) == 1
+        block = block.replace(line, f"\nfleet_hook_dir={hook_dir}\n")
+    return block
+
+
+def test_owner_block_has_exactly_one_well_formed_pin_pair():
+    # The pin cannot be checked against the pinned commit without the network,
+    # so this holds its shape: two variables, defined once, a 40-hex commit and
+    # a 64-hex digest. A fetched-file check lives in the live run, not here.
+    block = _owner_block()
+    commits = re.findall(r"^fleet_pin_commit=([0-9a-f]{40})$", block, re.M)
+    digests = re.findall(r"^fleet_pin_sha256=([0-9a-f]{64})$", block, re.M)
+    assert len(commits) == 1 and len(digests) == 1
+    assert block.count("fleet_pin_commit=") == 1
+    assert block.count("fleet_pin_sha256=") == 1
+    assert len(re.findall(r"\b[0-9a-f]{40}\b", block)) == 1
+    assert len(re.findall(r"\b[0-9a-f]{64}\b", block)) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_owner_block_failure_is_one_line_and_not_fatal(tmp_path):
+    proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    lines = [l for l in proc.stdout.splitlines() if l.startswith("fleet-guidance:")]
+    assert lines == ["fleet-guidance: setup skipped (installer download failed)"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_owner_block_refuses_an_installer_whose_digest_differs(tmp_path):
+    # A download that does not match the pin must never run.
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    ran = tmp_path / "ran"
+    curl = stubs / "curl"
+    curl.write_text(
+        '#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+        f'printf \'touch "{ran}"\\n\' > "$out"\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    script = tmp_path / "block.sh"
+    script.write_text(f"user_claude={tmp_path}/home/.claude\n{_owner_block(tmp_path / 'hook')}",
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    proc = subprocess.run([BASH, str(script)], capture_output=True,
+                          text=True, env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "fleet-guidance: setup skipped (installer digest mismatch; not run)"
+    assert not ran.exists()
+
+
+BUNDLED_FLEET_MEMORY = (REPO_ROOT / "plugins" / "adam-anything-anywhere" / "hooks"
+                        / "fleet-guidance" / "fleet-memory.sh")
+
+
+def test_owner_block_pin_is_the_bundled_fleet_memory_digest():
+    # The plugin's bundled fleet-memory.sh is a verbatim copy of the one the
+    # block downloads, so the pin and the bundled copy move together.
+    import hashlib
+    pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", _owner_block(), re.M).group(1)
+    assert pin == hashlib.sha256(BUNDLED_FLEET_MEMORY.read_bytes()).hexdigest()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_owner_block_installs_with_the_stamp_and_the_session_home(tmp_path):
+    # Success path, offline: curl serves the pinned bytes (the bundled copy) and
+    # a synthetic base.md; git reports a fixed head commit and committer time.
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    base = tmp_path / "served-base.md"
+    base.write_text("# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**\n\nSynthetic rule.\n",
+                    encoding="utf-8")
+    curl = stubs / "curl"
+    curl.write_text(
+        '#!/bin/bash\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2;; http*) url=$1;; esac; shift; done\n'
+        f'case "$url" in */fleet-memory.sh) cp "{BUNDLED_FLEET_MEMORY}" "$out";;\n'
+        f'*/base.md) cp "{base}" "$out";; *) exit 22;; esac\n',
+        encoding="utf-8")
+    git = stubs / "git"
+    head = "ab" * 20
+    git.write_text(
+        '#!/bin/bash\ncase " $* " in *" log "*) echo "' + head + ' 1794606898";; esac\nexit 0\n',
+        encoding="utf-8")
+    for tool in (curl, git):
+        tool.chmod(0o755)
+    home = tmp_path / "home"
+    script = tmp_path / "block.sh"
+    script.write_text(f"user_claude={home}/.claude\n{_owner_block(tmp_path / 'hook')}",
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
+               FLEET_GUIDANCE_RECEIPT="0")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "fleet-guidance: installed" in proc.stdout
+    assert f"fleet-guidance-source: _agent-guidance@{head}" in proc.stdout
+    memory = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Synthetic rule." in memory
+    assert "fleet-guidance-delivered: 1794606898" in memory
+    pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", _owner_block(), re.M).group(1)
+    assert (tmp_path / "hook" / f"fleet-memory-{pin}.sh").is_file()

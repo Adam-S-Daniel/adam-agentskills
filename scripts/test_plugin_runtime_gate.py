@@ -523,6 +523,82 @@ def test_every_gate_file_exists():
 
 
 # =================================================================================
+# (i) skill frontmatter hooks / allowed-tools
+# =================================================================================
+
+SKILL = "plugins/alpha/skills/one/SKILL.md"
+HOOKED = (b"---\nname: one\nhooks:\n  PreToolUse:\n    - matcher: Bash\n"
+          b"      hooks:\n        - type: command\n          command: ./check.sh\n---\nbody\n")
+
+
+def _skill_run(before, after, key_path=SKILL):
+    base = tree(**{key_path: before})
+    head = dict(base, **{key_path: after})
+    return run(base, head)
+
+
+def test_adding_frontmatter_hooks_to_an_existing_skill_gates():
+    assert_gated(_skill_run(b"---\nname: one\n---\n", HOOKED), "skill-frontmatter-runtime-key")
+
+
+def test_adding_allowed_tools_to_an_existing_skill_gates():
+    after = b"---\nname: one\nallowed-tools: Bash(git:*)\n---\n"
+    assert_gated(_skill_run(b"---\nname: one\n---\n", after), "skill-frontmatter-runtime-key")
+
+
+def test_changing_or_removing_allowed_tools_gates():
+    two = b"---\nname: one\nallowed-tools: Read\n---\n"
+    three = b"---\nname: one\nallowed-tools: Read, Bash\n---\n"
+    assert_gated(_skill_run(two, three), "skill-frontmatter-runtime-key")
+    assert_gated(_skill_run(two, b"---\nname: one\n---\n"), "skill-frontmatter-runtime-key")
+
+
+def test_a_new_skill_carrying_either_key_gates():
+    path = "plugins/alpha/skills/two/SKILL.md"
+    base = tree()
+    for text in (HOOKED, b"---\nname: two\nallowed-tools: Read\n---\n"):
+        head = dict(base, **{path: text})
+        assert_gated(run(base, head), "skill-frontmatter-runtime-key")
+
+
+def test_a_new_skill_without_either_key_does_not_gate():
+    base = tree()
+    head = dict(base, **{"plugins/alpha/skills/two/SKILL.md": b"---\nname: two\n---\nbody\n"})
+    assert_not_gated(run(base, head))
+
+
+def test_an_unchanged_frontmatter_does_not_gate_whatever_it_holds():
+    before = b"---\nname: one\nallowed-tools: Read\n---\nold body\n"
+    after = b"---\nname: one\nallowed-tools: Read\n---\nnew body\n"
+    assert_not_gated(_skill_run(before, after))
+
+
+def test_reformatted_but_equal_frontmatter_does_not_gate():
+    before = b"---\nname: one\nallowed-tools: [Read, Bash]\n---\n"
+    after = b"---\nallowed-tools:\n  - Read\n  - Bash\nname: one\n---\n"
+    assert_not_gated(_skill_run(before, after))
+
+
+def test_other_frontmatter_keys_changing_does_not_gate():
+    before = b"---\nname: one\ndescription: a\n---\n"
+    after = b"---\nname: one\ndescription: b\n---\n"
+    assert_not_gated(_skill_run(before, after))
+
+
+def test_a_skill_md_whose_frontmatter_does_not_parse_gates():
+    assert_gated(_skill_run(b"---\nname: one\n---\n", b"---\nname: [unclosed\n---\n"),
+                 "fail-closed")
+
+
+def test_a_renamed_skill_md_is_compared_with_its_old_name():
+    old, new = "plugins/alpha/skills/one/SKILL.md", "plugins/alpha/skills/uno/SKILL.md"
+    base = tree()
+    head = {k: v for k, v in base.items() if k != old}
+    head[new] = HOOKED
+    assert_gated(run(base, head, renames={new: old}), "skill-frontmatter-runtime-key")
+
+
+# =================================================================================
 # (g) fail closed
 # =================================================================================
 

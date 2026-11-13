@@ -6,77 +6,66 @@ thing, `gated=true|false`, and the workflow's `plugin-runtime-approval` job
 waits for the owner's approval on the `plugin-runtime-review` environment when
 it is true.
 
-A pull request is GATED when any of these holds:
+The gate denies by default. A pull request is GATED when any of these holds:
 
-  (a) hook-file           a changed path (old or new name) is under
-                          <plugin-root>/hooks/;
-  (b) package-or-settings a changed path is <plugin-root>/settings.json,
-                          package.json, or a lockfile Claude Code installs from
-                          (bun.lock, bun.lockb, npm-shrinkwrap.json,
-                          package-lock.json);
-  (c) manifest-runtime-key a manifest (<root>/.claude-plugin/plugin.json or
-                          <root>/plugin.json) changed and its `hooks` or
-                          `settings` value differs between base and head;
-  (d) marketplace-runtime-key .claude-plugin/marketplace.json changed and an
-                          entry's `hooks` or `settings` differs, or an added
-                          entry carries either;
-  (e) hook-referenced     a changed path is, or lies under, a path a hook
-                          names after the plugin root, at base or head, in
-                          its `command` or `commandWindows` (Codex runs that
-                          one on Windows) or an `args` element. The root is
-                          spelled ${CLAUDE_PLUGIN_ROOT}, $CLAUDE_PLUGIN_ROOT,
+  (1) plugin-path         a changed path (added, modified, removed, or either
+                          name of a rename) lies under a plugin root, unless it
+                          is on the inert list below. Codes that say more:
+                          hook-file (<root>/hooks), bin-file (<root>/bin, which
+                          Claude Code puts on PATH, ADR 0017), package-or-
+                          settings (<root>/settings.json, package.json or a
+                          lockfile), manifest-runtime-key (a plugin manifest),
+                          plugin-layout-path (a file or symlink AT a layout
+                          directory's own name). Plugin roots are every local
+                          `source` in marketplace.json at base and at head,
+                          plus every plugins/<name>/ the diff touches; names
+                          match without regard to case.
+  (2) marketplace-runtime-key
+                          .claude-plugin/marketplace.json, under any spelling
+                          or case, changed in anything but its inert keys
+                          (top-level description, version, owner, keywords,
+                          homepage, repository, license, author, and
+                          `metadata` apart from `pluginRoot`); it is missing at
+                          head when base had one; or its entries repeat a name.
+  (3) hook-referenced     a changed path is, or lies under, a path a hook
+                          names after the plugin root, at base or head, in its
+                          `command`, `commandWindows` or an `args` element,
+                          even when it is otherwise inert. The root is spelled
+                          ${CLAUDE_PLUGIN_ROOT}, $CLAUDE_PLUGIN_ROOT,
                           ${PLUGIN_ROOT}, $PLUGIN_ROOT, or cmd.exe's
-                          %PLUGIN_ROOT% / %CLAUDE_PLUGIN_ROOT%;
-  (f) gate-itself         the gate's own workflow, this script or its tests;
-  (g) fail-closed         anything this script cannot decide: an API error, a
+                          %PLUGIN_ROOT% / %CLAUDE_PLUGIN_ROOT%.
+  (4) gate-itself         the gate's own workflow, this script or its tests.
+  (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
-                          3000-file cap, or anything unexpected;
-  (h) bin-file            a changed path (old or new name) is under
-                          <plugin-root>/bin/. Claude Code puts that directory
-                          on the session's PATH, so what is in it runs
-                          without a model choosing it, like a hook (ADR 0017);
-  (i) skill-frontmatter-runtime-key
-                          a changed <plugin-root>/skills/<skill>/SKILL.md (old
-                          or new name) whose YAML frontmatter `hooks` or
-                          `allowed-tools` differs between base and head, or is
-                          present on a new skill. Claude Code honors both:
-                          skill-scoped hooks run code, `allowed-tools` skips
-                          permission prompts. The frontmatter is parsed with
-                          PyYAML (never a regex); one that does not parse, or
-                          a missing PyYAML, is (g);
-  (j) skill-body-command  a changed SKILL.md (any case, anywhere), command file
-                          (<plugin-root>/commands/**/*.md, .claude/commands/
-                          **/*.md) or .md file under a path a manifest
-                          `skills` or `commands` key names, whose load-time
-                          shell commands differ between base and head (added,
-                          removed or edited). Claude Code runs a fenced block
-                          opened anywhere by three backticks and an
-                          exclamation mark, and an inline exclamation mark
-                          plus backtick command after whitespace or at a line
-                          start, spanning lines; its own two regexes are
-                          ported with the JS whitespace class, as in
-                          _agent-guidance's agent-checks `skill-shell`;
-  (k) skill-body-bash     a body change in such a file whose `allowed-tools`
-                          grants Bash (or PowerShell) at base or head;
-  (m) layout and case       a changed path that is, not only lies under, a plugin
-                          root's hooks, bin, commands, skills or .claude-plugin
-                          (a symlink has no trailing slash); a marketplace
-                          entry's `source` (any shape, existing entries) and
-                          `metadata.pluginRoot`; a new entry whose local
-                          source this PR adds no files under. Plugin-root
-                          names and hook/bin/manifest paths match without
-                          regard to case. (check_consistency.py already refuses
-                          any symlink under plugins/; the gate cannot see file
-                          modes, and a root can sit outside plugins/.)
-  (l) the frontmatter keys of (i) are read at every such path, not only
-                          <root>/skills/<skill>/SKILL.md. A manifest or
-                          marketplace entry's `skills` or `commands` value is
-                          a runtime key (c, d) in any shape, so a new entry
-                          with inline command `content`, or one retargeted at
-                          existing files, gates.
+                          3000-file cap, or anything unexpected.
+  (6) skill and command files, judged by what they change rather than by path
+      (a prose edit does not gate; these gate):
+      skill-frontmatter-runtime-key  YAML frontmatter `hooks`, `allowed-tools`
+                          or `shell` differs between base and head, or is
+                          present on a new file. Claude Code honors all three.
+                          A duplicate key or frontmatter that does not parse is
+                          (5); so is a missing PyYAML.
+      skill-body-command  load-time shell commands differ (added, removed or
+                          edited). Claude Code runs a fenced block opened
+                          anywhere by three backticks and an exclamation mark,
+                          and an inline exclamation mark plus backtick command
+                          after whitespace or at a line start, spanning lines;
+                          its own two regexes are ported with the JS
+                          whitespace class, as in _agent-guidance's
+                          agent-checks `skill-shell`.
+      skill-body-bash     a body change in a file whose `allowed-tools` grants
+                          Bash (or PowerShell) at base or head.
+      A skill or command file is a SKILL.md (any case, anywhere), a
+      <plugin-root>/commands/**/*.md, a .claude/commands/**/*.md, or a .md under
+      a path a manifest or marketplace entry's `skills` or `commands` value
+      names (which are runtime values, so naming one gates in (1) and (2)).
 
-Plugin roots are the union of every plugins/<name>/ the diff touches and every
-local `source` in marketplace.json, at base and at head.
+The inert list, which (1) skips: README*, LICENSE*, CHANGELOG*, PURPOSE.md, an
+image (.png .jpg .jpeg .gif .svg .webp), and a .md file that is not a skill or
+command file and has no `hooks`, `allowed-tools` or `shell` frontmatter and no
+load-time command at base or head. Nothing under <root>/hooks or <root>/bin is
+inert. (check_consistency.py already refuses any symlink under plugins/; the
+gate cannot see file modes.)
 
 Everything read from the pull request is untrusted DATA. It is fetched through
 the GitHub API (never checked out), parsed with json only, capped in size, and
@@ -101,7 +90,9 @@ import re
 import shlex
 import subprocess
 import sys
+import time
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import quote
 
@@ -110,15 +101,30 @@ MAX_FILE_BYTES = 1024 * 1024
 # The pull-request files API lists at most 3000 files. A diff that reaches the
 # cap may have been cut short, so reaching it is already "cannot decide".
 MAX_CHANGED_FILES = 3000
-RUNTIME_KEYS = ("hooks", "settings", "skills", "commands")
-# A marketplace entry's `source` chooses which directory (or remote repo) the
-# plugin's hooks and bin/ come from, so it is a runtime key there, in any shape.
-ENTRY_RUNTIME_KEYS = RUNTIME_KEYS + ("source",)
+# Marketplace keys that cannot change what runs; everything else gates.
+INERT_MARKETPLACE_KEYS = frozenset({
+    "description", "version", "owner", "keywords", "homepage", "repository",
+    "license", "author"})
 # Plugin-root names Claude Code reads; a file or symlink AT one of these names
 # (not only a path under it) changes what loads from the directory.
 LAYOUT_NAMES = {"hooks": "hook-file", "bin": "bin-file", "commands": "plugin-layout-path",
                 "skills": "plugin-layout-path", ".claude-plugin": "plugin-layout-path"}
-SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
+# What a change cannot hurt, matched on the basename in any case. Never applied
+# under hooks/ or bin/. A README, LICENSE or CHANGELOG is inert only as plain
+# text (no extension, .md or .txt); `README.js` or `license_check.py` is code.
+INERT_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+# A raster-named file that does not decode as text is skipped by the mention
+# scan; every other file that does not decode blocks the exemption.
+RASTER_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
+INERT_TEXT_EXTENSIONS = ("", ".md", ".txt")
+INERT_TEXT_PREFIXES = ("readme", "license", "changelog")
+# Plugin-root directories whose contents Claude Code loads as components; any
+# change under one gates, whatever the file is.
+NEVER_INERT_DIRS = ("agents/", "workflows/", "monitors/")
+# Manifest keys that cannot change what runs (mirrors INERT_MARKETPLACE_KEYS).
+INERT_MANIFEST_KEYS = frozenset({
+    "version", "description", "keywords", "author", "homepage", "repository", "license"})
+SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools", "shell")
 # Files Claude Code loads as a skill or command, relative to a plugin root.
 SKILL_MD_RE = re.compile(r"^skills/(?:[^/]+/)?SKILL\.md$", re.IGNORECASE)
 COMMAND_MD_RE = re.compile(r"^commands/.+\.md$", re.IGNORECASE)
@@ -162,34 +168,64 @@ class GateError(Exception):
     """A condition this script cannot decide. The message names paths only."""
 
 
+GH_ATTEMPTS = 3
+GH_TIMEOUT_SECONDS = 60
+_sleep = time.sleep  # tests replace it, so none of them waits
+
+
 class GhFetcher:
-    """The network side, behind two methods so tests can inject a fake."""
+    """The network side, behind a few methods so tests can inject a fake."""
 
     def __init__(self, repo: str, pr: int):
         self.repo = repo
         self.pr = pr
 
+    def _gh(self, args: List[str], what: str, ok_404: bool = False):
+        """One `gh` call, retried on a transient failure (a non-zero exit or a
+        timeout) with a short backoff, then failing closed. A 404 is an
+        answer, not a failure, when the caller asked for it."""
+        for attempt in range(GH_ATTEMPTS):
+            try:
+                proc = subprocess.run(
+                    ["gh"] + args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                    check=False, timeout=GH_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc = None
+            if proc is not None and proc.returncode == 0:
+                return proc
+            if proc is not None and ok_404 and b"HTTP 404" in proc.stderr:
+                return None
+            if attempt + 1 < GH_ATTEMPTS:
+                _sleep(attempt + 1)
+        code = "timeout" if proc is None else f"gh exit {proc.returncode}"
+        raise GateError(f"{what} failed ({code})")
+
     def changed_files(self) -> List[dict]:
-        proc = subprocess.run(
-            ["gh", "api", "--paginate",
-             f"repos/{self.repo}/pulls/{self.pr}/files?per_page=100",
+        proc = self._gh(
+            ["api", "--paginate", f"repos/{self.repo}/pulls/{self.pr}/files?per_page=100",
              "--jq", ".[] | {filename, status, previous_filename}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            raise GateError(f"listing the pull request's files failed (gh exit {proc.returncode})")
+            "listing the pull request's files")
         return _json_values(proc.stdout.decode("utf-8"))
+
+    def list_files(self, sha: str) -> List[str]:
+        """Every file path in the tree at sha."""
+        proc = self._gh(
+            ["api", f"repos/{self.repo}/git/trees/{sha}?recursive=1",
+             "--jq", "{truncated, paths: [.tree[] | select(.type == \"blob\") | .path]}"],
+            f"listing the tree at {sha[:7]}")
+        values = _json_values(proc.stdout.decode("utf-8"))
+        if len(values) != 1 or not isinstance(values[0], dict) or values[0].get("truncated") \
+                or not isinstance(values[0].get("paths"), list):
+            raise GateError(f"the tree at {sha[:7]} is truncated or unreadable")
+        return values[0]["paths"]
 
     def read(self, path: str, sha: str) -> Optional[bytes]:
         """The file's bytes at sha, or None when it does not exist there."""
-        proc = subprocess.run(
-            ["gh", "api", "-H", "Accept: application/vnd.github.raw",
+        proc = self._gh(
+            ["api", "-H", "Accept: application/vnd.github.raw",
              f"repos/{self.repo}/contents/{quote(path, safe='/')}?ref={sha}"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
-        if proc.returncode != 0:
-            if b"HTTP 404" in proc.stderr:
-                return None
-            raise GateError(f"reading {json.dumps(path)} failed (gh exit {proc.returncode})")
-        return proc.stdout
+            f"reading {json.dumps(path)}", ok_404=True)
+        return None if proc is None else proc.stdout
 
 
 def _json_values(text: str) -> List[object]:
@@ -217,11 +253,15 @@ class Snapshot:
         self.side = side
         self.changes = changes  # path -> "present-base-only" / "present-head-only" / "both" / "any"
         self._cache: Dict[str, object] = {}
+        self.listed: Optional[Set[str]] = None  # every path in this side's tree
 
     def raw(self, path: str) -> Optional[bytes]:
         data = self.fetcher.read(path, self.sha)
         if data is not None and len(data) > MAX_FILE_BYTES:
             raise GateError(f"{json.dumps(path)} at {self.side} is larger than {MAX_FILE_BYTES} bytes")
+        if data is None and self.listed is not None and path in self.listed:
+            # The tree lists it, so a 404 is a failure, not an absence.
+            raise GateError(f"{json.dumps(path)} is listed at {self.side} but could not be read")
         expected = self.changes.get(path)
         if expected is not None:
             must_exist = expected == "both" or expected == f"present-{self.side}-only"
@@ -237,10 +277,19 @@ class Snapshot:
                 self._cache[path] = _ABSENT
             else:
                 try:
-                    self._cache[path] = json.loads(data.decode("utf-8"))
+                    self._cache[path] = json.loads(
+                        data.decode("utf-8"), object_pairs_hook=_no_repeated_keys)
                 except (ValueError, UnicodeDecodeError):
                     raise GateError(f"{json.dumps(path)} at {self.side} is not valid JSON") from None
         return self._cache[path]
+
+
+def _no_repeated_keys(pairs):
+    """json's last-key-wins would hide an earlier value from this gate."""
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("repeated key")
+    return dict(pairs)
 
 
 def _norm(path: str) -> Optional[str]:
@@ -266,6 +315,31 @@ def _under(path: str, prefix: str) -> bool:
     return prefix == "" or path == prefix or path.startswith(prefix + "/")
 
 
+def _decode_text(data: bytes) -> Optional[str]:
+    """UTF-8, or UTF-32 / UTF-16 after a BOM; None when it is neither or the
+    text holds a NUL (which also catches UTF-16 written without a BOM)."""
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        codec = ("utf-32" if data.startswith((b"\xff\xfe\x00\x00", b"\x00\x00\xfe\xff"))
+                 else "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else None)
+        if codec is None:
+            return None
+        try:
+            text = data.decode(codec)
+        except UnicodeDecodeError:
+            return None
+    return None if "\x00" in text else text
+
+
+def _inert_name(path: str) -> bool:
+    name = posixpath.basename(path).lower()
+    stem, ext = posixpath.splitext(name)
+    if ext in INERT_IMAGE_EXTENSIONS or name == "purpose.md":
+        return True
+    return ext in INERT_TEXT_EXTENSIONS and stem.startswith(INERT_TEXT_PREFIXES)
+
+
 def _local_roots(marketplace) -> Dict[str, dict]:
     """Every local plugin root a marketplace.json names, mapped to its entry."""
     if marketplace is _ABSENT:
@@ -276,25 +350,27 @@ def _local_roots(marketplace) -> Dict[str, dict]:
     plugin_root = metadata.get("pluginRoot") if isinstance(metadata, dict) else None
     roots = {}
     for entry in marketplace.get("plugins", []):
-        if not isinstance(entry, dict) or not isinstance(entry.get("source"), str):
-            continue  # a remote source has no root in this repo
-        source = entry["source"]
+        if not isinstance(entry, dict):
+            continue
+        source = entry.get("source")
+        if isinstance(source, dict):
+            # A git-subdir or github source may point back into this repo, and
+            # the gate cannot tell: its `path` counts as a root either way.
+            source = source.get("path")
+        if not isinstance(source, str):
+            continue  # a remote source with no path has no root in this repo
+        remote = isinstance(entry.get("source"), dict)
         # Both readings of a relative source, with and without
         # metadata.pluginRoot: an extra root can only gate more, never less.
         for candidate in [source] + ([posixpath.join(plugin_root, source)]
                                      if isinstance(plugin_root, str) else []):
             root = _norm(candidate)
+            if root is None and remote:
+                continue
             if root is None:
                 raise GateError(f"a marketplace source in {MARKETPLACE} leaves the repo")
             roots[root] = entry
     return roots
-
-
-def _entries_by_name(marketplace) -> Dict[str, dict]:
-    if marketplace is _ABSENT:
-        return {}
-    return {entry["name"]: entry for entry in marketplace.get("plugins", [])
-            if isinstance(entry, dict) and isinstance(entry.get("name"), str)}
 
 
 def _hook_commands(node) -> Iterable[str]:
@@ -355,9 +431,10 @@ def _hook_paths(config, root: str) -> Set[str]:
     return paths
 
 
-def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[object]:
-    """Every hook config one plugin root carries at one side: hooks/hooks.json,
-    each file a `hooks` value names, and each inline hook object."""
+def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[Tuple[Optional[str], object]]:
+    """Every hook config one plugin root carries at one side, as (file path or
+    None for an inline object, config): hooks/hooks.json, each file a `hooks`
+    value names, and each inline hook object."""
     sources = []
     if entry is not None and "hooks" in entry:
         sources.append(entry["hooks"])
@@ -371,23 +448,37 @@ def _hook_configs(snap: Snapshot, root: str, entry: Optional[dict]) -> Iterable[
             if isinstance(item, str):
                 files.append(_join(root, item))
             elif isinstance(item, dict):
-                yield item
+                yield None, item
     for path in sorted({f for f in files if f is not None}):
         data = snap.json(path)
         if data is not _ABSENT:
-            yield data
+            yield path, data
 
 
 def _manifests(root: str) -> Tuple[str, str]:
     return (_join(root, ".claude-plugin/plugin.json"), _join(root, "plugin.json"))
 
 
-def _runtime_values(data, keys=RUNTIME_KEYS) -> Dict[str, object]:
-    if data is _ABSENT:
-        return {key: _ABSENT for key in keys}
-    if not isinstance(data, dict):
-        raise GateError("a manifest or marketplace entry is not a JSON object")
-    return {key: data.get(key, _ABSENT) for key in keys}
+def _marketplace_view(marketplace, side: str):
+    """The part of a marketplace.json that can change what runs: everything but
+    the inert keys and the inert `metadata` keys. Raises GateError on a shape it
+    cannot read or on a repeated entry name (a later entry would hide an
+    earlier one from a reader that keeps the last)."""
+    if not isinstance(marketplace, dict) or not isinstance(marketplace.get("plugins"), list):
+        raise GateError(f"{MARKETPLACE} at {side} does not have the expected shape")
+    names = [entry["name"] for entry in marketplace["plugins"]
+             if isinstance(entry, dict) and isinstance(entry.get("name"), str)]
+    if len(names) != len(set(names)):
+        raise GateError(f"{MARKETPLACE} at {side} repeats an entry name")
+    view = {key: value for key, value in marketplace.items()
+            if key not in INERT_MARKETPLACE_KEYS}
+    metadata = view.pop("metadata", _ABSENT)
+    if isinstance(metadata, dict):
+        if "pluginRoot" in metadata:
+            view["metadata"] = {"pluginRoot": metadata["pluginRoot"]}
+    elif metadata is not _ABSENT:
+        view["metadata"] = metadata
+    return view
 
 
 # Claude Code's own frontmatter split, ported from its source, anchored at the
@@ -418,7 +509,9 @@ def _command_lines(text: str) -> Counter:
 class _Skill:
     """What the gate reads from one SKILL.md or command file."""
 
-    def __init__(self, values, body, commands):
+    def __init__(self, values, body, commands, frontmatter="", tools=_ABSENT):
+        self.frontmatter = frontmatter  # the frontmatter text, for static mentions
+        self.tools = tools        # an agent's `tools` value, which can grant a shell
         self.values = values      # {hooks, allowed-tools: value or _ABSENT}
         self.body = body          # the text after the frontmatter
         self.commands = commands  # Counter of load-time shell lines
@@ -434,6 +527,21 @@ def _grants_bash(value) -> bool:
         return False
     text = json.dumps(value, default=str).lower()
     return "bash" in text or "powershell" in text
+
+
+def _strict_yaml_load(yaml, text: str):
+    """safe_load that refuses a repeated mapping key (PyYAML keeps the last)."""
+    class Loader(yaml.SafeLoader):
+        pass
+
+    def construct(loader, node, deep=False):
+        keys = [repr(loader.construct_object(key, deep=True)) for key, _ in node.value]
+        if len(keys) != len(set(keys)):
+            raise yaml.YAMLError("repeated key")
+        return yaml.SafeLoader.construct_mapping(loader, node, deep)
+
+    Loader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, construct)
+    return yaml.load(text, Loader)  # noqa: S506 — a SafeLoader subclass
 
 
 def _read_skill(data: Optional[bytes], path: str) -> _Skill:
@@ -472,15 +580,16 @@ def _read_skill(data: Optional[bytes], path: str) -> _Skill:
     if match is None or match.group(1).strip() != strict.strip():
         raise GateError(f"the frontmatter of {json.dumps(path)} is delimited ambiguously")
     try:
-        meta = yaml.safe_load(strict)
+        meta = _strict_yaml_load(yaml, strict)
     except yaml.YAMLError:
         raise GateError(f"the frontmatter of {json.dumps(path)} does not parse") from None
     body = text[match.end():]
     if meta is None:
-        return _Skill(absent, body, commands)
+        return _Skill(absent, body, commands, strict)
     if not isinstance(meta, dict):
         raise GateError(f"the frontmatter of {json.dumps(path)} is not a mapping")
-    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands)
+    return _Skill({key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}, body, commands,
+                  strict, meta.get("tools", _ABSENT))
 
 
 def _named_paths(snap: Snapshot, root: str, entry: Optional[dict], key: str) -> Set[str]:
@@ -542,6 +651,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         return [("fail-closed", f"{len(files)} changed files reaches the API's {MAX_CHANGED_FILES}-file cap")]
 
     changed: Set[str] = set()
+    removed: Set[str] = set()  # deleted, or the old name of a rename
     expect: Dict[str, str] = {}
     for item in files:
         if not isinstance(item, dict) or not isinstance(item.get("filename"), str):
@@ -552,6 +662,7 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             expect[name] = "present-head-only"
         elif status == "removed":
             expect[name] = "present-base-only"
+            removed.add(name)
         elif status == "modified":
             expect[name] = "both"
         elif status == "renamed":
@@ -559,10 +670,14 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         if isinstance(previous, str):
             changed.add(previous)
             if status == "renamed":
+                removed.add(previous)
+            if status == "renamed":
                 expect.setdefault(previous, "present-base-only")
 
     base_snap = Snapshot(fetcher, base, "base", expect)
     head_snap = Snapshot(fetcher, head, "head", expect)
+    for snap in (base_snap, head_snap):
+        snap.listed = set(fetcher.list_files(snap.sha))
     reasons: Set[Tuple[str, str]] = set()
 
     # (f) first: it needs nothing fetched.
@@ -577,73 +692,225 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         if len(parts) >= 2 and parts[0].lower() == "plugins":
             roots.add("plugins/" + parts[1])
 
+    named: Set[str] = set()
+    for side, snap in (("base", base_snap), ("head", head_snap)):
+        for root in sorted(roots):
+            for key in ("skills", "commands"):
+                named |= _named_paths(snap, root, entry_roots[side].get(root), key)
+
+    def manifest_view(snap, path):
+        data = snap.json(path)
+        if data is _ABSENT:
+            return _ABSENT
+        if not isinstance(data, dict):
+            raise GateError(f"{json.dumps(path)} is not a JSON object")
+        return {k: v for k, v in data.items() if k not in INERT_MANIFEST_KEYS}
+
+    skill_cache: Dict[str, Optional[Tuple[bool, bool]]] = {}
+
+    def skill_of(path, root):
+        """(grants a shell, has hooks) for the skill whose directory holds
+        `path`, over base and head; None when it is not in a skill directory or
+        its SKILL.md exists on neither side."""
+        parts = path[len(root) + 1:].split("/") if root else path.split("/")
+        if len(parts) < 3 or parts[0].lower() != "skills":
+            return None
+        skill_dir = "/".join(([root] if root else []) + parts[:2])
+        if skill_dir not in skill_cache:
+            found = [_read_skill(snap.raw(skill_dir + "/SKILL.md"), skill_dir + "/SKILL.md")
+                     for snap in (base_snap, head_snap)
+                     if snap.raw(skill_dir + "/SKILL.md") is not None]
+            skill_cache[skill_dir] = None if not found else (
+                any(_grants_bash(k.values["allowed-tools"]) for k in found),
+                any(k.values["hooks"] is not _ABSENT or k.commands for k in found))
+        return skill_cache[skill_dir]
+
+    def files_at(snap):
+        return sorted(snap.listed)
+
+    def fully_deleted(path, root):
+        """Whether `path` is in a skill directory retired whole: the pull
+        request's file list shows every changed path under it removed, and the
+        head tree has nothing left under it. A pair of answers that cannot both
+        be true fails closed."""
+        parts = path[len(root) + 1:].split("/") if root else path.split("/")
+        if len(parts) < 3 or parts[0].lower() != "skills":
+            return False
+        prefix = "/".join(([root] if root else []) + parts[:2]).lower() + "/"
+        under = {p for p in changed if p.lower().startswith(prefix)}
+        left = {f for f in files_at(head_snap) if f.lower().startswith(prefix)}
+        if left & removed or (not left and under - removed):
+            raise GateError(f"the file list and the head tree disagree about {json.dumps(prefix)}")
+        return not left and bool(under)
+
+    def mention_patterns(skill):
+        name = re.escape(skill.lower())
+        return (re.compile(rf"(?<![a-z0-9._-]){name}/"),
+                re.compile(rf"skills/{name}(?![a-z0-9_-])"))
+
+    def normalized(text: str) -> str:
+        text = text.lower().replace("\\", "/")
+        text = re.sub(r"/+", "/", text)
+        while "/./" in text:
+            text = text.replace("/./", "/")
+        return text
+
+    texts_cache: Dict[str, list] = {}
+
+    def texts(root):
+        """(path, normalized text or None) of every file under `root`, plus the
+        marketplace file, at base and at head. JSON is
+        read twice, raw and decoded (so \\/ and \\uXXXX spell the same path).
+        Text is UTF-8, or UTF-32 or UTF-16 after a BOM, with no NUL; anything
+        else is None, and blocks unless it is a raster-named file."""
+        if root not in texts_cache:
+            out = []
+            for snap in (base_snap, head_snap):
+                listed = set(files_at(snap))
+                names = [n for n in [MARKETPLACE] + sorted(listed)
+                         if n == MARKETPLACE or _under(n, root)]
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    blobs = list(pool.map(snap.raw, names))
+                for name, data in zip(names, blobs):
+                    if data is None:
+                        continue  # a listed file that 404s already failed in raw()
+                    text = _decode_text(data)
+                    if text is None:
+                        # Only a raster-named file that is not text is harmless.
+                        if not name.lower().endswith(RASTER_EXTENSIONS):
+                            out.append((name.lower(), None))
+                        continue
+                    forms = [text]
+                    try:
+                        forms.append(json.dumps(json.loads(text), ensure_ascii=False))
+                    except ValueError:
+                        pass
+                    out.append((name.lower(), normalized("\n".join(forms))))
+            texts_cache[root] = out
+        return texts_cache[root]
+
+    shell_cache: Dict[str, bool] = {}
+
+    def any_skill_grants_a_shell(root):
+        if root not in shell_cache:
+            found = False
+            for snap in (base_snap, head_snap):
+                for name in files_at(snap):
+                    if _under(name, root) and name.lower().endswith(".md"):
+                        md = _read_skill(snap.raw(name), name)
+                        found |= _grants_bash(md.values["allowed-tools"]) or _grants_bash(md.tools)
+            shell_cache[root] = found
+        return shell_cache[root]
+
+    def named_elsewhere(root, skill, whole=False):
+        """Whether any text file under the root, outside this skill's own
+        scripts/ and tests/ (its whole directory when it is being retired),
+        mentions the skill's directory."""
+        own = f"{root + '/' if root else ''}skills/{skill}/".lower()
+        patterns = mention_patterns(skill)
+        return any(not (name.startswith(own) and (whole or name[len(own):].split("/")[0] in ("scripts", "tests")))
+                   and (text is None or any(pat.search(text) for pat in patterns))
+                   for name, text in texts(root))
+
+    referenced: Set[str] = set()                              # (3)
+    for side, snap in (("base", base_snap), ("head", head_snap)):
+        for root in sorted(roots):
+            for config_path, config in _hook_configs(snap, root, entry_roots[side].get(root)):
+                referenced |= _hook_paths(config, root)
+                if config_path is not None:
+                    referenced.add(config_path)
+    for path in changed:
+        if any(_under(path, ref) for ref in referenced):
+            reasons.add(("hook-referenced", path))
+
+    def retired(path, root):
+        """A skill retired whole gates on nothing of its own, unless a hook
+        names the path or any text file outside the skill still names its
+        directory (an .mcp.json launching its script, a hook reading its data)."""
+        if not fully_deleted(path, root) or any(_under(path, ref) for ref in referenced):
+            return False
+        rel = path[len(root) + 1:] if root else path
+        return not named_elsewhere(root, rel.split("/")[1], whole=True)
+
+    # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
         for root in roots:
             if not _under(path, root):
                 continue
             rel = path[len(root) + 1:] if root else path
             low = rel.lower()
-            if low.startswith("hooks/"):                      # (a)
-                reasons.add(("hook-file", path))
-            if low.startswith("bin/"):                        # (h)
-                reasons.add(("bin-file", path))
-            if low in {name.lower() for name in ROOT_FILES}:  # (b)
-                reasons.add(("package-or-settings", path))
-            # A file or symlink at the directory's own name (plugins/x/hooks
-            # as a link to somewhere else) has no "hooks/" prefix.
+            if retired(path, root):
+                continue  # a skill retired whole does not gate on its own
             if low in LAYOUT_NAMES:
+                # A file or symlink at the directory's own name (plugins/x/hooks
+                # as a link to somewhere else) has no "hooks/" prefix.
                 reasons.add((LAYOUT_NAMES[low], path))
-            # A manifest spelled in another case still names runtime keys.
-            if low in (".claude-plugin/plugin.json", "plugin.json") \
-                    and path not in _manifests(root):
-                reasons.add(("manifest-runtime-key", path))
+            elif low.startswith("hooks/"):
+                reasons.add(("hook-file", path))
+            elif low.startswith("bin/"):
+                reasons.add(("bin-file", path))
+            elif low in {name.lower() for name in ROOT_FILES}:
+                reasons.add(("package-or-settings", path))
+            elif low in (".claude-plugin/plugin.json", "plugin.json"):
+                # Only a manifest at its exact path can be confined to inert
+                # keys; another spelling still names runtime keys.
+                if path not in _manifests(root) or \
+                        manifest_view(base_snap, path) != manifest_view(head_snap, path):
+                    reasons.add(("manifest-runtime-key", path))
+            elif any(low.startswith(d) for d in NEVER_INERT_DIRS):
+                reasons.add(("plugin-path", path))
+            elif _is_skill_file(path, roots, named):
+                pass  # judged by what it changes, in (6)
+            else:
+                skill = skill_of(path, root)
+                shell_skill = bool(skill and skill[0])
+                scripts = len(low.split("/")) > 3 and low.split("/")[2] in ("scripts", "tests")
+                if skill and scripts and not skill[1] and \
+                        not any_skill_grants_a_shell(root) and \
+                        not named_elsewhere(root, rel.split("/")[1]):
+                    # This accepts the same risk as the skill-body-bash rule
+                    # in reverse: the model may run a script a skill ships under
+                    # the session's own permissions. No skill in the plugin
+                    # grants a shell, the skill has no hooks or load-time
+                    # commands, and no text file in the plugin root names its
+                    # directory. Only static mentions inside the plugin root are
+                    # seen: a path built at run time, or named from outside it
+                    # (the repo's own .claude/settings.json), is not. A module
+                    # path (`python -m pkg.mod`) and a path split by quoting
+                    # (`skills/"s"/x`) are dynamic in the same way. A file that
+                    # cannot be decoded blocks the exemption.
+                    continue
+                if low.endswith(".md"):
+                    # Frontmatter and commands are read on every .md, whatever
+                    # its name, on both sides.
+                    dirty = False
+                    for snap in (base_snap, head_snap):
+                        md = _read_skill(snap.raw(path), path)
+                        dirty |= bool(md.commands) or any(
+                            v is not _ABSENT for v in md.values.values())
+                    # Under a skill that grants a shell, its prose is what the
+                    # model follows with it, so nothing but a plain README,
+                    # LICENSE, CHANGELOG or PURPOSE.md is inert there.
+                    if dirty or (shell_skill and not _inert_name(path)):
+                        reasons.add(("plugin-path", path))
+                elif not _inert_name(path):
+                    reasons.add(("plugin-path", path))
 
-    for root in sorted(roots):                                # (c)
-        for manifest in _manifests(root):
-            if manifest in changed and _runtime_values(base_snap.json(manifest)) \
-                    != _runtime_values(head_snap.json(manifest)):
-                reasons.add(("manifest-runtime-key", manifest))
-
-    entries = {side: _entries_by_name(markets[side]) for side in markets}
-    if MARKETPLACE in changed:                                # (d)
-        for name, entry in entries["head"].items():
-            before = entries["base"].get(name, _ABSENT)
-            if before is _ABSENT:
-                if any(key in entry for key in RUNTIME_KEYS):
-                    reasons.add(("marketplace-runtime-key", MARKETPLACE))
-                # A new entry may point `source` at a directory that already
-                # exists; one whose files this pull request adds is gated by
-                # those files, anything else is not.
-                src = entry.get("source")
-                local = [_norm(src)] if isinstance(src, str) else []
-                if not isinstance(src, str) or any(
-                        r is None or not any(_under(c, r) for c in changed) for r in local):
-                    reasons.add(("marketplace-runtime-key", MARKETPLACE))
-            elif _runtime_values(before, ENTRY_RUNTIME_KEYS) != _runtime_values(entry, ENTRY_RUNTIME_KEYS):
-                reasons.add(("marketplace-runtime-key", MARKETPLACE))
-        # `metadata.pluginRoot` rebases every relative `source`.
-        def plugin_root(market):
-            meta = market.get("metadata") if isinstance(market, dict) else None
-            return meta.get("pluginRoot", _ABSENT) if isinstance(meta, dict) else _ABSENT
-        if plugin_root(markets["base"]) != plugin_root(markets["head"]):
-            reasons.add(("marketplace-runtime-key", MARKETPLACE))
-
-    referenced: Set[str] = set()                              # (e)
-    for side, snap in (("base", base_snap), ("head", head_snap)):
-        for root in sorted(roots):
-            for config in _hook_configs(snap, root, entry_roots[side].get(root)):
-                referenced |= _hook_paths(config, root)
-    for path in changed:
-        if any(_under(path, ref) for ref in referenced):
-            reasons.add(("hook-referenced", path))
-
-    named: Set[str] = set()                                   # (i), (j), (k), (l)
-    for side, snap in (("base", base_snap), ("head", head_snap)):
-        for root in sorted(roots):
-            for key in ("skills", "commands"):
-                named |= _named_paths(snap, root, entry_roots[side].get(root), key)
+    # (2) The marketplace, under any spelling or case.
     for path in sorted(changed):
-        if _is_skill_file(path, roots, named):
+        if path != MARKETPLACE and path.lower() == MARKETPLACE:
+            reasons.add(("marketplace-runtime-key", path))
+    if MARKETPLACE in changed:
+        if markets["base"] is _ABSENT or markets["head"] is _ABSENT:
+            reasons.add(("marketplace-runtime-key", MARKETPLACE))
+        elif _marketplace_view(markets["base"], "base") != _marketplace_view(markets["head"], "head"):
+            reasons.add(("marketplace-runtime-key", MARKETPLACE))
+    elif markets["base"] is not _ABSENT and markets["head"] is _ABSENT:
+        reasons.add(("marketplace-runtime-key", MARKETPLACE))
+
+    for path in sorted(changed):                              # (6)
+        if _is_skill_file(path, roots, named) and not any(
+                _under(path, r) and retired(path, r) for r in roots):
             # A renamed file's old name is in `changed` too; reading a side
             # where the path is absent gives "no keys", so the pair compares.
             before = _read_skill(base_snap.raw(path), path)

@@ -144,6 +144,29 @@ The design choices:
   a review requirement on paths gives no separate decision point, and it
   cannot see a hook's script outside `hooks/`.
 
+### Update 2026-11-13: plugin-root `settings.json` after Claude Code 2.1.323
+
+Claude Code changed this after the ADR was accepted; the decision stands, and
+the Context bullet above ("takes only `agent` and `subagentStatusLine`") is
+no longer accurate. Quoted from the release notes:
+
+- [2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323):
+  "Removed the `subagentStatusLine` setting: subagent rows always use the
+  default look, and settings files that still hold the key load as before."
+- [2.1.323](https://github.com/anthropics/claude-code/releases/tag/v2.1.323):
+  "Deprecated a plugin's `agent` setting: it still applies, and now warns at
+  startup, in `claude plugin list` and in `claude plugin validate`."
+
+Checked on 2.1.323 with `claude plugin validate` against two scratch plugins,
+one whose root `settings.json` holds `agent`, one `subagentStatusLine`: both
+exit 0. The `agent` plugin prints "A plugin's `agent` setting is deprecated
+and will stop applying in a future release. Tell people to set `agent` in
+their own settings or pass --agent." The `subagentStatusLine` plugin prints
+nothing about the key. So `agent` still applies today but is on its way out,
+and `subagentStatusLine` is accepted and ignored. The gate is unchanged: it
+guards a plugin-root `settings.json` because `agent` still replaces the main
+thread's system prompt, tools and model while it applies.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —

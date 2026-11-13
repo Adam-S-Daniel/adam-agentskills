@@ -208,6 +208,108 @@ def test_a_plain_run_creates_no_owner_marker(tmp_path):
     assert "owner marker" in proc.stdout
 
 
+def launcher_path(tmp_path: Path, xdg: Path = None) -> Path:
+    base = xdg if xdg is not None else tmp_path / "home" / ".local" / "share"
+    return base / "fleet-guidance" / "codex-session-start.sh"
+
+
+def run_launcher(tmp_path: Path, launcher: Path, registry=None) -> subprocess.CompletedProcess:
+    home = tmp_path / "launcher-home"
+    (home / ".claude" / "plugins").mkdir(parents=True, exist_ok=True)
+    if registry is not None:
+        (home / ".claude" / "plugins" / "installed_plugins.json").write_text(
+            json.dumps(registry), encoding="utf-8")
+    env = dict(os.environ, HOME=str(home))
+    env.pop("FLEET_GUIDANCE_OWNER", None)
+    return subprocess.run([shutil.which("bash") or "bash", str(launcher)],
+                          env=env, capture_output=True, text=True, cwd=str(tmp_path),
+                          stdin=subprocess.DEVNULL)
+
+
+def test_owner_mode_installs_an_executable_codex_launcher(tmp_path):
+    proc = run_setup(tmp_path, "--owner-machine")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    launcher = launcher_path(tmp_path)
+    assert launcher.is_file() and os.access(launcher, os.X_OK)
+    assert launcher.read_bytes() == (REPO / "scripts" / "codex-session-start.sh").read_bytes()
+    assert f"INSTALLED {launcher}" in proc.stdout.splitlines()
+
+
+def test_owner_mode_puts_the_launcher_under_an_absolute_xdg_data_home(tmp_path):
+    xdg = tmp_path / "xdg-data"
+    proc = run_setup(tmp_path, "--owner-machine", env_extra={"XDG_DATA_HOME": str(xdg)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert launcher_path(tmp_path, xdg).is_file()
+    assert not (tmp_path / "home" / ".local").exists()
+
+
+def test_a_relative_xdg_data_home_is_ignored_for_the_launcher(tmp_path):
+    proc = run_setup(tmp_path, "--owner-machine", env_extra={"XDG_DATA_HOME": "relative/data"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert launcher_path(tmp_path).is_file()
+    assert not (tmp_path / "relative").exists()
+
+
+def test_a_plain_run_installs_no_codex_launcher(tmp_path):
+    xdg = tmp_path / "xdg-data"
+    proc = run_setup(tmp_path, env_extra={"XDG_DATA_HOME": str(xdg)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert not (tmp_path / "home" / ".local").exists()
+    assert not xdg.exists()
+
+
+def test_a_second_owner_run_leaves_the_launcher_alone_and_says_nothing(tmp_path):
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    launcher = launcher_path(tmp_path)
+    before = launcher.stat()
+    second = run_setup(tmp_path, "--owner-machine")
+    assert second.returncode == 0, second.stdout + second.stderr
+    assert "codex-session-start.sh" not in second.stdout
+    after = launcher.stat()
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns)
+
+
+def test_an_owner_run_replaces_a_stale_launcher_and_restores_its_mode(tmp_path):
+    launcher = launcher_path(tmp_path)
+    launcher.parent.mkdir(parents=True)
+    launcher.write_text("stale\n", encoding="utf-8")
+    launcher.chmod(0o644)
+    proc = run_setup(tmp_path, "--owner-machine")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert launcher.read_bytes() == (REPO / "scripts" / "codex-session-start.sh").read_bytes()
+    assert os.access(launcher, os.X_OK)
+
+
+def test_the_launcher_exits_zero_silently_with_no_plugin_install(tmp_path):
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    proc = run_launcher(tmp_path, launcher_path(tmp_path))
+    assert proc.returncode == 0
+    assert proc.stdout == ""
+    assert len(proc.stderr.strip().splitlines()) == 1
+    assert "adam-anything-anywhere" in proc.stderr
+
+
+def test_the_launcher_runs_the_newest_installed_plugin_hook_with_the_owner_signal(tmp_path):
+    assert run_setup(tmp_path, "--owner-machine").returncode == 0
+    roots = {}
+    for version in ("1.0.0", "1.2.2"):
+        root = tmp_path / f"plugin-{version}"
+        hook = root / "hooks" / "fleet-guidance" / "on-session-start.sh"
+        hook.parent.mkdir(parents=True)
+        hook.write_text(f'echo "ran {version} owner=$FLEET_GUIDANCE_OWNER"\n', encoding="utf-8")
+        roots[version] = root
+    registry = {"plugins": {"adam-anything-anywhere@adam-agentskills": [
+        {"scope": "user", "version": "1.0.0", "installPath": str(roots["1.0.0"]),
+         "lastUpdated": "2026-01-01T00:00:00Z"},
+        {"scope": "user", "version": "1.2.2", "installPath": str(roots["1.2.2"]),
+         "lastUpdated": "2026-11-01T00:00:00Z"},
+    ]}}
+    proc = run_launcher(tmp_path, launcher_path(tmp_path), registry)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "ran 1.2.2 owner=1\n"
+    assert proc.stderr == ""
+
+
 def test_a_plain_run_does_not_touch_a_stale_hook_section(tmp_path):
     # Without --owner-machine, setup.sh must not clean up (or touch at all)
     # the global git config — that is an owner-machine-only step.

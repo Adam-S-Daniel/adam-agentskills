@@ -77,6 +77,16 @@
 # refreshes an older stamp. Replacements are atomic and follow destination
 # symlinks.
 #
+# GIT HOOKS IN HOSTED SESSIONS
+# ----------------------------
+# Besides guidance, a HOSTED session (CLAUDE_CODE_REMOTE=true) gets the fleet's config-based git hooks
+# switched on, because nothing else does: see fleet_git_hooks below and the
+# addendum to docs/decisions/0021-the-sync-delivers-agent-checks-to-every-fleet-repo.md.
+# It is silent, idempotent, never changes this hook's verdict or exit code, and
+# FLEET_GIT_HOOKS=off skips it. A repo whose remote is the hosted local-proxy
+# form (http://...@127.0.0.1:<port>/git/<owner>/<repo>) does not match the
+# installer's github.com conditions and does not get the hooks.
+#
 # CHECK VALUE
 # -----------
 # Every block this hook writes ends with one plain-text line just before the
@@ -134,7 +144,55 @@
 # until the day it doesn't. A failure at ONE destination never stops the other:
 # the run finishes every destination it can and then reports DEGRADED naming
 # the one that failed.
+#
+# OWNER GATE
+# ----------
+# The fleet's repos are public, and this hook is registered in each one's
+# .claude/settings.json, so it runs for anyone who clones one and trusts the
+# workspace. On a DURABLE machine it therefore writes nothing unless the run
+# carries an explicit signal that the guidance is wanted there; see
+# docs/decisions/0042-the-guidance-hooks-are-opt-in-on-a-durable-machine.md.
+# Delivery proceeds when ANY of these holds:
+#   --codex-cloud                    the explicit Codex Cloud setup mode;
+#   FLEET_GUIDANCE_SKIP on           an explicit request to REMOVE the block;
+#   CLAUDE_CODE_REMOTE=true, or a nonempty CLAUDE_CODE_REMOTE_SESSION_ID
+#                                    a hosted (ephemeral) Claude Code session;
+#   FLEET_GUIDANCE_OWNER on          a user-level caller (the plugin) or the
+#                                    owner's environment says so;
+#   a nonempty FLEET_GUIDANCE_PAYLOAD  a caller chose the payload itself (the
+#                                    plugin's fetched copy, the eval harness);
+#   the marker file ${XDG_CONFIG_HOME:-$HOME/.config}/fleet-guidance/owner
+#                                    (XDG_CONFIG_HOME only when absolute),
+#                                    written once per machine by
+#                                    adam-agentskills' `setup.sh --owner-machine`.
+# "On" follows FLEET_GUIDANCE_SKIP's spelling: empty, 0, false, no and off
+# (any case) are off. Otherwise the run is a no-op: nothing is read or
+# written under HOME, nothing is printed, no receipt is written, and it
+# exits 0 — whatever the arguments. A block an earlier, ungated run installed
+# is left exactly as it is; FLEET_GUIDANCE_SKIP=1 removes it.
 set -uo pipefail
+
+fleet_flag_on() {
+    case "${1:-}" in
+        ""|0|[Ff][Aa][Ll][Ss][Ee]|[Nn][Oo]|[Oo][Ff][Ff]) return 1 ;;
+    esac
+    return 0
+}
+fleet_delivery_wanted() {
+    local config_home="${XDG_CONFIG_HOME:-}"
+    if [ "$#" -eq 1 ] && [ "$1" = --codex-cloud ]; then return 0; fi
+    fleet_flag_on "${FLEET_GUIDANCE_SKIP:-}" && return 0
+    [ "${CLAUDE_CODE_REMOTE:-}" = true ] && return 0
+    [ -n "${CLAUDE_CODE_REMOTE_SESSION_ID:-}" ] && return 0
+    fleet_flag_on "${FLEET_GUIDANCE_OWNER:-}" && return 0
+    [ -n "${FLEET_GUIDANCE_PAYLOAD:-}" ] && return 0
+    case "$config_home" in
+        /*) ;;
+        *) [ -n "${HOME:-}" ] || return 1; config_home="$HOME/.config" ;;
+    esac
+    [ -f "$config_home/fleet-guidance/owner" ]
+}
+fleet_delivery_wanted "$@" || exit 0
 
 # Observation is optional and never participates in delivery decisions. The
 # embedded helper ships with this hook; sync needs no additional artifact.
@@ -728,6 +786,81 @@ PY
     exit "$cloud_status"
 fi
 
+# ── Git hooks in hosted sessions (ADR 0021 addendum) ───────────────────────
+#
+# A hosted (cloud) session runs no fleet git hooks unless something installs
+# them: the cloud setup script runs adam-agentskills'
+# scripts/install-agent-hooks.sh --system only when an attached repo ships that
+# installer, and most projects ship none. So no cloud commit or push was ever
+# checked or logged. This hook is the one thing every hosted session already
+# runs, so it closes the gap: in a HOSTED session only (CLAUDE_CODE_REMOTE=true,
+# the same test as phases 2 and 3 of guidance-load-record.sh), with a git
+# version it can read and that is 2.54+ (config-based hooks), and unless the
+# include file exists AND an includeIf naming it exists in the system or global
+# config (a partial install is repaired), it writes ~/.config/git/agent-hooks.inc and the same includeIf
+# entries install-agent-hooks.sh adds: system scope when the system config is
+# writable, else global. The include text and entries are a byte-for-byte copy
+# of that script's (test_fleet_memory_git_hooks pins the text). The conditions
+# match github.com remotes only, as the installer's do: a remote in the hosted
+# local-proxy form (http://...@127.0.0.1:<port>/git/<owner>/<repo>) does not
+# match, so such a repo does not get the hooks.
+#
+# Fails safe, like that script: nothing points at an absolute script path. Git
+# ignores a missing include file, and a repo without .githooks/agent-checks is a
+# no-op. The step is silent, idempotent, and ANY error skips it: it runs in a
+# subshell with output discarded and cannot change this hook's verdict or exit
+# code. FLEET_GIT_HOOKS=off skips it (a person's opt-out; also what keeps this
+# repo's own tests from touching a real git config).
+fleet_git_hooks() {
+    [ "${CLAUDE_CODE_REMOTE:-}" = true ] || return 0
+    [ "${FLEET_GIT_HOOKS:-}" != off ] || return 0
+    command -v git >/dev/null 2>&1 || return 0
+    local major minor gv
+    gv=$(git version 2>/dev/null | sed -n 's/^git version \([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    [ -n "$gv" ] || return 0
+    read -r major minor <<< "$gv"
+    if [ "$major" -lt 2 ] || { [ "$major" -eq 2 ] && [ "$minor" -lt 54 ]; }; then return 0; fi
+    [ -n "${HOME:-}" ] || return 0
+
+    # Fully installed (the file and an includeIf naming it) means done. A
+    # partial install (an entry without the file, or the file without entries)
+    # is repaired below; the per-entry check keeps that idempotent.
+    local existing
+    existing=$(git config --system --get-regexp '^includeif\..*\.path$' 2>/dev/null; \
+               git config --global --get-regexp '^includeif\..*\.path$' 2>/dev/null)
+    if [ -f "$HOME/.config/git/agent-hooks.inc" ] && grep -qF -- 'agent-hooks.inc' <<< "$existing"; then return 0; fi
+
+    local scope=--global sys="${GIT_CONFIG_SYSTEM:-/etc/gitconfig}"
+    if [ -w "$sys" ] || { [ ! -e "$sys" ] && [ -w "$(dirname "$sys")" ]; }; then scope=--system; fi
+
+    local inc_file="$HOME/.config/git/agent-hooks.inc" tmp event
+    mkdir -p "$(dirname "$inc_file")" || return 0
+    tmp=$(mktemp "$inc_file.XXXXXX") || return 0
+    {
+        echo "# Written by adam-agentskills scripts/install-agent-hooks.sh (ADR 0020)."
+        echo "# Re-run that script to update; edits here are overwritten."
+        for event in pre-commit pre-push; do
+            printf '[hook "agent-checks-%s"]\n' "$event"
+            printf '\tevent = %s\n' "$event"
+            printf '\tcommand = "f=.githooks/agent-checks; [ -f \\"$f\\" ] || exit 0; exec bash \\"$f\\" %s"\n' "$event"
+        done
+    } > "$tmp" && mv -f "$tmp" "$inc_file" || { rm -f "$tmp"; return 0; }
+
+    # Git expands the ~ itself when it reads the include.
+    # shellcheck disable=SC2088
+    local inc_value='~/.config/git/agent-hooks.inc' owner prefix cond have
+    for owner in Adam-S-Daniel adam-s-daniel jodidaniel; do
+        for prefix in https://github.com/ git@github.com: ssh://git@github.com/; do
+            cond="hasconfig:remote.*.url:${prefix}${owner}/**"
+            have=$(git config --get-all "includeIf.$cond.path" 2>/dev/null) || have=""
+            if ! grep -qxF -- "$inc_value" <<< "$have"; then
+                git config "$scope" --add "includeIf.$cond.path" "$inc_value" >/dev/null 2>&1 || return 0
+            fi
+        done
+    done
+}
+( fleet_git_hooks ) >/dev/null 2>&1 || true
+
 # ── Destinations ───────────────────────────────────────────────────────────
 #
 # The LABELS are the canonical `~/…` spellings rather than the resolved paths:
@@ -892,10 +1025,12 @@ strip_managed_block() {
 # FLEET_GUIDANCE_SKIP exists because user memory is GLOBAL on a durable
 # machine. ~/.claude/CLAUDE.md is read in EVERY Claude session on that box, and
 # ~/.codex/AGENTS.md in every Codex session in every project on it, so once a
-# fleet repo has been opened once, the guidance rides along into unrelated
-# projects too. That is a fair trade for some machines and not others, and it
-# is the developer's call, not this hook's. ONE flag governs BOTH surfaces,
-# because the reason to opt out is the same reason on each.
+# delivery has run there, the guidance rides along into unrelated projects
+# too. That is a fair trade for some machines and not others, and it is the
+# developer's call, not this hook's. ONE flag governs BOTH surfaces, because
+# the reason to opt out is the same reason on each. It passes the OWNER GATE
+# (see the header) on any machine, so it is also how a durable machine that
+# got a block from an ungated run removes it.
 #
 # It REMOVES an already-installed block rather than merely declining to write
 # one. Skipping the write alone would leave a block installed by an earlier

@@ -34,7 +34,16 @@ A pull request is GATED when any of these holds:
   (h) bin-file            a changed path (old or new name) is under
                           <plugin-root>/bin/. Claude Code puts that directory
                           on the session's PATH, so what is in it runs
-                          without a model choosing it, like a hook (ADR 0017).
+                          without a model choosing it, like a hook (ADR 0017);
+  (i) skill-frontmatter-runtime-key
+                          a changed <plugin-root>/skills/<skill>/SKILL.md (old
+                          or new name) whose YAML frontmatter `hooks` or
+                          `allowed-tools` differs between base and head, or is
+                          present on a new skill. Claude Code honors both:
+                          skill-scoped hooks run code, `allowed-tools` skips
+                          permission prompts. The frontmatter is parsed with
+                          PyYAML (never a regex); one that does not parse, or
+                          a missing PyYAML, is (g).
 
 Plugin roots are the union of every plugins/<name>/ the diff touches and every
 local `source` in marketplace.json, at base and at head.
@@ -71,6 +80,8 @@ MAX_FILE_BYTES = 1024 * 1024
 # cap may have been cut short, so reaching it is already "cannot decide".
 MAX_CHANGED_FILES = 3000
 RUNTIME_KEYS = ("hooks", "settings")
+SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools")
+SKILL_MD_RE = re.compile(r"^skills/[^/]+/SKILL\.md$")
 ROOT_FILES = frozenset({
     "settings.json", "package.json",
     "bun.lock", "bun.lockb", "npm-shrinkwrap.json", "package-lock.json",
@@ -335,6 +346,59 @@ def _runtime_values(data) -> Dict[str, object]:
     return {key: data.get(key, _ABSENT) for key in RUNTIME_KEYS}
 
 
+# Claude Code's own frontmatter split, ported from its source, anchored at the
+# file start.
+_JS_WS = "\\t\\n\\v\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
+# JS `\s`, spelled out: Python's `\s` differs (it lacks U+FEFF, adds U+001C-1F, U+0085).
+_CLAUDE_CODE_FRONTMATTER = re.compile(
+    rf"---[{_JS_WS}]*\n(.*?)---[{_JS_WS}]*\n?", re.DOTALL)
+
+
+def _skill_runtime_values(data: Optional[bytes], path: str) -> Dict[str, object]:
+    """The runtime keys of a SKILL.md's frontmatter ({key: _ABSENT} when the
+    file or the frontmatter is missing). Raises GateError on frontmatter that
+    does not parse, so the caller fails closed."""
+    absent = {key: _ABSENT for key in SKILL_RUNTIME_KEYS}
+    if data is None:
+        return absent
+    try:
+        import yaml  # third-party; the runner image ships it
+    except ImportError:
+        raise GateError("PyYAML is not installed, so SKILL.md frontmatter cannot be read") from None
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise GateError(f"{json.dumps(path)} is not valid UTF-8") from None
+    lines = text.split("\n")
+    if not text.startswith("---"):
+        return absent
+    # From here the file may be frontmatter to Claude Code, so the strict
+    # reading must be clean or the gate fails closed. Python's rstrip() and
+    # JS's `\s` disagree on U+FEFF and other code points, so "---" + U+FEFF is
+    # an opening line to Claude Code and not to a strict split.
+    if lines[0].rstrip() != "---":
+        raise GateError(f"the frontmatter of {json.dumps(path)} has an unusual opening line")
+    end = next((i for i in range(1, len(lines)) if lines[i].rstrip() == "---"), None)
+    if end is None:
+        raise GateError(f"the frontmatter of {json.dumps(path)} has no closing '---' line")
+    strict = "\n".join(lines[1:end])
+    # Claude Code closes frontmatter at the first '---' anywhere (mid-line,
+    # indented, the start of '----'), not only on a line of its own. If the two
+    # readings differ, the file's runtime keys are ambiguous: fail closed.
+    match = _CLAUDE_CODE_FRONTMATTER.match(text)
+    if match is None or match.group(1).strip() != strict.strip():
+        raise GateError(f"the frontmatter of {json.dumps(path)} is delimited ambiguously")
+    try:
+        meta = yaml.safe_load(strict)
+    except yaml.YAMLError:
+        raise GateError(f"the frontmatter of {json.dumps(path)} does not parse") from None
+    if meta is None:
+        return absent
+    if not isinstance(meta, dict):
+        raise GateError(f"the frontmatter of {json.dumps(path)} is not a mapping")
+    return {key: meta.get(key, _ABSENT) for key in SKILL_RUNTIME_KEYS}
+
+
 def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     """The (reason code, path) pairs that gate this pull request; empty when
     nothing does. Raises GateError (or anything else) when it cannot decide."""
@@ -416,6 +480,15 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     for path in changed:
         if any(_under(path, ref) for ref in referenced):
             reasons.add(("hook-referenced", path))
+
+    for path in sorted(changed):                              # (i)
+        if any(_under(path, root) and SKILL_MD_RE.match(path[len(root) + 1:] if root else path)
+               for root in roots):
+            # A renamed file's old name is in `changed` too; reading a side
+            # where the path is absent gives "no keys", so the pair compares.
+            if _skill_runtime_values(base_snap.raw(path), path) \
+                    != _skill_runtime_values(head_snap.raw(path), path):
+                reasons.add(("skill-frontmatter-runtime-key", path))
 
     return sorted(reasons)
 

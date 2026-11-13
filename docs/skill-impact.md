@@ -62,6 +62,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-13 — adam-coding-anywhere/skills-doctor — edit
+
+- Motivation: [adam-agentskills#163](https://github.com/Adam-S-Daniel/adam-agentskills/issues/163): the description, the channel table and the paragraph under it named the flat `synced/manifest.json`, while the commands and the trap section say a current CLI writes `synced/<bucket>/manifest.json`.
+- Change: those three mentions now say `synced/<bucket>/manifest.json`; the trap section, which names the flat path as the older CLIs' layout, is unchanged; bundle `adam-coding-anywhere` 2.0.0 -> 2.0.1 (PR pending).
+- Eval: baseline on main before the edit: routine run `20261102T232624Z-2b2255` (bucketed-account-store): with 4/5, without 4/5; the eval routine measures the default branch only, so the post-merge run follows in a correcting entry.
+- Outcome: pending
+
 ## 2026-11-12 — adam-coding-local/sync-cc-settings-between-wsl-and-windows — edit
 
 - Motivation: a dry run on a real machine showed `env.MAKEFLAGS` and `env.CLAUDE_CODE_USE_POWERSHELL_TOOL`, set in WSL only, would copy to Windows, where there is no `make` on PATH and the PowerShell tool is already native.

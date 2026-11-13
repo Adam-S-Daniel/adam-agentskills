@@ -107,11 +107,18 @@ INERT_MARKETPLACE_KEYS = frozenset({
 # (not only a path under it) changes what loads from the directory.
 LAYOUT_NAMES = {"hooks": "hook-file", "bin": "bin-file", "commands": "plugin-layout-path",
                 "skills": "plugin-layout-path", ".claude-plugin": "plugin-layout-path"}
-# What a change cannot hurt: matched on the basename, any case. Never applied
-# under hooks/ or bin/.
-INERT_NAME_RE = re.compile(
-    r"^(?:readme.*|license.*|changelog.*|purpose\.md|.+\.(?:png|jpe?g|gif|svg|webp))$",
-    re.IGNORECASE)
+# What a change cannot hurt, matched on the basename in any case. Never applied
+# under hooks/ or bin/. A README, LICENSE or CHANGELOG is inert only as plain
+# text (no extension, .md or .txt); `README.js` or `license_check.py` is code.
+INERT_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
+INERT_TEXT_EXTENSIONS = ("", ".md", ".txt")
+INERT_TEXT_PREFIXES = ("readme", "license", "changelog")
+# Plugin-root directories whose contents Claude Code loads as components; any
+# change under one gates, whatever the file is.
+NEVER_INERT_DIRS = ("agents/", "workflows/", "monitors/")
+# Manifest keys that cannot change what runs (mirrors INERT_MARKETPLACE_KEYS).
+INERT_MANIFEST_KEYS = frozenset({
+    "version", "description", "keywords", "author", "homepage", "repository", "license"})
 SKILL_RUNTIME_KEYS = ("hooks", "allowed-tools", "shell")
 # Files Claude Code loads as a skill or command, relative to a plugin root.
 SKILL_MD_RE = re.compile(r"^skills/(?:[^/]+/)?SKILL\.md$", re.IGNORECASE)
@@ -231,10 +238,19 @@ class Snapshot:
                 self._cache[path] = _ABSENT
             else:
                 try:
-                    self._cache[path] = json.loads(data.decode("utf-8"))
+                    self._cache[path] = json.loads(
+                        data.decode("utf-8"), object_pairs_hook=_no_repeated_keys)
                 except (ValueError, UnicodeDecodeError):
                     raise GateError(f"{json.dumps(path)} at {self.side} is not valid JSON") from None
         return self._cache[path]
+
+
+def _no_repeated_keys(pairs):
+    """json's last-key-wins would hide an earlier value from this gate."""
+    keys = [key for key, _ in pairs]
+    if len(keys) != len(set(keys)):
+        raise ValueError("repeated key")
+    return dict(pairs)
 
 
 def _norm(path: str) -> Optional[str]:
@@ -260,6 +276,14 @@ def _under(path: str, prefix: str) -> bool:
     return prefix == "" or path == prefix or path.startswith(prefix + "/")
 
 
+def _inert_name(path: str) -> bool:
+    name = posixpath.basename(path).lower()
+    stem, ext = posixpath.splitext(name)
+    if ext in INERT_IMAGE_EXTENSIONS or name == "purpose.md":
+        return True
+    return ext in INERT_TEXT_EXTENSIONS and stem.startswith(INERT_TEXT_PREFIXES)
+
+
 def _local_roots(marketplace) -> Dict[str, dict]:
     """Every local plugin root a marketplace.json names, mapped to its entry."""
     if marketplace is _ABSENT:
@@ -270,14 +294,23 @@ def _local_roots(marketplace) -> Dict[str, dict]:
     plugin_root = metadata.get("pluginRoot") if isinstance(metadata, dict) else None
     roots = {}
     for entry in marketplace.get("plugins", []):
-        if not isinstance(entry, dict) or not isinstance(entry.get("source"), str):
-            continue  # a remote source has no root in this repo
-        source = entry["source"]
+        if not isinstance(entry, dict):
+            continue
+        source = entry.get("source")
+        if isinstance(source, dict):
+            # A git-subdir or github source may point back into this repo, and
+            # the gate cannot tell: its `path` counts as a root either way.
+            source = source.get("path")
+        if not isinstance(source, str):
+            continue  # a remote source with no path has no root in this repo
+        remote = isinstance(entry.get("source"), dict)
         # Both readings of a relative source, with and without
         # metadata.pluginRoot: an extra root can only gate more, never less.
         for candidate in [source] + ([posixpath.join(plugin_root, source)]
                                      if isinstance(plugin_root, str) else []):
             root = _norm(candidate)
+            if root is None and remote:
+                continue
             if root is None:
                 raise GateError(f"a marketplace source in {MARKETPLACE} leaves the repo")
             roots[root] = entry
@@ -599,6 +632,33 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             for key in ("skills", "commands"):
                 named |= _named_paths(snap, root, entry_roots[side].get(root), key)
 
+    def manifest_view(snap, path):
+        data = snap.json(path)
+        if data is _ABSENT:
+            return _ABSENT
+        if not isinstance(data, dict):
+            raise GateError(f"{json.dumps(path)} is not a JSON object")
+        return {k: v for k, v in data.items() if k not in INERT_MANIFEST_KEYS}
+
+    skill_cache: Dict[str, Optional[Tuple[bool, bool]]] = {}
+
+    def skill_of(path, root):
+        """(grants a shell, has hooks) for the skill whose directory holds
+        `path`, over base and head; None when it is not in a skill directory or
+        its SKILL.md exists on neither side."""
+        parts = path[len(root) + 1:].split("/") if root else path.split("/")
+        if len(parts) < 3 or parts[0].lower() != "skills":
+            return None
+        skill_dir = "/".join(([root] if root else []) + parts[:2])
+        if skill_dir not in skill_cache:
+            found = [_read_skill(snap.raw(skill_dir + "/SKILL.md"), skill_dir + "/SKILL.md")
+                     for snap in (base_snap, head_snap)
+                     if snap.raw(skill_dir + "/SKILL.md") is not None]
+            skill_cache[skill_dir] = None if not found else (
+                any(_grants_bash(k.values["allowed-tools"]) for k in found),
+                any(k.values["hooks"] is not _ABSENT for k in found))
+        return skill_cache[skill_dir]
+
     # (1) Deny by default: a changed path under a plugin root gates unless inert.
     for path in sorted(changed):
         for root in roots:
@@ -617,21 +677,41 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
             elif low in {name.lower() for name in ROOT_FILES}:
                 reasons.add(("package-or-settings", path))
             elif low in (".claude-plugin/plugin.json", "plugin.json"):
-                reasons.add(("manifest-runtime-key", path))
+                # Only a manifest at its exact path can be confined to inert
+                # keys; another spelling still names runtime keys.
+                if path not in _manifests(root) or \
+                        manifest_view(base_snap, path) != manifest_view(head_snap, path):
+                    reasons.add(("manifest-runtime-key", path))
+            elif any(low.startswith(d) for d in NEVER_INERT_DIRS):
+                reasons.add(("plugin-path", path))
             elif _is_skill_file(path, roots, named):
                 pass  # judged by what it changes, in (6)
-            elif INERT_NAME_RE.match(posixpath.basename(path)):
-                pass
-            elif low.endswith(".md"):
-                # Inert only if it neither carries a runtime key nor runs a
-                # command, on either side.
-                for snap in (base_snap, head_snap):
-                    skill = _read_skill(snap.raw(path), path)
-                    if skill.commands or any(
-                            v is not _ABSENT for v in skill.values.values()):
-                        reasons.add(("plugin-path", path))
             else:
-                reasons.add(("plugin-path", path))
+                skill = skill_of(path, root)
+                shell_skill = bool(skill and skill[0])
+                scripts = len(low.split("/")) > 3 and low.split("/")[2] in ("scripts", "tests")
+                if skill and scripts and not skill[0] and not skill[1]:
+                    # This accepts the same risk as the skill-body-bash rule
+                    # in reverse: the model may run a script a skill ships under
+                    # the session's own permissions, and a skill that grants no
+                    # shell and has no hooks is taken to leave that to the
+                    # user's own prompt. A path a hook names still gates, in (3).
+                    continue
+                if low.endswith(".md"):
+                    # Frontmatter and commands are read on every .md, whatever
+                    # its name, on both sides.
+                    dirty = False
+                    for snap in (base_snap, head_snap):
+                        md = _read_skill(snap.raw(path), path)
+                        dirty |= bool(md.commands) or any(
+                            v is not _ABSENT for v in md.values.values())
+                    # Under a skill that grants a shell, its prose is what the
+                    # model follows with it, so nothing but a plain README,
+                    # LICENSE, CHANGELOG or PURPOSE.md is inert there.
+                    if dirty or (shell_skill and not _inert_name(path)):
+                        reasons.add(("plugin-path", path))
+                elif not _inert_name(path):
+                    reasons.add(("plugin-path", path))
 
     # (2) The marketplace, under any spelling or case.
     for path in sorted(changed):

@@ -146,17 +146,17 @@ def test_a_skill_md_only_change_does_not_gate():
     assert_not_gated(run(base, head))
 
 
-def test_a_version_only_manifest_change_gates_because_a_manifest_is_not_inert():
+def test_a_version_only_manifest_change_does_not_gate():
     base = tree()
     head = dict(base, **{"plugins/alpha/.claude-plugin/plugin.json": manifest(version="1.0.1")})
-    assert_gated(run(base, head), "manifest-runtime-key")
+    assert_not_gated(run(base, head))
 
 
-def test_a_script_no_hook_calls_gates_as_a_plugin_path_not_as_hook_referenced():
+def test_a_script_no_hook_calls_under_a_skill_without_a_shell_does_not_gate():
     base = tree(**{"plugins/alpha/hooks/hooks.json":
                    hook_config('"${CLAUDE_PLUGIN_ROOT}"/skills/one/scripts/hook.sh')})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert codes(run(base, head)) == {"plugin-path"}
+    assert_not_gated(run(base, head))
 
 
 def test_an_empty_pull_request_does_not_gate():
@@ -270,12 +270,12 @@ def test_changing_or_removing_a_runtime_key_gates():
     assert_gated(run(base, dict(base, **{path: manifest()})), "manifest-runtime-key")
 
 
-def test_reformatting_a_manifest_with_the_same_runtime_keys_gates():
+def test_reformatting_a_manifest_with_the_same_runtime_keys_does_not_gate():
     path = "plugins/alpha/.claude-plugin/plugin.json"
     base = tree(**{path: manifest(settings={"agent": "x"})})
     head = dict(base, **{path: json.dumps(manifest(settings={"agent": "x"}, version="2.0.0"),
                                           indent=4).encode()})
-    assert_gated(run(base, head), "manifest-runtime-key")
+    assert_not_gated(run(base, head))
 
 
 # =================================================================================
@@ -363,11 +363,11 @@ def test_a_bare_plugin_root_reference_covers_the_whole_plugin():
     assert_gated(run(base, head), "hook-referenced")
 
 
-def test_a_sibling_with_a_matching_prefix_is_not_hook_referenced():
+def test_a_sibling_with_a_matching_prefix_does_not_gate():
     base = tree(**{"plugins/alpha/hooks/hooks.json":
                    hook_config("${CLAUDE_PLUGIN_ROOT}/skills/one/scripts/tool")})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert codes(run(base, head)) == {"plugin-path"}
+    assert_not_gated(run(base, head))
 
 
 def test_rests_after_the_plugin_root_are_read_as_paths():
@@ -393,14 +393,14 @@ def test_a_script_a_windows_command_names_gates_when_it_changes():
     assert ("hook-referenced", "plugins/alpha/skills/one/scripts/tool.sh") in result[1], result
 
 
-def test_a_windows_command_naming_another_script_is_not_hook_referenced():
+def test_a_windows_command_naming_another_script_does_not_gate():
     config = {"hooks": {"SessionStart": [{"hooks": [{
         "type": "command", "command": "./x.sh",
         "commandWindows": '"C:\\Program Files\\Git\\bin\\bash.exe" '
                           '"%PLUGIN_ROOT%/skills/one/scripts/other.sh"'}]}]}}
     base = tree(**{"plugins/alpha/hooks/hooks.json": config})
     head = dict(base, **{"plugins/alpha/skills/one/scripts/tool.sh": b"echo two\n"})
-    assert codes(run(base, head)) == {"plugin-path"}
+    assert_not_gated(run(base, head))
 
 
 def test_every_spelling_of_the_plugin_root_is_read():
@@ -916,11 +916,10 @@ def test_changing_a_manifests_skills_value_gates():
 _ABSENT_FOR_TEST = object()
 
 
-def test_a_manifests_unchanged_skills_value_still_gates_on_any_manifest_edit():
+def test_a_manifests_unchanged_skills_value_with_an_inert_edit_does_not_gate():
     path = "plugins/alpha/.claude-plugin/plugin.json"
     base = tree(**{path: manifest(skills="./a")})
-    assert_gated(run(base, dict(base, **{path: manifest(skills="./a", description="x")})),
-                 "manifest-runtime-key")
+    assert_not_gated(run(base, dict(base, **{path: manifest(skills="./a", description="x")})))
 
 
 def test_a_marketplace_entry_gaining_skills_gates():
@@ -1302,7 +1301,7 @@ def test_a_skill_frontmatter_shell_key_gates():
     assert_gated(run(base, head), "skill-frontmatter-runtime-key")
 
 
-@pytest.mark.parametrize("path", [PR + "/skills/s/scripts/run.py", PR + "/lib/x.mjs",
+@pytest.mark.parametrize("path", [PR + "/skills/s/run.py", PR + "/lib/x.mjs",
                                   PR + "/config.yaml", PR + "/skills/s/data.json"])
 def test_any_other_file_under_a_plugin_root_gates_as_plugin_path(path):
     assert_gated(run(base_p(), dict(base_p(), **{path: b"x\n"})), "plugin-path")
@@ -1340,7 +1339,7 @@ def test_a_readme_edit_does_not_gate():
 
 
 def test_a_prose_edit_to_a_non_skill_markdown_file_does_not_gate():
-    path = PR + "/agents/a.md"
+    path = PR + "/docs/a.md"
     base = base_p(**{path: skill_md()})
     assert_not_gated(run(base, dict(base, **{path: skill_md(body="more prose\n")})))
 
@@ -1410,6 +1409,144 @@ def test_an_unparseable_or_oddly_shaped_marketplace_gates():
     assert run(base, {MP: b"{not json"})[0]
     assert run(base, {MP: ["a"]})[0]
     assert run(base, {MP: {"name": "m", "plugins": "x"}})[0]
+
+
+# =================================================================================
+# Review of #164: fail-open gaps and over-gating
+# =================================================================================
+
+BASH_SKILL = skill_md("allowed-tools: Bash(ls:*)\n")
+
+
+@pytest.mark.parametrize("path", [PR + "/workflows/README.js", PR + "/skills/s/README.sh",
+                                  PR + "/scripts/license_check.py", PR + "/lib/changelog.mjs",
+                                  PR + "/README.v2"])
+def test_a_code_file_with_an_inert_looking_name_gates(path):
+    assert_gated(run(base_p(), dict(base_p(), **{path: b"x\n"})), "plugin-path")
+
+
+@pytest.mark.parametrize("path", [PR + "/README", PR + "/README.txt", PR + "/LICENSE",
+                                  PR + "/CHANGELOG.md", PR + "/readme-extra.md"])
+def test_plain_text_readme_style_names_stay_inert(path):
+    assert_not_gated(run(base_p(), dict(base_p(), **{path: b"x\n"})))
+
+
+@pytest.mark.parametrize("path", [PR + "/agents/README.md", PR + "/README.md",
+                                  PR + "/skills/s/PURPOSE.md", PR + "/LICENSE.md"])
+def test_a_markdown_file_with_hooks_gates_whatever_its_name(path):
+    assert run(base_p(), dict(base_p(), **{path: skill_md("hooks:\n  Stop: []\n")}))[0]
+
+
+@pytest.mark.parametrize("path", [PR + "/agents/a.md", PR + "/Agents/a.md", PR + "/workflows/w.md",
+                                  PR + "/monitors/m.md", PR + "/MONITORS/README.md",
+                                  PR + "/agents/logo.png", PR + "/workflows/README"])
+def test_nothing_under_agents_workflows_or_monitors_is_inert(path):
+    assert_gated(run(base_p(), dict(base_p(), **{path: b"prose\n"})), "plugin-path")
+
+
+def test_agent_frontmatter_keys_gate_through_the_directory_rule():
+    head = dict(base_p(), **{PR + "/agents/a.md": skill_md("permissionMode: bypassPermissions\n")})
+    assert_gated(run(base_p(), head), "plugin-path")
+
+
+@pytest.mark.parametrize("path", [PR + "/skills/s/references/guide.md", PR + "/skills/s/data.json",
+                                  PR + "/skills/s/scripts/run.py", PR + "/skills/s/tests/t.py"])
+def test_under_a_skill_that_grants_a_shell_every_non_inert_file_gates(path):
+    base = base_p(**{PR + "/skills/s/SKILL.md": BASH_SKILL})
+    assert_gated(run(base, dict(base, **{path: b"x\n"})), "plugin-path")
+
+
+def test_under_a_skill_that_grants_a_shell_readme_and_images_stay_inert():
+    base = base_p(**{PR + "/skills/s/SKILL.md": BASH_SKILL})
+    head = dict(base, **{PR + "/skills/s/README.md": b"x\n", PR + "/skills/s/a.png": b"x"})
+    assert_not_gated(run(base, head))
+
+
+def test_a_skill_that_grants_a_shell_only_at_base_still_counts():
+    base = base_p(**{PR + "/skills/s/SKILL.md": BASH_SKILL})
+    head = dict(base, **{PR + "/skills/s/SKILL.md": skill_md(),
+                         PR + "/skills/s/scripts/run.py": b"x\n"})
+    assert run(base, head)[0]
+
+
+@pytest.mark.parametrize("source", [
+    {"source": "git-subdir", "url": "https://example.com/this.git", "path": "extras/e"},
+    {"source": "github", "repo": "example/this", "path": "extras/e"},
+])
+def test_a_remote_source_with_a_path_is_a_plugin_root(source):
+    market = mk(ENTRY, {"name": "e", "source": source})
+    base = {MP: market}
+    assert_gated(run(base, dict(base, **{"extras/e/lib/x.js": b"x\n"})), "plugin-path")
+
+
+def test_a_remote_source_without_a_path_adds_no_root():
+    market = mk(ENTRY, {"name": "e", "source": {"source": "github", "repo": "example/other"}})
+    base = {MP: market}
+    assert_not_gated(run(base, dict(base, **{"extras/e/lib/x.js": b"x\n"})))
+
+
+# Real merged PRs the first version over-gated (ADR 0021: bot PRs merge unattended).
+
+
+def test_a_version_only_bump_in_both_manifests_does_not_gate():
+    one, two = PR + "/.claude-plugin/plugin.json", PR + "/plugin.json"
+    base = base_p(**{one: {"name": "p", "version": "1.0.0"}, two: {"name": "p", "version": "1.0.0"}})
+    head = dict(base, **{one: {"name": "p", "version": "1.0.1"}, two: {"name": "p", "version": "1.0.1"}})
+    assert_not_gated(run(base, head))
+
+
+@pytest.mark.parametrize("key, value", [("description", "d"), ("keywords", ["a"]), ("author", {"name": "x"}),
+                                        ("homepage", "https://example.com"),
+                                        ("repository", "https://example.com/r"), ("license", "MIT")])
+def test_each_inert_manifest_key_may_change_alone(key, value):
+    path = PR + "/.claude-plugin/plugin.json"
+    base = base_p(**{path: {"name": "p"}})
+    assert_not_gated(run(base, dict(base, **{path: {"name": "p", key: value}})))
+
+
+@pytest.mark.parametrize("head", [{"name": "q"}, {"name": "p", "mcpServers": {}}])
+def test_any_other_manifest_key_change_gates(head):
+    path = PR + "/.claude-plugin/plugin.json"
+    base = base_p(**{path: {"name": "p"}})
+    assert_gated(run(base, dict(base, **{path: head})), "manifest-runtime-key")
+
+
+def test_a_manifest_with_a_repeated_key_or_bad_json_gates():
+    path = PR + "/.claude-plugin/plugin.json"
+    base = base_p(**{path: {"name": "p"}})
+    assert run(base, dict(base, **{path: b'{"name": "p", "hooks": "a", "hooks": "b"}'}))[0]
+    assert run(base, dict(base, **{path: b"{nope"}))[0]
+
+
+def test_a_manifest_in_another_case_gates_even_for_a_version_bump():
+    base = base_p(**{PR + "/.Claude-Plugin/Plugin.json": {"name": "p", "version": "1"}})
+    head = dict(base, **{PR + "/.Claude-Plugin/Plugin.json": {"name": "p", "version": "2"}})
+    assert run(base, head)[0]
+
+
+def test_draft_skill_102_adding_a_script_under_a_skill_without_a_shell_does_not_gate():
+    base = base_p()
+    head = dict(base, **{PR + "/skills/s/scripts/check_ids.py": b"print(1)\n",
+                         PR + "/skills/s/tests/test_check_ids.py": b"x\n",
+                         PR + "/skills/s/PURPOSE.md": b"why\n",
+                         PR + "/skills/s/SKILL.md": skill_md(body="more\n")})
+    assert_not_gated(run(base, head))
+
+
+def test_a_script_under_a_skill_with_hooks_gates():
+    base = base_p(**{PR + "/skills/s/SKILL.md": skill_md("hooks:\n  Stop: []\n")})
+    assert_gated(run(base, dict(base, **{PR + "/skills/s/scripts/a.py": b"x\n"})), "plugin-path")
+
+
+def test_a_script_under_a_directory_with_no_skill_md_gates():
+    assert_gated(run(base_p(), dict(base_p(), **{PR + "/skills/other/scripts/a.py": b"x\n"})),
+                 "plugin-path")
+
+
+def test_a_script_a_hook_names_still_gates_under_a_skill_without_a_shell():
+    base = base_p(**{PR + "/hooks/hooks.json": hook_config('"${CLAUDE_PLUGIN_ROOT}"/skills/s/scripts/a.py'),
+                     PR + "/skills/s/scripts/a.py": b"1\n"})
+    assert_gated(run(base, dict(base, **{PR + "/skills/s/scripts/a.py": b"2\n"})), "hook-referenced")
 
 
 # =================================================================================

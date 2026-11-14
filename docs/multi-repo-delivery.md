@@ -127,11 +127,23 @@ multi-repo shape `$CLAUDE_PROJECT_DIR` is the parent — which has no
 
 ## The wiring (cloud only)
 
-Put this in the **cloud environment's setup script** — the *Setup script* field
-in the environment settings dialog at claude.ai/code. The block is the whole
-field: paste all of it, replacing what is there. It writes the user-scope
-settings file, `/root/.claude/settings.json`, the one link of the chain that
-every hosted session reads, project threads included.
+Put this launcher in the **cloud environment's setup script** — the *Setup
+script* field in the environment settings dialog at claude.ai/code. The block
+is the whole field: paste all of it, replacing what is there. It runs
+[`scripts/cloud-env-setup.sh`](../scripts/cloud-env-setup.sh), which holds
+everything below, so the setup changes by reviewed pull request and the paste
+almost never changes. It uses the attached checkout of this repo, and when this
+repo is not attached it downloads the same file from `main` (the same code a
+checkout of `main` would carry). That script writes the user-scope settings
+file, `/root/.claude/settings.json`, the one link of the chain that every
+hosted session reads, project threads included.
+
+The environment runs its setup once and caches the result for about 7 days,
+keyed on the pasted text. A merged change to `scripts/cloud-env-setup.sh`
+therefore reaches an environment when that cache expires, not at once; hooks
+the script wires still run from the checkout every session. To apply a change
+sooner, edit the pasted launcher trivially (for example, a comment) so the
+cache misses.
 
 There is no laptop counterpart to this section and no laptop version of the
 script. A durable machine has no environment setup script, and would have
@@ -139,180 +151,16 @@ nothing for one to fix: see *First: which surface are you on* above.
 
 ```bash
 #!/bin/bash
-# Deliver the fleet's pinned skills in a multi-repo session.
-#
-# Hooks resolve from <cwd>/.claude and $HOME/.claude only, never from the repos
-# below cwd, so this cannot be committed to any of them (ADR 0005).
-#
-# THE PROJECT DIR IS HARDCODED, and the two obvious ways to derive it are both
-# wrong HERE. A setup script runs as root before Claude Code launches, and
-# measured in a hosted session: `CLAUDE_PROJECT_DIR` is UNSET — Claude Code sets
-# it when it invokes a hook, which this is not — and `HOME` is `/root`, not the
-# project dir's parent.
-#
-# THE WIRING GOES IN USER SCOPE, `/root/.claude/settings.json`. Project threads
-# (claude.ai Projects) ignore `<project>/.claude/settings.json` but honor the
-# user-scope file, measured 2026-10-31 with a Stop hook in each: only the
-# user-scope one fired. The harness's own hooks in `launcher-settings.json`
-# kept firing beside it, so the two merge rather than displace each other.
-#
-# Getting it right the first time matters more than usual, because the setup
-# script runs ONCE. Anthropic snapshots the filesystem afterwards and later
-# sessions skip the script, so a wrong path is baked into the snapshot and
-# persists until the script changes or the cache expires (~7 days).
-#
-# Safe in a single-repo session too: every command looks only in the project
-# dir's CHILDREN, and there the project dir IS the repo, which has none, so the
-# commands do nothing and the repo's own committed `.claude/settings.json`
-# fires as it does today.
-project=/home/user
-user_claude=/root/.claude
-
-# NOT `set -eu`. A setup script that exits non-zero makes the SESSION FAIL TO
-# START, and skills not loading is by far the lesser failure — hence `|| true`
-# here and the unconditional `exit 0` at the end.
-mkdir -p "$user_claude" || true
-
-# An older copy of this script wired the project scope instead. Remove that
-# file, but only if it is ours, so a multi-repo session does not run each hook
-# twice.
-if grep -qs 'skills-bootstrap.sh' "$project/.claude/settings.json"; then
-  rm -f "$project/.claude/settings.json"
+# Runs adam-agentskills' scripts/cloud-env-setup.sh, which holds the whole
+# setup; change that file by pull request, not this launcher. Uses the attached
+# checkout, else main's copy. Never exits nonzero: that would stop sessions.
+s=/home/user/adam-agentskills/scripts/cloud-env-setup.sh
+if [ ! -f "$s" ]; then
+  s=$(mktemp) && curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 30 -o "$s" \
+    https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/main/scripts/cloud-env-setup.sh \
+    || { echo "cloud-env-setup: no checkout and download failed; setup skipped"; exit 0; }
 fi
-
-# The eval harness (skills-evals' run_eval.py) runs every agent trial under
-# Claude Code's sandbox with failIfUnavailable, which needs bubblewrap and
-# socat; without them every trial ends `sandbox_unavailable` (eval runner
-# routine, 2026-10-20). Needs the environment's default package-manager list.
-apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/dev/null 2>&1 \
-  || echo "wiring: bubblewrap/socat install failed; sandboxed evals will refuse to run"
-
-cat > "$user_claude/settings.json" <<'JSON'
-{
-  "skillListingBudgetFraction": 0.02,
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|fork",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 90
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 10
-          }
-        ]
-      }
-    ]
-  }
-}
-JSON
-echo "wiring: wrote $user_claude/settings.json"
-
-# Config-based git hooks need Git 2.54+ (ADR 0020). Never fatal: without them
-# CI still runs the same checks.
-if ! git version | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=54))}'; then
-  apt-get install -y -q libcurl4-openssl-dev >/dev/null 2>&1 || true
-  src=$(mktemp -d)
-  if git clone -q --depth 1 --branch v2.56.0 https://github.com/git/git "$src/git" \
-     && make -C "$src/git" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
-          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install >/dev/null 2>&1; then
-    echo "git: $(/usr/local/bin/git version)"
-  else
-    echo "git: build failed; local hooks will not run, CI still checks" >&2
-  fi
-  rm -rf "$src"
-fi
-for f in "$project"/*/scripts/install-agent-hooks.sh; do
-  [ -f "$f" ] && { bash "$f" --system || true; break; }
-done
-
-# ---- BEGIN owner block: fleet guidance (_agent-guidance ADR 0043) ----
-# The pin is these two variables and nothing else. To bump it, fetch first,
-# then take _agent-guidance's current main commit and that file's digest:
-#   git -C <checkout> rev-parse origin/main
-#   git -C <checkout> show origin/main:.claude/hooks/fleet-memory.sh | sha256sum
-# Then re-paste this whole script into every environment that uses it.
-fleet_pin_commit=0ef732fdbd825e35ad6bd853855fe158b61ada2b
-fleet_pin_sha256=cfc01078b9d06990c2e458bade9aebffe10e7e25a97eaec23a59e2d3f28a2241
-# The verified installer stays here: it re-reads its own file after it exits
-# (to write a delivery receipt), so it must outlive this script's temp dir.
-fleet_hook_dir=/opt/fleet-guidance
-fleet_guidance_install() (
-  fail() { echo "fleet-guidance: setup skipped ($1)"; exit 0; }
-  raw=https://raw.githubusercontent.com/Adam-S-Daniel/_agent-guidance
-  command -v curl >/dev/null 2>&1 && command -v git >/dev/null 2>&1 \
-    && command -v sha256sum >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1 \
-    || fail "curl, git, timeout or sha256sum missing"
-  case "$user_claude" in
-    */.claude) ;;
-    *) fail "unexpected Claude directory" ;;
-  esac
-  umask 077
-  mkdir -p "$fleet_hook_dir" && chmod 700 "$fleet_hook_dir" || fail "no installer directory"
-  tmp=$(mktemp -d) || fail "no temporary directory"
-  dl=$(mktemp "$fleet_hook_dir/.download.XXXXXX") || fail "no installer directory"
-  trap 'rm -rf "$tmp"; rm -f "$dl"' EXIT
-  hook="$fleet_hook_dir/fleet-memory-$fleet_pin_sha256.sh"
-  # The installer: reuse a verified copy, else fetch the pin, verify, then move
-  # it into place (same directory, so the move is atomic). Run only verified bytes.
-  if [ -f "$hook" ] && [ ! -L "$hook" ] \
-      && [ "$(sha256sum < "$hook" | cut -d' ' -f1)" = "$fleet_pin_sha256" ]; then
-    :
-  else
-    curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
-      --max-filesize 4194304 -o "$dl" \
-      "$raw/$fleet_pin_commit/.claude/hooks/fleet-memory.sh" || fail "installer download failed"
-    [ "$(sha256sum < "$dl" | cut -d' ' -f1)" = "$fleet_pin_sha256" ] \
-      || fail "installer digest mismatch; not run"
-    mv -f "$dl" "$hook" || fail "installer could not be stored"
-  fi
-  # The payload: main's HEAD commit (a commit-only fetch; the proxy refuses the
-  # REST API for repos not attached to the session), base.md at that commit, and
-  # its committer time as the stamp, as the plugin's hook does.
-  g=(env -u GIT_DIR -u GIT_WORK_TREE -u GIT_COMMON_DIR -u GIT_INDEX_FILE
-     -u GIT_OBJECT_DIRECTORY -u GIT_ALTERNATE_OBJECT_DIRECTORIES
-     -u GIT_SHALLOW_FILE -u GIT_NAMESPACE -u GIT_GRAFT_FILE
-     GIT_TERMINAL_PROMPT=0 GCM_INTERACTIVE=never GIT_ASKPASS=)
-  "${g[@]}" git init -q --bare --template= "$tmp/g" >/dev/null 2>&1 || fail "commit lookup failed"
-  "${g[@]}" timeout -k 5 30 git --git-dir="$tmp/g" \
-    -c credential.helper= -c core.askPass= -c core.hooksPath=/dev/null \
-    -c protocol.allow=never -c protocol.https.allow=always \
-    fetch -q --no-tags --depth=1 --filter=tree:0 \
-    https://github.com/Adam-S-Daniel/_agent-guidance refs/heads/main >/dev/null 2>&1 \
-    || fail "commit lookup failed"
-  line=$("${g[@]}" git --git-dir="$tmp/g" log -1 --no-show-signature --format='%H %ct' FETCH_HEAD 2>/dev/null) \
-    || fail "commit lookup failed"
-  line=${line//$'\r'/}
-  head_sha=${line%% *}
-  stamp=${line#* }
-  [[ "$head_sha" =~ ^[0-9a-f]{40}$ && "$stamp" =~ ^[1-9][0-9]{0,9}$ ]] || fail "commit lookup failed"
-  curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 20 \
-    --max-filesize 1048576 -o "$tmp/base.md" \
-    "$raw/$head_sha/agents-md/base.md" || fail "base.md download failed"
-  # The plugin's own check: the exact header every base.md starts with.
-  header=$'# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**'
-  n="$(LC_ALL=C; printf '%s' "${#header}")"
-  [ "$(head -c "$n" "$tmp/base.md"; printf x)" = "${header}x" ] || fail "base.md failed validation"
-  # HOME is the home the session runs as, the parent of the .claude dir above.
-  env HOME="${user_claude%/.claude}" FLEET_GUIDANCE_OWNER=1 \
-    FLEET_GUIDANCE_PAYLOAD="$tmp/base.md" FLEET_GUIDANCE_PAYLOAD_STAMP="$stamp" \
-    bash "$hook" || fail "installer exited nonzero"
-  echo "fleet-guidance-source: _agent-guidance@$head_sha"
-)
-fleet_guidance_install || echo "fleet-guidance: setup skipped (unexpected failure)"
-# ---- END owner block ----
+bash "$s" || echo "cloud-env-setup: exited nonzero"
 exit 0
 ```
 
@@ -356,7 +204,7 @@ gets the guidance from the account-synced `adam-anything-anywhere` plugin
 ([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
 its SessionStart hook fetches `main`'s HEAD commit and `base.md` and installs
 it. The environment's setup script also installs it, in the owner block at
-the end of the snippet above: that is the guaranteed route (ADR 0043), because
+the end of `scripts/cloud-env-setup.sh`: that is the guaranteed route (ADR 0043), because
 it does not depend on the account sync reaching the surface. The block fetches
 `fleet-memory.sh` at a pinned `_agent-guidance` commit and runs it only if its
 SHA-256 matches, so the setup script never executes unreviewed code; the
@@ -366,8 +214,8 @@ committer time. Where the plugin's hook and the block both run, the
 (ADR 0016) arbitrates and the second reports `current`. The block never fails
 the setup: any problem prints one `fleet-guidance: setup skipped` line and the
 script goes on. Bump the pin (two variables, commented in the block) when
-`fleet-memory.sh` changes in `_agent-guidance` (fetch first), and re-paste the
-whole script into every environment. A test holds the pin to the bundled copy
+`fleet-memory.sh` changes in `_agent-guidance` (fetch first), and merge it; each
+environment picks it up when its setup cache expires. A test holds the pin to the bundled copy
 of `fleet-memory.sh` in this repo, so the two move together.
 
 The environment snapshot is cached after setup (about 7 days), so this route

@@ -13634,21 +13634,21 @@ def test_committed_sessionstart_matcher_includes_fork():
     assert matching[0]["matcher"] == "startup|resume|fork"
 
 
+CLOUD_ENV_SETUP = REPO_ROOT / "scripts" / "cloud-env-setup.sh"
+
+
+def _cloud_env_setup_text() -> str:
+    return CLOUD_ENV_SETUP.read_text(encoding="utf-8")
+
+
 def _documented_setup_script(project: Path, user_claude: Path) -> str:
-    """The cloud setup script from docs/multi-repo-delivery.md, runnable.
+    """scripts/cloud-env-setup.sh, runnable.
 
     It hardcodes `project=/home/user` and `user_claude=/root/.claude` on
     purpose (its comments say why), so the only edits point those two lines
     at temp dirs.
     """
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
-    blocks = re.findall(r"^```bash\n(.*?)^```$", document, re.S | re.M)
-    scripts = [b for b in blocks if b.startswith("#!/bin/bash\n")
-               and "wiring: wrote" in b]
-    assert len(scripts) == 1, "expected exactly one documented setup script"
-    script = scripts[0]
+    script = _cloud_env_setup_text()
     for line, value in (("\nproject=/home/user\n", f"\nproject={project}\n"),
                         ("\nuser_claude=/root/.claude\n",
                          f"\nuser_claude={user_claude}\n"),
@@ -13718,9 +13718,7 @@ def test_setup_script_survives_a_failed_install(tmp_path):
 
 @pytest.mark.parametrize("script_name", ["skills-bootstrap.sh"])
 def test_setup_script_sessionstart_matcher_includes_fork(script_name):
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
+    document = _cloud_env_setup_text()
     start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
     end = "\nJSON\necho \"wiring: wrote $user_claude/settings.json\""
     assert document.count(start) == 1
@@ -13737,9 +13735,7 @@ def test_setup_script_sessionstart_matcher_includes_fork(script_name):
 
 
 def _documented_settings() -> dict:
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
+    document = _cloud_env_setup_text()
     start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
     return json.loads(document.split(start, 1)[1].split("\nJSON\n", 1)[0])
 
@@ -13821,9 +13817,7 @@ def test_setup_script_doubles_the_skill_listing_budget():
 
 
 def _owner_block(hook_dir: Path = None) -> str:
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
+    document = _cloud_env_setup_text()
     begin = "# ---- BEGIN owner block"
     end = "# ---- END owner block ----"
     assert document.count(begin) == 1 and document.count(end) == 1
@@ -13931,3 +13925,83 @@ def test_owner_block_installs_with_the_stamp_and_the_session_home(tmp_path):
     assert "fleet-guidance-delivered: 1794606898" in memory
     pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", _owner_block(), re.M).group(1)
     assert (tmp_path / "hook" / f"fleet-memory-{pin}.sh").is_file()
+
+
+def _documented_launcher() -> str:
+    """The short launcher docs/multi-repo-delivery.md tells the owner to paste."""
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    blocks = re.findall(r"^```bash\n(.*?)^```$", document, re.S | re.M)
+    launchers = [b for b in blocks if b.startswith("#!/bin/bash\n")
+                 and "cloud-env-setup.sh" in b]
+    assert len(launchers) == 1, "expected exactly one documented launcher"
+    return launchers[0]
+
+
+def test_launcher_is_short_and_holds_no_setup_logic():
+    # Everything that can live in a reviewed file does; the paste only finds
+    # and runs it, so a setup change never needs a re-paste.
+    launcher = _documented_launcher()
+    assert len(launcher.splitlines()) <= 15
+    assert "settings.json" not in launcher
+    assert "fleet_pin" not in launcher
+    assert launcher.rstrip().endswith("exit 0")
+
+
+def test_launcher_downloads_this_repos_script_from_main():
+    url = ("https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/"
+           "main/scripts/cloud-env-setup.sh")
+    assert url in _documented_launcher()
+    assert "\ns=/home/user/adam-agentskills/scripts/cloud-env-setup.sh\n" \
+        in _documented_launcher()
+
+
+def _run_launcher(tmp_path: Path, checkout: bool, curl_body: str):
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    ran = tmp_path / "ran"
+    curl = stubs / "curl"
+    curl.write_text(curl_body.replace("@RAN@", str(ran)), encoding="utf-8")
+    curl.chmod(0o755)
+    local = tmp_path / "checkout" / "cloud-env-setup.sh"
+    if checkout:
+        local.parent.mkdir()
+        local.write_text(f'echo checkout >> "{ran}"\nexit 3\n', encoding="utf-8")
+    line = "\ns=/home/user/adam-agentskills/scripts/cloud-env-setup.sh\n"
+    script = tmp_path / "launcher.sh"
+    script.write_text(_documented_launcher().replace(line, f"\ns={local}\n"),
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=30)
+    runs = ran.read_text(encoding="utf-8").split() if ran.exists() else []
+    return proc, runs
+
+
+_CURL_SERVES = ('#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+                'echo \'echo main >> "@RAN@"\' > "$out"\n')
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_runs_the_checkout_and_never_fails(tmp_path):
+    proc, runs = _run_launcher(tmp_path, checkout=True, curl_body="#!/bin/bash\nexit 99\n")
+    assert proc.returncode == 0, proc.stderr
+    assert runs == ["checkout"]
+    assert "cloud-env-setup: exited nonzero" in proc.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_falls_back_to_main_without_a_checkout(tmp_path):
+    proc, runs = _run_launcher(tmp_path, checkout=False, curl_body=_CURL_SERVES)
+    assert proc.returncode == 0, proc.stderr
+    assert runs == ["main"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_failed_download_skips_setup_and_exits_zero(tmp_path):
+    proc, runs = _run_launcher(tmp_path, checkout=False, curl_body="#!/bin/bash\nexit 22\n")
+    assert proc.returncode == 0, proc.stderr
+    assert runs == []
+    assert proc.stdout.strip() == \
+        "cloud-env-setup: no checkout and download failed; setup skipped"

@@ -176,6 +176,56 @@ fleet_guidance_install() (
     bash "$hook" || fail "installer exited nonzero"
   echo "fleet-guidance-source: _agent-guidance@$head_sha"
 )
-fleet_guidance_install || echo "fleet-guidance: setup skipped (unexpected failure)"
+fleet_out=$(fleet_guidance_install) || fleet_out+=$'\n'"fleet-guidance: setup skipped (unexpected failure)"
+printf '%s\n' "${fleet_out#$'\n'}"
 # ---- END owner block ----
+
+# ---- BEGIN setup record ----
+# Which launcher and which version of this script ran, so a cached environment
+# can be traced. The record goes to $user_claude/cloud-env-setup.json and, where
+# the usage sink is configured with proxy signing, to the sink as a `setups`
+# record (skills-evals' scripts/ingest_usage_sink.py, validator version 4+).
+# The launcher passes the CLOUD_SETUP_* values. Every value is checked against
+# a fixed shape before it is written, so nothing needs escaping, and only the
+# HTTP status is printed. Never fails setup.
+setup_record() (
+  hex() { [[ "$1" =~ ^[0-9a-f]{$2}$ ]] && printf '%s' "$1"; }
+  rand() { od -An -N16 -tx1 /dev/urandom | tr -d ' \n'; }
+  version=${CLOUD_SETUP_LAUNCHER_VERSION:-}
+  source=${CLOUD_SETUP_SOURCE:-}
+  [[ "$version" =~ ^[1-9][0-9]{0,3}$ && "$source" =~ ^(checkout|download)$ ]] \
+    || { echo "cloud-env-setup: no launcher values; record skipped"; exit 0; }
+  # The installer's own outcome, or `failed` when this script's block gave up.
+  status=$(sed -n -e 's/^fleet-guidance: setup skipped.*/failed/p' \
+    -e 's/^fleet-guidance: \(installed\|current\|skipped\)[ (].*/\1/p' <<<"$fleet_out" | head -n 1)
+  guidance_commit=$(sed -n 's/^fleet-guidance-source: _agent-guidance@\([0-9a-f]\{40\}\)$/\1/p' <<<"$fleet_out" | head -n 1)
+  id=$(hex "$(rand)" 32) || { echo "cloud-env-setup: no random id; record skipped"; exit 0; }
+  ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  launcher_sha=$(hex "${CLOUD_SETUP_LAUNCHER_SHA256:-}" 64)
+  script_sha=$(hex "$(sha256sum < "$0" 2>/dev/null | cut -c1-64)" 64) \
+    || { echo "cloud-env-setup: cannot hash this script; record skipped"; exit 0; }
+  script_commit=$(hex "${CLOUD_SETUP_COMMIT:-}" 40)
+  pin=$(hex "${fleet_pin_commit:-}" 40)
+  record=$(printf '{"id":"%s","ts":"%s","launcher_version":%s,"launcher_sha256":"%s","script_source":"%s","script_sha256":"%s","script_commit":"%s","fleet_pin_commit":"%s","fleet_guidance_commit":"%s","fleet_guidance":"%s"}' \
+    "$id" "$ts" "$version" "$launcher_sha" "$source" "$script_sha" "$script_commit" "$pin" "$guidance_commit" "$status")
+  printf '%s\n' "$record" > "$user_claude/cloud-env-setup.json" 2>/dev/null || true
+  echo "cloud-env-setup: launcher v$version ${launcher_sha:0:12}, script ${script_sha:0:12} from $source${script_commit:+ @${script_commit:0:12}}"
+  bucket=${USAGE_SINK_BUCKET:-} region=${USAGE_SINK_REGION:-}
+  if [ "${USAGE_SINK_SIGNING:-}" != proxy ] \
+      || ! [[ "$bucket" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ && "$region" =~ ^[a-z]{2}(-[a-z0-9]+){1,4}$ ]]; then
+    echo "cloud-env-setup: usage sink not configured; record kept locally"
+    exit 0
+  fi
+  key=$(hex "$(rand)" 32) || { echo "cloud-env-setup: no random key; record kept locally"; exit 0; }
+  body=$(printf '{"v":1,"kind":"usage-drop","sent":"%s","guidance":[],"skills":[],"setups":[%s]}' "$ts" "$record")
+  code=$(printf '%s' "$body" | curl -q -sS -o /dev/null -w '%{http_code}' --proto '=https' \
+    --connect-timeout 5 --max-time 20 -X PUT \
+    -H 'If-None-Match: *' -H 'Content-Type: application/json' \
+    -H "x-amz-content-sha256: $(printf '%s' "$body" | sha256sum | cut -c1-64)" \
+    --data-binary @- "https://$bucket.s3.$region.amazonaws.com/drop/${ts:0:10}/$key.json" 2>/dev/null) \
+    || true
+  echo "cloud-env-setup: record sent to the usage sink (HTTP ${code:-none})"
+)
+setup_record || echo "cloud-env-setup: record skipped (unexpected failure)"
+# ---- END setup record ----
 exit 0

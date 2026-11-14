@@ -132,9 +132,21 @@ script* field in the environment settings dialog at claude.ai/code. The block
 is the whole field: paste all of it, replacing what is there. It runs
 [`scripts/cloud-env-setup.sh`](../scripts/cloud-env-setup.sh), which holds
 everything below, so the setup changes by reviewed pull request and the paste
-almost never changes. It uses the attached checkout of this repo, and when this
-repo is not attached it downloads the same file from `main` (the same code a
-checkout of `main` would carry). That script writes the user-scope settings
+almost never changes. It runs the `main` copy only: from the attached
+checkout's `origin/main` (never the checked-out branch, which could be an
+unreviewed one), or, when this repo is not attached, downloaded from `main`.
+A rename or move of the script makes that download 404 and setup is skipped
+with one line, so moving it needs a new paste.
+
+**What ran is recorded.** The launcher passes its version, its own SHA-256 and
+where the script came from (with `origin/main`'s commit for a checkout); the
+script adds its own SHA-256, the fleet-guidance pin, the `_agent-guidance`
+commit it installed and the installer's outcome. It writes that record to
+`/root/.claude/cloud-env-setup.json`, prints one `cloud-env-setup:` line, and,
+where the environment has the usage sink with proxy signing
+(`USAGE_SINK_BUCKET`, `USAGE_SINK_REGION`, `USAGE_SINK_SIGNING=proxy`), sends
+it as a `setups` record, which adam-agentskills-private's ingest appends to
+`events/<YYYY-MM>/cloud-setup.jsonl` on `persistent/usage-events`. That script writes the user-scope settings
 file, `/root/.claude/settings.json`, the one link of the chain that every
 hosted session reads, project threads included.
 
@@ -151,17 +163,20 @@ nothing for one to fix: see *First: which surface are you on* above.
 
 ```bash
 #!/bin/bash
-# Runs adam-agentskills' scripts/cloud-env-setup.sh, which holds the whole
-# setup; change that file by pull request, not this launcher. Uses the attached
-# checkout, else main's copy. Never exits nonzero: that would stop sessions.
-s=/home/user/adam-agentskills/scripts/cloud-env-setup.sh
-if [ ! -f "$s" ]; then
-  s=$(mktemp) && curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 30 -o "$s" \
-    https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/main/scripts/cloud-env-setup.sh \
-    || { echo "cloud-env-setup: no checkout and download failed; setup skipped"; exit 0; }
-fi
+# Runs main's scripts/cloud-env-setup.sh from adam-agentskills, which holds the
+# whole setup: change that by pull request, not here. Bump the version on any
+# edit here. Never exits nonzero: that would stop sessions from starting.
+export CLOUD_SETUP_LAUNCHER_VERSION=1 CLOUD_SETUP_LAUNCHER_SHA256=
+[ -f "$0" ] && CLOUD_SETUP_LAUNCHER_SHA256=$(sha256sum < "$0" | cut -c1-64)
+r=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh; s=$(mktemp) || exit 0
+if git -C "$r" show "origin/main:$f" > "$s" 2>/dev/null && [ -s "$s" ]; then
+  export CLOUD_SETUP_SOURCE=checkout CLOUD_SETUP_COMMIT=$(git -C "$r" rev-parse origin/main)
+elif curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 30 --max-filesize 1048576 \
+    -o "$s" "https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/main/$f"; then
+  export CLOUD_SETUP_SOURCE=download CLOUD_SETUP_COMMIT=
+else echo "cloud-env-setup: no checkout and download failed; setup skipped"; rm -f "$s"; exit 0; fi
 bash "$s" || echo "cloud-env-setup: exited nonzero"
-exit 0
+rm -f "$s"; exit 0
 ```
 
 `skillListingBudgetFraction` doubles Claude Code's skill-listing budget from its

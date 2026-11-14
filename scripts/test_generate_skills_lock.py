@@ -13951,10 +13951,36 @@ def test_launcher_is_short_and_holds_no_setup_logic():
 
 def test_launcher_downloads_this_repos_script_from_main():
     url = ("https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/"
-           "main/scripts/cloud-env-setup.sh")
-    assert url in _documented_launcher()
-    assert "\ns=/home/user/adam-agentskills/scripts/cloud-env-setup.sh\n" \
-        in _documented_launcher()
+           "main/$f")
+    launcher = _documented_launcher()
+    assert url in launcher
+    assert "\nr=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh;" in launcher
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _fake_checkout(root: Path, ran: Path) -> str:
+    """A repo whose origin/main has a script that logs `main`, checked out on
+    a branch whose copy logs `branch`. Returns origin/main's commit."""
+    repo = root / "checkout"
+    (repo / "scripts").mkdir(parents=True)
+    _git(repo.parent, "init", "-q", str(repo))
+    target = repo / "scripts" / "cloud-env-setup.sh"
+    env_dump = ('echo "main $CLOUD_SETUP_LAUNCHER_VERSION $CLOUD_SETUP_SOURCE '
+                '$CLOUD_SETUP_COMMIT $CLOUD_SETUP_LAUNCHER_SHA256" >> "{ran}"\nexit 3\n')
+    target.write_text(env_dump.format(ran=ran), encoding="utf-8")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    _git(repo, "add", ".")
+    _git(repo, *ident, "commit", "-qm", "main")
+    commit = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/main", commit)
+    _git(repo, "checkout", "-qb", "feature")
+    target.write_text(f'echo branch >> "{ran}"\n', encoding="utf-8")
+    _git(repo, *ident, "commit", "-qam", "unreviewed")
+    return commit
 
 
 def _run_launcher(tmp_path: Path, checkout: bool, curl_body: str):
@@ -13964,44 +13990,130 @@ def _run_launcher(tmp_path: Path, checkout: bool, curl_body: str):
     curl = stubs / "curl"
     curl.write_text(curl_body.replace("@RAN@", str(ran)), encoding="utf-8")
     curl.chmod(0o755)
-    local = tmp_path / "checkout" / "cloud-env-setup.sh"
-    if checkout:
-        local.parent.mkdir()
-        local.write_text(f'echo checkout >> "{ran}"\nexit 3\n', encoding="utf-8")
-    line = "\ns=/home/user/adam-agentskills/scripts/cloud-env-setup.sh\n"
+    commit = _fake_checkout(tmp_path, ran) if checkout else None
+    line = "\nr=/home/user/adam-agentskills "
+    launcher = _documented_launcher()
+    assert launcher.count(line) == 1
     script = tmp_path / "launcher.sh"
-    script.write_text(_documented_launcher().replace(line, f"\ns={local}\n"),
+    script.write_text(launcher.replace(line, f"\nr={tmp_path / 'checkout'} "),
                       encoding="utf-8")
     env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
     proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
                           env=env, timeout=30)
-    runs = ran.read_text(encoding="utf-8").split() if ran.exists() else []
-    return proc, runs
+    runs = ran.read_text(encoding="utf-8").splitlines() if ran.exists() else []
+    import hashlib
+    launcher_sha = hashlib.sha256(script.read_bytes()).hexdigest()
+    return proc, runs, commit, launcher_sha
 
 
 _CURL_SERVES = ('#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
-                'echo \'echo main >> "@RAN@"\' > "$out"\n')
+                'echo \'echo "download $CLOUD_SETUP_SOURCE [$CLOUD_SETUP_COMMIT]" >> "@RAN@"\' > "$out"\n')
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
-def test_launcher_runs_the_checkout_and_never_fails(tmp_path):
-    proc, runs = _run_launcher(tmp_path, checkout=True, curl_body="#!/bin/bash\nexit 99\n")
+def test_launcher_runs_origin_main_not_the_checked_out_branch(tmp_path):
+    # A session can start on an unreviewed branch; setup runs as root and is
+    # cached for days, so only main's copy may run.
+    proc, runs, commit, launcher_sha = _run_launcher(
+        tmp_path, checkout=True, curl_body="#!/bin/bash\nexit 99\n")
     assert proc.returncode == 0, proc.stderr
-    assert runs == ["checkout"]
+    assert runs == [f"main 1 checkout {commit} {launcher_sha}"]
     assert "cloud-env-setup: exited nonzero" in proc.stdout
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
 def test_launcher_falls_back_to_main_without_a_checkout(tmp_path):
-    proc, runs = _run_launcher(tmp_path, checkout=False, curl_body=_CURL_SERVES)
+    proc, runs, _commit, _sha = _run_launcher(tmp_path, checkout=False,
+                                              curl_body=_CURL_SERVES)
     assert proc.returncode == 0, proc.stderr
-    assert runs == ["main"]
+    assert runs == ["download download []"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
 def test_launcher_failed_download_skips_setup_and_exits_zero(tmp_path):
-    proc, runs = _run_launcher(tmp_path, checkout=False, curl_body="#!/bin/bash\nexit 22\n")
+    proc, runs, _commit, _sha = _run_launcher(tmp_path, checkout=False,
+                                              curl_body="#!/bin/bash\nexit 22\n")
     assert proc.returncode == 0, proc.stderr
     assert runs == []
     assert proc.stdout.strip() == \
         "cloud-env-setup: no checkout and download failed; setup skipped"
+
+
+def _run_setup_with_record(tmp_path: Path, sink: bool):
+    """The whole script, offline, as the launcher would run it, with a curl
+    stub that fails the fleet download and logs any sink PUT."""
+    project = tmp_path / "project"
+    user_claude = tmp_path / "root" / ".claude"
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    put = tmp_path / "put"
+    (stubs / "apt-get").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    (stubs / "git").write_text('#!/bin/bash\necho "git version 2.56.0"\n', encoding="utf-8")
+    (stubs / "curl").write_text(
+        '#!/bin/bash\ncase " $* " in *" PUT "*) printf "%s\\n" "$@" > "' + str(put) + '.args"; '
+        'cat > "' + str(put) + '.body"; printf 200; exit 0;; esac\nexit 22\n',
+        encoding="utf-8")
+    for tool in stubs.iterdir():
+        tool.chmod(0o755)
+    script = tmp_path / "setup.sh"
+    script.write_text(_documented_setup_script(project, user_claude), encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
+               CLOUD_SETUP_LAUNCHER_VERSION="1", CLOUD_SETUP_LAUNCHER_SHA256="ab" * 32,
+               CLOUD_SETUP_SOURCE="checkout", CLOUD_SETUP_COMMIT="cd" * 20)
+    for name in ("USAGE_SINK_BUCKET", "USAGE_SINK_REGION", "USAGE_SINK_SIGNING"):
+        env.pop(name, None)
+    if sink:
+        env.update(USAGE_SINK_BUCKET="example-bucket", USAGE_SINK_REGION="us-east-1",
+                   USAGE_SINK_SIGNING="proxy")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=60)
+    return proc, script, user_claude / "cloud-env-setup.json", put
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_is_written_locally_without_a_sink(tmp_path):
+    import hashlib
+    proc, script, receipt, put = _run_setup_with_record(tmp_path, sink=False)
+    assert proc.returncode == 0, proc.stderr
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    assert list(record) == ["id", "ts", "launcher_version", "launcher_sha256",
+                            "script_source", "script_sha256", "script_commit",
+                            "fleet_pin_commit", "fleet_guidance_commit", "fleet_guidance"]
+    assert re.fullmatch(r"[0-9a-f]{32}", record["id"])
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", record["ts"])
+    assert record["launcher_version"] == 1
+    assert record["launcher_sha256"] == "ab" * 32
+    assert record["script_source"] == "checkout"
+    assert record["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
+    assert record["script_commit"] == "cd" * 20
+    assert re.fullmatch(r"[0-9a-f]{40}", record["fleet_pin_commit"])
+    assert record["fleet_guidance_commit"] == ""
+    assert record["fleet_guidance"] == "failed"
+    assert "cloud-env-setup: usage sink not configured; record kept locally" in proc.stdout
+    assert not (tmp_path / "put.args").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_is_sent_to_the_sink_as_a_setups_envelope(tmp_path):
+    import hashlib
+    proc, _script, receipt, put = _run_setup_with_record(tmp_path, sink=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "cloud-env-setup: record sent to the usage sink (HTTP 200)" in proc.stdout
+    args = (tmp_path / "put.args").read_text(encoding="utf-8").splitlines()
+    body = (tmp_path / "put.body").read_bytes()
+    envelope = json.loads(body)
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    assert envelope == {"v": 1, "kind": "usage-drop", "sent": record["ts"],
+                        "guidance": [], "skills": [], "setups": [record]}
+    url = args[-1]
+    assert re.fullmatch(r"https://example-bucket\.s3\.us-east-1\.amazonaws\.com/drop/"
+                        + record["ts"][:10] + r"/[0-9a-f]{32}\.json", url)
+    assert "If-None-Match: *" in args and "--proto" in args
+    assert f"x-amz-content-sha256: {hashlib.sha256(body).hexdigest()}" in args
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_skips_without_launcher_values(tmp_path):
+    proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    assert "cloud-env-setup: no launcher values; record skipped" in proc.stdout

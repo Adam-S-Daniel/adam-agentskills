@@ -11436,7 +11436,12 @@ def test_a_newer_pin_whose_gitattributes_the_registry_reverted_does_not_win(
     new = {"adam/alpha": gsl.digest_skill_dir(alpha_dir), "adam/beta": old["adam/beta"]}
     _git(registry, "rm", "-q", attributes)
     # Back to the stored bytes first, so the revert changes ONLY the attributes
-    # file: alpha's tree at the tip must stay exactly the newer pin's.
+    # file: alpha's tree at the tip must stay exactly the newer pin's. Delete
+    # the files before the checkout: their index stat still matches the CRLF
+    # copies, so unless git happens to see them as racy it keeps them, and the
+    # revert then commits CRLF bytes (it did on Windows CI, 2026-11-14).
+    for path in (registry / "plugins").glob("*/skills/*/SKILL.md"):
+        path.unlink()
     _git(registry, "checkout", "-q", "--", "plugins")
     _commit_at(registry, {}, _PIN_EPOCH + 3000, "revert attributes")
     trees = subprocess.run(

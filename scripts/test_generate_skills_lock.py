@@ -11436,12 +11436,7 @@ def test_a_newer_pin_whose_gitattributes_the_registry_reverted_does_not_win(
     new = {"adam/alpha": gsl.digest_skill_dir(alpha_dir), "adam/beta": old["adam/beta"]}
     _git(registry, "rm", "-q", attributes)
     # Back to the stored bytes first, so the revert changes ONLY the attributes
-    # file: alpha's tree at the tip must stay exactly the newer pin's. Delete
-    # the files before the checkout: their index stat still matches the CRLF
-    # copies, so unless git happens to see them as racy it keeps them, and the
-    # revert then commits CRLF bytes (it did on Windows CI, 2026-11-14).
-    for path in (registry / "plugins").glob("*/skills/*/SKILL.md"):
-        path.unlink()
+    # file: alpha's tree at the tip must stay exactly the newer pin's.
     _git(registry, "checkout", "-q", "--", "plugins")
     _commit_at(registry, {}, _PIN_EPOCH + 3000, "revert attributes")
     trees = subprocess.run(
@@ -13962,7 +13957,7 @@ def test_launcher_downloads_this_repos_script_from_main():
     assert "\nr=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh;" in launcher
 
 
-def _git(repo: Path, *args: str) -> str:
+def _git_out(repo: Path, *args: str) -> str:
     return subprocess.run(["git", "-C", str(repo), *args], check=True,
                           capture_output=True, text=True).stdout.strip()
 
@@ -13972,22 +13967,22 @@ def _fake_checkout(root: Path, ran: Path) -> str:
     a branch whose copy logs `branch`. Returns origin/main's commit."""
     repo = root / "checkout"
     (repo / "scripts").mkdir(parents=True)
-    _git(repo.parent, "init", "-q", str(repo))
+    _git_out(repo.parent, "init", "-q", str(repo))
     target = repo / "scripts" / "cloud-env-setup.sh"
     env_dump = ('echo "main $CLOUD_SETUP_LAUNCHER_VERSION $CLOUD_SETUP_SOURCE '
                 '$CLOUD_SETUP_COMMIT $CLOUD_SETUP_LAUNCHER_SHA256" >> "{ran}"\nexit 3\n')
     target.write_text(env_dump.format(ran=ran), encoding="utf-8")
     ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
-    _git(repo, "add", ".")
-    _git(repo, *ident, "commit", "-qm", "main")
-    commit = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "update-ref", "refs/remotes/origin/main", commit)
-    _git(repo, "checkout", "-qb", "feature")
+    _git_out(repo, "add", ".")
+    _git_out(repo, *ident, "commit", "-qm", "main")
+    commit = _git_out(repo, "rev-parse", "HEAD")
+    _git_out(repo, "update-ref", "refs/remotes/origin/main", commit)
+    _git_out(repo, "checkout", "-qb", "feature")
     target.write_text(f'echo branch >> "{ran}"\n', encoding="utf-8")
-    _git(repo, *ident, "commit", "-qam", "unreviewed")
+    _git_out(repo, *ident, "commit", "-qam", "unreviewed")
     # Git resolves refs/tags/ before refs/remotes/, so a tag named origin/main
     # must not win (review finding).
-    _git(repo, "tag", "origin/main", "HEAD")
+    _git_out(repo, "tag", "origin/main", "HEAD")
     return commit
 
 

@@ -197,6 +197,7 @@ setup_record() (
     || { echo "cloud-env-setup: no launcher values; record skipped"; exit 0; }
   # The installer's own outcome, or `failed` when this script's block gave up.
   status=$(sed -n -e 's/^fleet-guidance: setup skipped.*/failed/p' \
+    -e 's/^fleet-guidance: DEGRADED.*/degraded/p' \
     -e 's/^fleet-guidance: \(installed\|current\|skipped\)[ (].*/\1/p' <<<"$fleet_out" | head -n 1)
   guidance_commit=$(sed -n 's/^fleet-guidance-source: _agent-guidance@\([0-9a-f]\{40\}\)$/\1/p' <<<"$fleet_out" | head -n 1)
   id=$(hex "$(rand)" 32) || { echo "cloud-env-setup: no random id; record skipped"; exit 0; }
@@ -209,7 +210,8 @@ setup_record() (
   record=$(printf '{"id":"%s","ts":"%s","launcher_version":%s,"launcher_sha256":"%s","script_source":"%s","script_sha256":"%s","script_commit":"%s","fleet_pin_commit":"%s","fleet_guidance_commit":"%s","fleet_guidance":"%s"}' \
     "$id" "$ts" "$version" "$launcher_sha" "$source" "$script_sha" "$script_commit" "$pin" "$guidance_commit" "$status")
   printf '%s\n' "$record" > "$user_claude/cloud-env-setup.json" 2>/dev/null || true
-  echo "cloud-env-setup: launcher v$version ${launcher_sha:0:12}, script ${script_sha:0:12} from $source${script_commit:+ @${script_commit:0:12}}"
+  short=${launcher_sha:0:12}
+  echo "cloud-env-setup: launcher v$version ${short:-(no hash)}, script ${script_sha:0:12} from $source${script_commit:+ @${script_commit:0:12}}"
   bucket=${USAGE_SINK_BUCKET:-} region=${USAGE_SINK_REGION:-}
   if [ "${USAGE_SINK_SIGNING:-}" != proxy ] \
       || ! [[ "$bucket" =~ ^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$ && "$region" =~ ^[a-z]{2}(-[a-z0-9]+){1,4}$ ]]; then

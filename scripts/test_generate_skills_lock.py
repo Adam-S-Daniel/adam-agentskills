@@ -13980,6 +13980,9 @@ def _fake_checkout(root: Path, ran: Path) -> str:
     _git(repo, "checkout", "-qb", "feature")
     target.write_text(f'echo branch >> "{ran}"\n', encoding="utf-8")
     _git(repo, *ident, "commit", "-qam", "unreviewed")
+    # Git resolves refs/tags/ before refs/remotes/, so a tag named origin/main
+    # must not win (review finding).
+    _git(repo, "tag", "origin/main", "HEAD")
     return commit
 
 
@@ -14090,6 +14093,8 @@ def test_setup_record_is_written_locally_without_a_sink(tmp_path):
     assert record["fleet_guidance_commit"] == ""
     assert record["fleet_guidance"] == "failed"
     assert "cloud-env-setup: usage sink not configured; record kept locally" in proc.stdout
+    assert (f"cloud-env-setup: launcher v1 {'ab' * 6}, script "
+            f"{record['script_sha256'][:12]} from checkout @{'cd' * 6}") in proc.stdout
     assert not (tmp_path / "put.args").exists()
 
 

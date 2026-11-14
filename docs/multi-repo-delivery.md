@@ -169,8 +169,8 @@ nothing for one to fix: see *First: which surface are you on* above.
 export CLOUD_SETUP_LAUNCHER_VERSION=1 CLOUD_SETUP_LAUNCHER_SHA256=
 [ -f "$0" ] && CLOUD_SETUP_LAUNCHER_SHA256=$(sha256sum < "$0" | cut -c1-64)
 r=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh; s=$(mktemp) || exit 0
-if git -C "$r" show "origin/main:$f" > "$s" 2>/dev/null && [ -s "$s" ]; then
-  export CLOUD_SETUP_SOURCE=checkout CLOUD_SETUP_COMMIT=$(git -C "$r" rev-parse origin/main)
+if git -C "$r" show "refs/remotes/origin/main:$f" > "$s" 2>/dev/null && [ -s "$s" ]; then
+  export CLOUD_SETUP_SOURCE=checkout CLOUD_SETUP_COMMIT=$(git -C "$r" rev-parse "refs/remotes/origin/main^{commit}")
 elif curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 30 --max-filesize 1048576 \
     -o "$s" "https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/main/$f"; then
   export CLOUD_SETUP_SOURCE=download CLOUD_SETUP_COMMIT=

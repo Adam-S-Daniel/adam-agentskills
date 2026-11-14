@@ -37,7 +37,9 @@ The gate denies by default. A pull request is GATED when any of these holds:
   (4) gate-itself         the gate's own workflow, this script or its tests,
                           and scripts/codex-session-start.sh (setup.sh copies
                           it to where local Codex runs it at every session
-                          start, so it is runtime code too).
+                          start, so it is runtime code too), and
+                          scripts/cloud-env-setup.sh (every owner cloud
+                          environment runs it as root at setup).
   (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
                           3000-file cap, or anything unexpected.
@@ -145,6 +147,7 @@ ROOT_FILES = frozenset({
 GATE_FILES = frozenset({
     ".github/workflows/actions.lock",
     ".github/workflows/plugin-runtime-review.yml",
+    "scripts/cloud-env-setup.sh",
     "scripts/codex-session-start.sh",
     "scripts/plugin_runtime_gate.py",
     "scripts/test_plugin_runtime_gate.py",

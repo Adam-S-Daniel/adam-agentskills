@@ -142,14 +142,15 @@ The one that needs the environment setup script. **Expect** P3's outcome, plus
 the union across every attached repo that carries a lock.
 
 ```bash
-ls -la "$PWD/.claude/settings.json"   # written by the setup script; absent => not wired
+ls -la /root/.claude/settings.json      # written by the setup script; absent => not wired
+cat /root/.claude/cloud-env-setup.json   # which launcher and script version ran
 ```
 
 Run P3's lock-diff **once per attached repo**, from each repo's directory. The
 verdict should name every contributing lock, e.g.
 `skills: 22/22 from … across 2 locks (adamdaniel.ai, adam-agentskills) — OK`.
 
-**Fail signatures.** `$PWD/.claude/settings.json` absent → the setup script did
+**Fail signatures.** `/root/.claude/settings.json` absent → the setup script did
 not run, or wrote elsewhere; it hardcodes the project dir precisely because
 `CLAUDE_PROJECT_DIR` is unset and `$PWD` is wrong at setup time. Verdict names
 one lock when two repos carry one → the hook that ran predates union discovery

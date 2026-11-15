@@ -14074,7 +14074,7 @@ def _run_setup_with_record(tmp_path: Path, sink: bool):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
-def test_setup_record_is_written_locally_without_a_sink(tmp_path):
+def test_setup_record_is_written_locally(tmp_path):
     import hashlib
     proc, script, receipt, put = _run_setup_with_record(tmp_path, sink=False)
     assert proc.returncode == 0, proc.stderr
@@ -14092,29 +14092,21 @@ def test_setup_record_is_written_locally_without_a_sink(tmp_path):
     assert re.fullmatch(r"[0-9a-f]{40}", record["fleet_pin_commit"])
     assert record["fleet_guidance_commit"] == ""
     assert record["fleet_guidance"] == "failed"
-    assert "cloud-env-setup: usage sink not configured; record kept locally" in proc.stdout
     assert (f"cloud-env-setup: launcher v1 {'ab' * 6}, script "
             f"{record['script_sha256'][:12]} from checkout @{'cd' * 6}") in proc.stdout
     assert not (tmp_path / "put.args").exists()
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
-def test_setup_record_is_sent_to_the_sink_as_a_setups_envelope(tmp_path):
-    import hashlib
-    proc, _script, receipt, put = _run_setup_with_record(tmp_path, sink=True)
+def test_setup_record_is_never_sent_from_setup(tmp_path):
+    """A setup script cannot read the environment's variables or secrets, so
+    it never uploads; the private plugin's Stop hook sends the file. Even with
+    the sink values set, nothing is PUT."""
+    proc, _script, receipt, _put = _run_setup_with_record(tmp_path, sink=True)
     assert proc.returncode == 0, proc.stderr
-    assert "cloud-env-setup: record sent to the usage sink (HTTP 200)" in proc.stdout
-    args = (tmp_path / "put.args").read_text(encoding="utf-8").splitlines()
-    body = (tmp_path / "put.body").read_bytes()
-    envelope = json.loads(body)
-    record = json.loads(receipt.read_text(encoding="utf-8"))
-    assert envelope == {"v": 1, "kind": "usage-drop", "sent": record["ts"],
-                        "guidance": [], "skills": [], "setups": [record]}
-    url = args[-1]
-    assert re.fullmatch(r"https://example-bucket\.s3\.us-east-1\.amazonaws\.com/drop/"
-                        + record["ts"][:10] + r"/[0-9a-f]{32}\.json", url)
-    assert "If-None-Match: *" in args and "--proto" in args
-    assert f"x-amz-content-sha256: {hashlib.sha256(body).hexdigest()}" in args
+    assert receipt.is_file()
+    assert not (tmp_path / "put.args").exists()
+    assert "usage sink" not in proc.stdout
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")

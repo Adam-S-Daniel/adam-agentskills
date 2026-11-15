@@ -65,7 +65,7 @@ no backfill is planned; the file adds the fields git does not capture.
 ## 2026-11-12 — adam-coding-anywhere/ci-job-performance — edit
 
 - Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the section recommends dated tags such as `act-latest-20260815`, then says "Never use a `-latest` tag", which the recommended names contradict.
-- Change: the rule now reads "Never use an undated tag"; nothing else in the skill changed; bundle `adam-coding-anywhere` 2.0.0 -> 2.0.1 (PR pending).
+- Change: the rule now reads "Never use an undated tag"; nothing else in the skill changed; bundle `adam-coding-anywhere` 2.0.1 -> 2.0.2 (PR pending).
 - Eval: baseline on main before the edit: routine run `20261101T211416Z-706447` (browser-cache: with 5/7, without 5/7); post-merge routine run to follow in a correcting entry. One-phrase wording fix; no fixture asserts it.
 - Outcome: pending review.
 

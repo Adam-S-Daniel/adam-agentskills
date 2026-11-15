@@ -4630,9 +4630,24 @@ _TESTS_IN_ANOTHER_REPO = {
     # `report_digest_format`'s docstring as the far end of a contract this
     # repo cannot run.
     "test_bump_format_gate_empty_skills",
-    # _agent-guidance's test/run-tests.sh; named by a comment in
-    # .claude/hooks/fleet-memory.sh, which that repo's sync delivers here.
-    "test_fleet_memory_git_hooks",
+}
+
+# Files _agent-guidance's sync owns byte for byte and pushes straight to main,
+# past this repo's CI, plus a verbatim copy of a sync-owned file (the plugin's
+# fleet-memory.sh below). Their comments cite tests in _agent-guidance, and this
+# repo can neither check nor edit them (the next sync overwrites any edit), so
+# the citation scan skips them. Scanning them turned main's pytest red for
+# every pull request the moment a sync delivered a new citation (27994ee,
+# fleet-memory.sh naming test_fleet_memory_git_hooks). skills-bootstrap.sh is
+# not here: the sync delivers it, but its source is this repo, so its
+# citations are this repo's to keep true.
+_DELIVERED_BY_AGENT_GUIDANCE_SYNC = {
+    ".claude/hooks/agent-checks-guard.sh",
+    ".claude/hooks/fleet-memory.sh",
+    ".claude/hooks/guidance-load-record.sh",
+    # The plugin's bundled verbatim copy of fleet-memory.sh, refreshed by hand
+    # in a reviewed pull request and never edited here (AGENTS.md).
+    "plugins/adam-anything-anywhere/hooks/fleet-guidance/fleet-memory.sh",
 }
 
 
@@ -4684,7 +4699,7 @@ def test_every_test_this_repo_cites_by_name_exists():
     dangling = {}
     for name in tracked:
         path = REPO_ROOT / name
-        if path.name.startswith("test_"):
+        if path.name.startswith("test_") or name in _DELIVERED_BY_AGENT_GUIDANCE_SYNC:
             continue
         for cited in sorted(_cited_test_names(path) - defined):
             dangling.setdefault(cited, []).append(name)
@@ -4694,6 +4709,18 @@ def test_every_test_this_repo_cites_by_name_exists():
         "the repo it lives in: "
         + "; ".join(f"{cited} (cited in {', '.join(where)})"
                     for cited, where in sorted(dangling.items())))
+
+
+def test_every_synced_file_the_citation_scan_skips_is_still_tracked():
+    """A skip-list entry for a file the sync stopped delivering hides nothing
+    today, but would silently exempt a same-named file this repo writes later."""
+    tracked = set(subprocess.run(
+        ["git", "ls-files", "*.sh"],
+        cwd=REPO_ROOT, capture_output=True, text=True, check=True).stdout.split())
+    stale = sorted(_DELIVERED_BY_AGENT_GUIDANCE_SYNC - tracked)
+    assert not stale, (
+        "drop these from _DELIVERED_BY_AGENT_GUIDANCE_SYNC, the sync no longer "
+        "delivers them: " + ", ".join(stale))
 
 
 # The one function allowed to spell this script's own name. Everything else in
@@ -13607,24 +13634,26 @@ def test_committed_sessionstart_matcher_includes_fork():
     assert matching[0]["matcher"] == "startup|resume|fork"
 
 
+CLOUD_ENV_SETUP = REPO_ROOT / "scripts" / "cloud-env-setup.sh"
+
+
+def _cloud_env_setup_text() -> str:
+    return CLOUD_ENV_SETUP.read_text(encoding="utf-8")
+
+
 def _documented_setup_script(project: Path, user_claude: Path) -> str:
-    """The cloud setup script from docs/multi-repo-delivery.md, runnable.
+    """scripts/cloud-env-setup.sh, runnable.
 
     It hardcodes `project=/home/user` and `user_claude=/root/.claude` on
     purpose (its comments say why), so the only edits point those two lines
     at temp dirs.
     """
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
-    blocks = re.findall(r"^```bash\n(.*?)^```$", document, re.S | re.M)
-    scripts = [b for b in blocks if b.startswith("#!/bin/bash\n")
-               and "wiring: wrote" in b]
-    assert len(scripts) == 1, "expected exactly one documented setup script"
-    script = scripts[0]
+    script = _cloud_env_setup_text()
     for line, value in (("\nproject=/home/user\n", f"\nproject={project}\n"),
                         ("\nuser_claude=/root/.claude\n",
-                         f"\nuser_claude={user_claude}\n")):
+                         f"\nuser_claude={user_claude}\n"),
+                        ("\nfleet_hook_dir=/opt/fleet-guidance\n",
+                         f"\nfleet_hook_dir={user_claude.parent}/fleet-hook\n")):
         assert script.count(line) == 1, line
         script = script.replace(line, value)
     return script
@@ -13648,6 +13677,11 @@ def _run_setup_script(tmp_path: Path, apt_exit: int):
     git = stubs / "git"
     git.write_text('#!/bin/bash\necho "git version 2.56.0"\n', encoding="utf-8")
     git.chmod(0o755)
+    # The owner block downloads from the network; a failing curl keeps the
+    # test offline and exercises its never-fatal path.
+    curl = stubs / "curl"
+    curl.write_text("#!/bin/bash\nexit 22\n", encoding="utf-8")
+    curl.chmod(0o755)
     script = tmp_path / "setup.sh"
     script.write_text(_documented_setup_script(project, user_claude),
                       encoding="utf-8")
@@ -13682,11 +13716,9 @@ def test_setup_script_survives_a_failed_install(tmp_path):
     assert settings_json["hooks"]["SessionStart"]
 
 
-@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh", "fleet-memory.sh"])
+@pytest.mark.parametrize("script_name", ["skills-bootstrap.sh"])
 def test_setup_script_sessionstart_matcher_includes_fork(script_name):
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
+    document = _cloud_env_setup_text()
     start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
     end = "\nJSON\necho \"wiring: wrote $user_claude/settings.json\""
     assert document.count(start) == 1
@@ -13703,9 +13735,7 @@ def test_setup_script_sessionstart_matcher_includes_fork(script_name):
 
 
 def _documented_settings() -> dict:
-    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
-        encoding="utf-8"
-    )
+    document = _cloud_env_setup_text()
     start = 'cat > "$user_claude/settings.json" <<\'JSON\'\n'
     return json.loads(document.split(start, 1)[1].split("\nJSON\n", 1)[0])
 
@@ -13715,6 +13745,16 @@ def _documented_commands():
         for group in groups:
             for hook in group["hooks"]:
                 yield hook["command"]
+
+
+def test_setup_script_wires_only_bootstrap_and_the_commit_guard():
+    # _agent-guidance ADR 0043: the owner's guidance comes from the plugin (and
+    # later the environment setup script), so the snippet no longer runs a
+    # consumer repo's fleet-memory or guidance-load-record hooks.
+    commands = list(_documented_commands())
+    names = sorted(re.search(r"/hooks/([\w-]+\.sh)", c).group(1) for c in commands)
+    assert names == ["agent-checks-guard.sh", "skills-bootstrap.sh"]
+    assert "Stop" not in _documented_settings()["hooks"]
 
 
 @pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
@@ -13774,3 +13814,303 @@ def test_setup_script_doubles_the_skill_listing_budget():
     # At the default 1% the listing drops descriptions for the skills listed
     # last, which then cannot trigger; 0.02 keeps every description.
     assert _documented_settings()["skillListingBudgetFraction"] == 0.02
+
+
+def _owner_block(hook_dir: Path = None) -> str:
+    document = _cloud_env_setup_text()
+    begin = "# ---- BEGIN owner block"
+    end = "# ---- END owner block ----"
+    assert document.count(begin) == 1 and document.count(end) == 1
+    block = begin + document.split(begin, 1)[1].split(end, 1)[0]
+    if hook_dir is not None:
+        line = "\nfleet_hook_dir=/opt/fleet-guidance\n"
+        assert block.count(line) == 1
+        block = block.replace(line, f"\nfleet_hook_dir={hook_dir}\n")
+    return block
+
+
+def test_owner_block_has_exactly_one_well_formed_pin_pair():
+    # The pin cannot be checked against the pinned commit without the network,
+    # so this holds its shape: two variables, defined once, a 40-hex commit and
+    # a 64-hex digest. A fetched-file check lives in the live run, not here.
+    block = _owner_block()
+    commits = re.findall(r"^fleet_pin_commit=([0-9a-f]{40})$", block, re.M)
+    digests = re.findall(r"^fleet_pin_sha256=([0-9a-f]{64})$", block, re.M)
+    assert len(commits) == 1 and len(digests) == 1
+    assert block.count("fleet_pin_commit=") == 1
+    assert block.count("fleet_pin_sha256=") == 1
+    assert len(re.findall(r"\b[0-9a-f]{40}\b", block)) == 1
+    assert len(re.findall(r"\b[0-9a-f]{64}\b", block)) == 1
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_owner_block_failure_is_one_line_and_not_fatal(tmp_path):
+    proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    lines = [l for l in proc.stdout.splitlines() if l.startswith("fleet-guidance:")]
+    assert lines == ["fleet-guidance: setup skipped (installer download failed)"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_owner_block_refuses_an_installer_whose_digest_differs(tmp_path):
+    # A download that does not match the pin must never run.
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    ran = tmp_path / "ran"
+    curl = stubs / "curl"
+    curl.write_text(
+        '#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+        f'printf \'touch "{ran}"\\n\' > "$out"\n',
+        encoding="utf-8",
+    )
+    curl.chmod(0o755)
+    script = tmp_path / "block.sh"
+    script.write_text(f"user_claude={tmp_path}/home/.claude\n{_owner_block(tmp_path / 'hook')}",
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    proc = subprocess.run([BASH, str(script)], capture_output=True,
+                          text=True, env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "fleet-guidance: setup skipped (installer digest mismatch; not run)"
+    assert not ran.exists()
+
+
+BUNDLED_FLEET_MEMORY = (REPO_ROOT / "plugins" / "adam-anything-anywhere" / "hooks"
+                        / "fleet-guidance" / "fleet-memory.sh")
+
+
+def test_owner_block_pin_is_the_bundled_fleet_memory_digest():
+    # The plugin's bundled fleet-memory.sh is a verbatim copy of the one the
+    # block downloads, so the pin and the bundled copy move together.
+    import hashlib
+    pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", _owner_block(), re.M).group(1)
+    assert pin == hashlib.sha256(BUNDLED_FLEET_MEMORY.read_bytes()).hexdigest()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_owner_block_installs_with_the_stamp_and_the_session_home(tmp_path):
+    # Success path, offline: curl serves the pinned bytes (the bundled copy) and
+    # a synthetic base.md; git reports a fixed head commit and committer time.
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    base = tmp_path / "served-base.md"
+    base.write_text("# AGENTS.md\n\n> **Managed by [`_agent-guidance`].**\n\nSynthetic rule.\n",
+                    encoding="utf-8")
+    curl = stubs / "curl"
+    curl.write_text(
+        '#!/bin/bash\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2;; http*) url=$1;; esac; shift; done\n'
+        f'case "$url" in */fleet-memory.sh) cp "{BUNDLED_FLEET_MEMORY}" "$out";;\n'
+        f'*/base.md) cp "{base}" "$out";; *) exit 22;; esac\n',
+        encoding="utf-8")
+    git = stubs / "git"
+    head = "ab" * 20
+    git.write_text(
+        '#!/bin/bash\ncase " $* " in *" log "*) echo "' + head + ' 1794606898";; esac\nexit 0\n',
+        encoding="utf-8")
+    for tool in (curl, git):
+        tool.chmod(0o755)
+    home = tmp_path / "home"
+    script = tmp_path / "block.sh"
+    script.write_text(f"user_claude={home}/.claude\n{_owner_block(tmp_path / 'hook')}",
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
+               FLEET_GUIDANCE_RECEIPT="0")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "fleet-guidance: installed" in proc.stdout
+    assert f"fleet-guidance-source: _agent-guidance@{head}" in proc.stdout
+    memory = (home / ".claude" / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Synthetic rule." in memory
+    assert "fleet-guidance-delivered: 1794606898" in memory
+    pin = re.search(r"^fleet_pin_sha256=([0-9a-f]{64})$", _owner_block(), re.M).group(1)
+    assert (tmp_path / "hook" / f"fleet-memory-{pin}.sh").is_file()
+
+
+def _documented_launcher() -> str:
+    """The short launcher docs/multi-repo-delivery.md tells the owner to paste."""
+    document = (REPO_ROOT / "docs" / "multi-repo-delivery.md").read_text(
+        encoding="utf-8"
+    )
+    blocks = re.findall(r"^```bash\n(.*?)^```$", document, re.S | re.M)
+    launchers = [b for b in blocks if b.startswith("#!/bin/bash\n")
+                 and "cloud-env-setup.sh" in b]
+    assert len(launchers) == 1, "expected exactly one documented launcher"
+    return launchers[0]
+
+
+def test_launcher_is_short_and_holds_no_setup_logic():
+    # Everything that can live in a reviewed file does; the paste only finds
+    # and runs it, so a setup change never needs a re-paste.
+    launcher = _documented_launcher()
+    assert len(launcher.splitlines()) <= 15
+    assert "settings.json" not in launcher
+    assert "fleet_pin" not in launcher
+    assert launcher.rstrip().endswith("exit 0")
+
+
+def test_launcher_downloads_this_repos_script_from_main():
+    url = ("https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/"
+           "main/$f")
+    launcher = _documented_launcher()
+    assert url in launcher
+    assert "\nr=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh;" in launcher
+
+
+def _git_out(repo: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(repo), *args], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def _fake_checkout(root: Path, ran: Path) -> str:
+    """A repo whose origin/main has a script that logs `main`, checked out on
+    a branch whose copy logs `branch`. Returns origin/main's commit."""
+    repo = root / "checkout"
+    (repo / "scripts").mkdir(parents=True)
+    _git_out(repo.parent, "init", "-q", str(repo))
+    target = repo / "scripts" / "cloud-env-setup.sh"
+    env_dump = ('echo "main $CLOUD_SETUP_LAUNCHER_VERSION $CLOUD_SETUP_SOURCE '
+                '$CLOUD_SETUP_COMMIT $CLOUD_SETUP_LAUNCHER_SHA256" >> "{ran}"\nexit 3\n')
+    target.write_text(env_dump.format(ran=ran), encoding="utf-8")
+    ident = ["-c", "user.name=t", "-c", "user.email=t@example.com"]
+    _git_out(repo, "add", ".")
+    _git_out(repo, *ident, "commit", "-qm", "main")
+    commit = _git_out(repo, "rev-parse", "HEAD")
+    _git_out(repo, "update-ref", "refs/remotes/origin/main", commit)
+    _git_out(repo, "checkout", "-qb", "feature")
+    target.write_text(f'echo branch >> "{ran}"\n', encoding="utf-8")
+    _git_out(repo, *ident, "commit", "-qam", "unreviewed")
+    # Git resolves refs/tags/ before refs/remotes/, so a tag named origin/main
+    # must not win (review finding).
+    _git_out(repo, "tag", "origin/main", "HEAD")
+    return commit
+
+
+def _run_launcher(tmp_path: Path, checkout: bool, curl_body: str):
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    ran = tmp_path / "ran"
+    curl = stubs / "curl"
+    curl.write_text(curl_body.replace("@RAN@", str(ran)), encoding="utf-8")
+    curl.chmod(0o755)
+    commit = _fake_checkout(tmp_path, ran) if checkout else None
+    line = "\nr=/home/user/adam-agentskills "
+    launcher = _documented_launcher()
+    assert launcher.count(line) == 1
+    script = tmp_path / "launcher.sh"
+    script.write_text(launcher.replace(line, f"\nr={tmp_path / 'checkout'} "),
+                      encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=30)
+    runs = ran.read_text(encoding="utf-8").splitlines() if ran.exists() else []
+    import hashlib
+    launcher_sha = hashlib.sha256(script.read_bytes()).hexdigest()
+    return proc, runs, commit, launcher_sha
+
+
+_CURL_SERVES = ('#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\n'
+                'echo \'echo "download $CLOUD_SETUP_SOURCE [$CLOUD_SETUP_COMMIT]" >> "@RAN@"\' > "$out"\n')
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_runs_origin_main_not_the_checked_out_branch(tmp_path):
+    # A session can start on an unreviewed branch; setup runs as root and is
+    # cached for days, so only main's copy may run.
+    proc, runs, commit, launcher_sha = _run_launcher(
+        tmp_path, checkout=True, curl_body="#!/bin/bash\nexit 99\n")
+    assert proc.returncode == 0, proc.stderr
+    assert runs == [f"main 1 checkout {commit} {launcher_sha}"]
+    assert "cloud-env-setup: exited nonzero" in proc.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_falls_back_to_main_without_a_checkout(tmp_path):
+    proc, runs, _commit, _sha = _run_launcher(tmp_path, checkout=False,
+                                              curl_body=_CURL_SERVES)
+    assert proc.returncode == 0, proc.stderr
+    assert runs == ["download download []"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_launcher_failed_download_skips_setup_and_exits_zero(tmp_path):
+    proc, runs, _commit, _sha = _run_launcher(tmp_path, checkout=False,
+                                              curl_body="#!/bin/bash\nexit 22\n")
+    assert proc.returncode == 0, proc.stderr
+    assert runs == []
+    assert proc.stdout.strip() == \
+        "cloud-env-setup: no checkout and download failed; setup skipped"
+
+
+def _run_setup_with_record(tmp_path: Path, sink: bool):
+    """The whole script, offline, as the launcher would run it, with a curl
+    stub that fails the fleet download and logs any sink PUT."""
+    project = tmp_path / "project"
+    user_claude = tmp_path / "root" / ".claude"
+    stubs = tmp_path / "stubs"
+    stubs.mkdir()
+    put = tmp_path / "put"
+    (stubs / "apt-get").write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+    (stubs / "git").write_text('#!/bin/bash\necho "git version 2.56.0"\n', encoding="utf-8")
+    (stubs / "curl").write_text(
+        '#!/bin/bash\ncase " $* " in *" PUT "*) printf "%s\\n" "$@" > "' + str(put) + '.args"; '
+        'cat > "' + str(put) + '.body"; printf 200; exit 0;; esac\nexit 22\n',
+        encoding="utf-8")
+    for tool in stubs.iterdir():
+        tool.chmod(0o755)
+    script = tmp_path / "setup.sh"
+    script.write_text(_documented_setup_script(project, user_claude), encoding="utf-8")
+    env = dict(os.environ, PATH=f"{stubs}{os.pathsep}{os.environ['PATH']}",
+               CLOUD_SETUP_LAUNCHER_VERSION="1", CLOUD_SETUP_LAUNCHER_SHA256="ab" * 32,
+               CLOUD_SETUP_SOURCE="checkout", CLOUD_SETUP_COMMIT="cd" * 20)
+    for name in ("USAGE_SINK_BUCKET", "USAGE_SINK_REGION", "USAGE_SINK_SIGNING"):
+        env.pop(name, None)
+    if sink:
+        env.update(USAGE_SINK_BUCKET="example-bucket", USAGE_SINK_REGION="us-east-1",
+                   USAGE_SINK_SIGNING="proxy")
+    proc = subprocess.run([BASH, str(script)], capture_output=True, text=True,
+                          env=env, timeout=60)
+    return proc, script, user_claude / "cloud-env-setup.json", put
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_is_written_locally(tmp_path):
+    import hashlib
+    proc, script, receipt, put = _run_setup_with_record(tmp_path, sink=False)
+    assert proc.returncode == 0, proc.stderr
+    record = json.loads(receipt.read_text(encoding="utf-8"))
+    assert list(record) == ["id", "ts", "launcher_version", "launcher_sha256",
+                            "script_source", "script_sha256", "script_commit",
+                            "fleet_pin_commit", "fleet_guidance_commit", "fleet_guidance"]
+    assert re.fullmatch(r"[0-9a-f]{32}", record["id"])
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ", record["ts"])
+    assert record["launcher_version"] == 1
+    assert record["launcher_sha256"] == "ab" * 32
+    assert record["script_source"] == "checkout"
+    assert record["script_sha256"] == hashlib.sha256(script.read_bytes()).hexdigest()
+    assert record["script_commit"] == "cd" * 20
+    assert re.fullmatch(r"[0-9a-f]{40}", record["fleet_pin_commit"])
+    assert record["fleet_guidance_commit"] == ""
+    assert record["fleet_guidance"] == "failed"
+    assert (f"cloud-env-setup: launcher v1 {'ab' * 6}, script "
+            f"{record['script_sha256'][:12]} from checkout @{'cd' * 6}") in proc.stdout
+    assert not (tmp_path / "put.args").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_is_never_sent_from_setup(tmp_path):
+    """A setup script cannot read the environment's variables or secrets, so
+    it never uploads; the private plugin's Stop hook sends the file. Even with
+    the sink values set, nothing is PUT."""
+    proc, _script, receipt, _put = _run_setup_with_record(tmp_path, sink=True)
+    assert proc.returncode == 0, proc.stderr
+    assert receipt.is_file()
+    assert not (tmp_path / "put.args").exists()
+    assert "usage sink" not in proc.stdout
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_record_skips_without_launcher_values(tmp_path):
+    proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    assert "cloud-env-setup: no launcher values; record skipped" in proc.stdout

@@ -127,11 +127,38 @@ multi-repo shape `$CLAUDE_PROJECT_DIR` is the parent — which has no
 
 ## The wiring (cloud only)
 
-Put this in the **cloud environment's setup script** — the *Setup script* field
-in the environment settings dialog at claude.ai/code. The block is the whole
-field: paste all of it, replacing what is there. It writes the user-scope
-settings file, `/root/.claude/settings.json`, the one link of the chain that
-every hosted session reads, project threads included.
+Put this launcher in the **cloud environment's setup script** — the *Setup
+script* field in the environment settings dialog at claude.ai/code. The block
+is the whole field: paste all of it, replacing what is there. It runs
+[`scripts/cloud-env-setup.sh`](../scripts/cloud-env-setup.sh), which holds
+everything below, so the setup changes by reviewed pull request and the paste
+almost never changes. It runs the `main` copy only: from the attached
+checkout's `origin/main` (never the checked-out branch, which could be an
+unreviewed one), or, when this repo is not attached, downloaded from `main`.
+A rename or move of the script makes that download 404 and setup is skipped
+with one line, so moving it needs a new paste.
+
+**What ran is recorded.** The launcher passes its version, its own SHA-256 and
+where the script came from (with `origin/main`'s commit for a checkout); the
+script adds its own SHA-256, the fleet-guidance pin, the `_agent-guidance`
+commit it installed and the installer's outcome. It writes that record to
+`/root/.claude/cloud-env-setup.json` and prints one `cloud-env-setup:` line.
+A setup script cannot read the environment's variables or network secrets, so
+it does not upload the record. Where the environment has the usage sink with
+proxy signing (`USAGE_SINK_BUCKET`, `USAGE_SINK_REGION`,
+`USAGE_SINK_SIGNING=proxy`), the private plugin's Stop hook
+(adam-agentskills-private's `hooks/cloud-setup-record/on-stop.sh`) sends it as
+a `setups` record. The ingest appends that record to
+`events/<YYYY-MM>/cloud-setup.jsonl` on `persistent/usage-events`. That script writes the user-scope settings
+file, `/root/.claude/settings.json`, the one link of the chain that every
+hosted session reads, project threads included.
+
+The environment runs its setup once and caches the result for about 7 days,
+keyed on the pasted text. A merged change to `scripts/cloud-env-setup.sh`
+therefore reaches an environment when that cache expires, not at once; hooks
+the script wires still run from the checkout every session. To apply a change
+sooner, edit the pasted launcher trivially (for example, a comment) so the
+cache misses.
 
 There is no laptop counterpart to this section and no laptop version of the
 script. A durable machine has no environment setup script, and would have
@@ -139,127 +166,20 @@ nothing for one to fix: see *First: which surface are you on* above.
 
 ```bash
 #!/bin/bash
-# Deliver the fleet's pinned skills in a multi-repo session.
-#
-# Hooks resolve from <cwd>/.claude and $HOME/.claude only, never from the repos
-# below cwd, so this cannot be committed to any of them (ADR 0005).
-#
-# THE PROJECT DIR IS HARDCODED, and the two obvious ways to derive it are both
-# wrong HERE. A setup script runs as root before Claude Code launches, and
-# measured in a hosted session: `CLAUDE_PROJECT_DIR` is UNSET — Claude Code sets
-# it when it invokes a hook, which this is not — and `HOME` is `/root`, not the
-# project dir's parent.
-#
-# THE WIRING GOES IN USER SCOPE, `/root/.claude/settings.json`. Project threads
-# (claude.ai Projects) ignore `<project>/.claude/settings.json` but honor the
-# user-scope file, measured 2026-10-31 with a Stop hook in each: only the
-# user-scope one fired. The harness's own hooks in `launcher-settings.json`
-# kept firing beside it, so the two merge rather than displace each other.
-#
-# Getting it right the first time matters more than usual, because the setup
-# script runs ONCE. Anthropic snapshots the filesystem afterwards and later
-# sessions skip the script, so a wrong path is baked into the snapshot and
-# persists until the script changes or the cache expires (~7 days).
-#
-# Safe in a single-repo session too: every command looks only in the project
-# dir's CHILDREN, and there the project dir IS the repo, which has none, so the
-# commands do nothing and the repo's own committed `.claude/settings.json`
-# fires as it does today.
-project=/home/user
-user_claude=/root/.claude
-
-# NOT `set -eu`. A setup script that exits non-zero makes the SESSION FAIL TO
-# START, and skills not loading is by far the lesser failure — hence `|| true`
-# here and the unconditional `exit 0` at the end.
-mkdir -p "$user_claude" || true
-
-# An older copy of this script wired the project scope instead. Remove that
-# file, but only if it is ours, so a multi-repo session does not run each hook
-# twice.
-if grep -qs 'skills-bootstrap.sh' "$project/.claude/settings.json"; then
-  rm -f "$project/.claude/settings.json"
-fi
-
-# The eval harness (skills-evals' run_eval.py) runs every agent trial under
-# Claude Code's sandbox with failIfUnavailable, which needs bubblewrap and
-# socat; without them every trial ends `sandbox_unavailable` (eval runner
-# routine, 2026-10-20). Needs the environment's default package-manager list.
-apt-get update -q >/dev/null 2>&1 && apt-get install -y -q bubblewrap socat >/dev/null 2>&1 \
-  || echo "wiring: bubblewrap/socat install failed; sandboxed evals will refuse to run"
-
-cat > "$user_claude/settings.json" <<'JSON'
-{
-  "skillListingBudgetFraction": 0.02,
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume|fork",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/fleet-memory.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 30
-          }
-        ]
-      },
-      {
-        "matcher": "startup|resume|fork",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/skills-bootstrap.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 90
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/agent-checks-guard.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 10
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash -c 'for h in \"${CLAUDE_PROJECT_DIR:-/home/user}\"/*/.claude/hooks/guidance-load-record.sh; do [ -f \"$h\" ] && exec bash \"$h\"; done; exit 0'",
-            "timeout": 20
-          }
-        ]
-      }
-    ]
-  }
-}
-JSON
-echo "wiring: wrote $user_claude/settings.json"
-
-# Config-based git hooks need Git 2.54+ (ADR 0020). Never fatal: without them
-# CI still runs the same checks.
-if ! git version | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=54))}'; then
-  apt-get install -y -q libcurl4-openssl-dev >/dev/null 2>&1 || true
-  src=$(mktemp -d)
-  if git clone -q --depth 1 --branch v2.56.0 https://github.com/git/git "$src/git" \
-     && make -C "$src/git" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
-          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install >/dev/null 2>&1; then
-    echo "git: $(/usr/local/bin/git version)"
-  else
-    echo "git: build failed; local hooks will not run, CI still checks" >&2
-  fi
-  rm -rf "$src"
-fi
-for f in "$project"/*/scripts/install-agent-hooks.sh; do
-  [ -f "$f" ] && { bash "$f" --system || true; break; }
-done
-exit 0
+# Runs main's scripts/cloud-env-setup.sh from adam-agentskills, which holds the
+# whole setup: change that by pull request, not here. Bump the version on any
+# edit here. Never exits nonzero: that would stop sessions from starting.
+export CLOUD_SETUP_LAUNCHER_VERSION=1 CLOUD_SETUP_LAUNCHER_SHA256=
+[ -f "$0" ] && CLOUD_SETUP_LAUNCHER_SHA256=$(sha256sum < "$0" | cut -c1-64)
+r=/home/user/adam-agentskills f=scripts/cloud-env-setup.sh; s=$(mktemp) || exit 0
+if git -C "$r" show "refs/remotes/origin/main:$f" > "$s" 2>/dev/null && [ -s "$s" ]; then
+  export CLOUD_SETUP_SOURCE=checkout CLOUD_SETUP_COMMIT=$(git -C "$r" rev-parse "refs/remotes/origin/main^{commit}")
+elif curl -q -fsS --proto '=https' --connect-timeout 5 --max-time 30 --max-filesize 1048576 \
+    -o "$s" "https://raw.githubusercontent.com/Adam-S-Daniel/adam-agentskills/main/$f"; then
+  export CLOUD_SETUP_SOURCE=download CLOUD_SETUP_COMMIT=
+else echo "cloud-env-setup: no checkout and download failed; setup skipped"; rm -f "$s"; exit 0; fi
+bash "$s" || echo "cloud-env-setup: exited nonzero"
+rm -f "$s"; exit 0
 ```
 
 `skillListingBudgetFraction` doubles Claude Code's skill-listing budget from its
@@ -291,42 +211,45 @@ pending in [issue #8](https://github.com/Adam-S-Daniel/adam-agentskills/issues/8
 one is expanded at hook time, by Claude Code, which does set it. Only the outer
 `project=` cannot rely on it.
 
-### Why there are now TWO groups
+### Where the fleet guidance comes from now
 
-The second one is `fleet-memory`, and in the multi-repo shape it is not
-optional — it is the only thing that delivers the fleet's guidance at all.
-
-Each repo's `AGENTS.md` used to inline the whole ~52 kB managed block, so a
-session with 19 repos attached loaded 19 identical copies: 332.3k tokens across
-37 memory files, measured 2026-08-29. The block now lives in user memory
-(`~/.claude/CLAUDE.md`), written at session start by
-`.claude/hooks/fleet-memory.sh`, and each repo keeps a ~2.9 kB stub instead.
-
-That makes this file load-bearing in a way it was not before. **A single-repo
-session fires the repo's own committed `settings.json` and is fine either way.
-A MULTI-repo session, or a project thread, fires only this file** — the same ADR 0005 finding the
-section above rests on — so without the `fleet-memory` group here, every
-multi-repo session runs on the stub alone and opens with
-`fleet-guidance: DEGRADED`. The stub carries the load-bearing rules inline, so
-such a session is diminished rather than blind; it is still not what you want.
-
-The `adam-anything-anywhere` plugin also delivers the guidance
+The wiring no longer delivers the fleet guidance: `_agent-guidance` is moving
+the owner-only guidance out of the consumer repos
+([ADR 0043](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0043-the-owner-only-guidance-leaves-the-consumer-repos.md)),
+so there is no per-repo `fleet-memory` hook for it to run, and the `Stop`
+record of which guidance loaded moves to the owner's plugin. The owner
+gets the guidance from the account-synced `adam-anything-anywhere` plugin
 ([ADR 0023](decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)):
-its own SessionStart hook fetches `main`'s HEAD commit with a commit-only git
-fetch and `base.md` from `raw.githubusercontent.com`, and installs it, so a
-session that has the plugin enabled is not left on the stub alone when this
-wiring finds no repo. The wiring still matters for a repo's own pinned bundles
-and for a session without the plugin.
+its SessionStart hook fetches `main`'s HEAD commit and `base.md` and installs
+it. The environment's setup script also installs it, in the owner block at
+the end of `scripts/cloud-env-setup.sh`: that is the guaranteed route (ADR 0043), because
+it does not depend on the account sync reaching the surface. The block fetches
+`fleet-memory.sh` at a pinned `_agent-guidance` commit and runs it only if its
+SHA-256 matches, so the setup script never executes unreviewed code; the
+guidance text itself comes from `main`'s HEAD, stamped with that commit's
+committer time. Where the plugin's hook and the block both run, the
+[freshest-stamp rule](https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/decisions/0016-the-freshest-delivery-wins-the-shared-global-block.md)
+(ADR 0016) arbitrates and the second reports `current`. The block never fails
+the setup: any problem prints one `fleet-guidance: setup skipped` line and the
+script goes on. Bump the pin (two variables, commented in the block) when
+`fleet-memory.sh` changes in `_agent-guidance` (fetch first), and merge it; each
+environment picks it up when its setup cache expires. A test holds the pin to the bundled copy
+of `fleet-memory.sh` in this repo, so the two move together.
 
-They are two GROUPS, not two commands in one, for the reason the registrar in
-`_agent-guidance` gives: a group carries one `matcher` and one `timeout`, and
-these two need different ones. `fleet-memory` copies a local file and wants 30
-seconds; `skills-bootstrap` fetches two registries and needs its 90. Putting
-them in one group would silently impose one budget on both. `exec` is also why
-they cannot share: it replaces the shell, so the first hook found would be the
-only one that ever ran.
+The environment snapshot is cached after setup (about 7 days), so this route
+serves `base.md` as of setup time; the account-synced plugin refreshes it every
+session. "The second reports `current`" holds only when both deliveries carry
+the same digest; a newer plugin copy wins on its stamp and replaces this one. Anyone else's session reads the
+repo stub alone, which is the intended state.
 
-Four things about it are deliberate:
+What stays here is two groups, `skills-bootstrap` and the `agent-checks` guard,
+and they are separate GROUPS, not one, because a group carries one `matcher`
+and one `timeout` and they need different ones. `skills-bootstrap` fetches two
+registries and needs its 90 seconds; the guard is a local check and wants 10.
+`exec` is also why they cannot share a command: it replaces the shell, so the
+first hook found would be the only one that ever ran.
+
+Things about it that are deliberate:
 
 - **It resolves the hook at session start, not at setup time, and only in the
   project dir's children.** In a single-repo session the project dir is the
@@ -406,20 +329,6 @@ the snapshot keeps it for later sessions.
   A repo's own registration of the guard does not fire in a multi-repo session
   for the same reason its `SessionStart` hooks do not, so the wiring runs the
   first attached copy. With none attached it does nothing.
-- **The `Stop` group records which guidance the session loaded**
-  (`.claude/hooks/guidance-load-record.sh`, delivered by the same sync). Once
-  per session it reads its own transcript and writes one line: the full
-  guidance, only the repo stub, neither, or unknown. It also uploads that line
-  to the private repository's `persistent/usage-events` branch, because a
-  cloud container's files do not outlive it. The upload uses the session's own
-  GitHub access, so it works only when the private repository is attached;
-  otherwise it goes to the private S3 drop bucket when the environment sets
-  `USAGE_SINK_BUCKET`, `USAGE_SINK_REGION` and `USAGE_SINK_SIGNING=proxy`
-  and holds the writer key as an AWS SigV4 **network secret**
-  (`_agent-guidance` ADR 0037). Never put a key, token or App private key in
-  a cloud environment's variables or in this setup script: every session in
-  the environment can read them. With no copy of the hook attached it does
-  nothing.
 
 ## What crosses into a multi-repo session, and what does not
 

@@ -21,9 +21,11 @@
 # answers api.github.com with HTTP 403 for any repo not attached to the session,
 # public ones included, while git smart-HTTP and raw.githubusercontent.com pass.
 #
-# It never reads anything from the session's project directory. A repo the user
-# opens can carry any data file, and this hook writes the GLOBAL user memory, so
-# a file found there must not be able to reach it.
+# It reads no file from the session's project directory. A repo the user opens
+# can carry any data file, and this hook writes the GLOBAL user memory, so a
+# file found there must not be able to reach it. The one exception is indirect:
+# the git config lookups made while installing the git hook include (see
+# FLEET_GIT_HOOKS below) may read the current repo's config.
 #
 # fleet-memory.sh and fleet-guidance.md next to this file are verbatim copies
 # from _agent-guidance, refreshed only by a reviewed pull request. Never edit
@@ -47,6 +49,12 @@
 # entry allows 30 s in all and the download can take 5 s of that, so a value
 # above 25 can outlast the hook and leave no verdict. The tests set it to 1 and
 # stall the fetch to exercise the watchdog.
+# FLEET_GIT_HOOKS=off opts out of the git hook install. Without it, in a hosted
+# session (CLAUDE_CODE_REMOTE=true, git 2.54+), the refreshed fleet-memory.sh
+# writes ~/.config/git/agent-hooks.inc and adds includeIf entries for
+# Adam-S-Daniel and jodidaniel repos to /etc/gitconfig (or the global git config
+# when /etc/gitconfig is not writable), so commits and pushes in any clone of
+# those repos run that repo's .githooks/agent-checks.
 #
 # Never reads stdin. Always exits 0: a broken delivery must not break a session.
 set -uo pipefail

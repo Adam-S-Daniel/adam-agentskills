@@ -4,6 +4,7 @@
 - **Date:** 2026-11-12
 - **Deciders:** Adam Daniel (approved 2026-11-12 that usage-based removals auto-merge like retire removals)
 - **Extends:** [ADR 0021](0021-automated-skill-changes-merge-without-review.md)
+- **Current values:** the rules in force, including the numbers below, are in skills-evals' generated [`docs/rules.md`](https://github.com/Adam-S-Daniel/skills-evals/blob/main/docs/rules.md). Since 2026-11-13 a skill's evals wait for its first recorded use, with no session minimum (this replaces decision 5).
 
 ## Context
 

@@ -54,6 +54,18 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
+      # The runner's system Python cannot reinstall the distro's PyYAML (pip
+      # aborts with "Cannot uninstall PyYAML ... RECORD file not found"), so the
+      # install and the gate both run on the setup-python interpreter, as in ci.yml.
+      - uses: actions/setup-python@v7.1.0
+        with:
+          python-version: '3.12'
+      # The gate parses SKILL.md frontmatter with PyYAML and fails closed
+      # without it. The pin comes from requirements-dev.txt in the BASE
+      # checkout above (never the pull request's copy), exact versions only.
+      # Every `pip install` in every workflow reads this one file.
+      - name: Install PyYAML at the base branch's pinned version
+        run: python3 -m pip install -r requirements-dev.txt
       - name: Decide whether the pull request changes plugin runtime behavior
         id: gate
         env:

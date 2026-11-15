@@ -142,10 +142,13 @@ with one line, so moving it needs a new paste.
 where the script came from (with `origin/main`'s commit for a checkout); the
 script adds its own SHA-256, the fleet-guidance pin, the `_agent-guidance`
 commit it installed and the installer's outcome. It writes that record to
-`/root/.claude/cloud-env-setup.json`, prints one `cloud-env-setup:` line, and,
-where the environment has the usage sink with proxy signing
-(`USAGE_SINK_BUCKET`, `USAGE_SINK_REGION`, `USAGE_SINK_SIGNING=proxy`), sends
-it as a `setups` record, which adam-agentskills-private's ingest appends to
+`/root/.claude/cloud-env-setup.json` and prints one `cloud-env-setup:` line.
+A setup script cannot read the environment's variables or network secrets, so
+it does not upload the record. Where the environment has the usage sink with
+proxy signing (`USAGE_SINK_BUCKET`, `USAGE_SINK_REGION`,
+`USAGE_SINK_SIGNING=proxy`), the private plugin's Stop hook
+(adam-agentskills-private's `hooks/cloud-setup-record/on-stop.sh`) sends it as
+a `setups` record. The ingest appends that record to
 `events/<YYYY-MM>/cloud-setup.jsonl` on `persistent/usage-events`. That script writes the user-scope settings
 file, `/root/.claude/settings.json`, the one link of the chain that every
 hosted session reads, project threads included.

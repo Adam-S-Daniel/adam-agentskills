@@ -4,7 +4,7 @@ description: >
   Diagnose skill DELIVERY health for the current session: name the surface,
   diff the expected set in `skills.lock` against what actually loaded (the
   session's own skill listing, `~/.claude/skills/`, the account
-  `synced/manifest.json`, `claude plugin list`), attribute every skill to the
+  `synced/<bucket>/manifest.json`, `claude plugin list`), attribute every skill to the
   registry and bundle it came from by reading the bootstrap hook's own install
   record rather than guessing, and flag silent shadowing and dangling payload
   references. Reports only — it never installs, copies, deletes or repairs
@@ -125,10 +125,10 @@ A name's shape narrows it to a channel:
 |---|---|---|
 | `adam:foo` (namespaced) | plugin / marketplace bundle | `claude plugin list --json` |
 | `foo` (bare) | personal `~/.claude/skills/foo/` — hook-installed or hand-placed | the install record, below |
-| `foo` (bare) | account store | `foo` has a record in `synced/manifest.json` |
+| `foo` (bare) | account store | `foo` has a record in `synced/<bucket>/manifest.json` |
 
 The last two collide on purpose: both present as a bare name, so the manifest
-is what separates them. A skill in `synced/manifest.json` came from the
+is what separates them. A skill in `synced/<bucket>/manifest.json` came from the
 account; one on disk in `~/.claude/skills/` but absent from the manifest came
 from the hook or a hand copy.
 

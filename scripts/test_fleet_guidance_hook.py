@@ -254,7 +254,11 @@ def payload(canary: str, size: int = 0) -> bytes:
 
 
 def tool_farm(directory: Path, leave_out) -> Path:
-    """A directory of symlinks to every tool on the clean PATH except `leave_out`."""
+    """A directory of symlinks to every tool on the clean PATH except `leave_out`.
+
+    Only executable files count, as in a PATH lookup: a non-executable file that
+    shares a tool's name earlier on PATH (a sourced `env` script in a shell
+    tool's bin directory) must not shadow the real tool."""
     directory.mkdir(parents=True, exist_ok=True)
     for entry in clean_path().split(os.pathsep):
         folder = Path(entry)
@@ -262,10 +266,23 @@ def tool_farm(directory: Path, leave_out) -> Path:
             continue
         for tool in folder.iterdir():
             if leave_out(tool.name) or (directory / tool.name).exists() \
-                    or (directory / tool.name).is_symlink():
+                    or (directory / tool.name).is_symlink() \
+                    or not (tool.is_file() and os.access(tool, os.X_OK)):
                 continue
             (directory / tool.name).symlink_to(tool)
     return directory
+
+
+@posix_only
+def test_tool_farm_skips_a_non_executable_file_that_shadows_a_tool(tmp_path, monkeypatch):
+    shadow = tmp_path / "shadow"
+    shadow.mkdir()
+    (shadow / "env").write_text("# sourced, not run\n", encoding="utf-8")
+    (shadow / "env").chmod(0o644)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(shadow), "/usr/bin", "/bin"]))
+    farm = tool_farm(tmp_path / "farm", lambda name: False)
+    assert os.access(farm / "env", os.X_OK)
+    assert (farm / "env").resolve() != (shadow / "env").resolve()
 
 
 def process_args(pid: int):

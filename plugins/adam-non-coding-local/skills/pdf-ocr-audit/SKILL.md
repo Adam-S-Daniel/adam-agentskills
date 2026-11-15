@@ -41,7 +41,7 @@ The primary method is to read each page's text layer using `pypdf`. If a page yi
 If pip refuses with `externally-managed-environment`, create a venv, install `pypdf` there, and run the script with that venv's `python`.
 
 ```bash
-pip install --user pypdf -q
+pip install --user pypdf==6.21.4 -q
 python scripts/check_ocr.py /path/to/folder
 # or for specific files:
 python scripts/check_ocr.py file1.pdf file2.pdf

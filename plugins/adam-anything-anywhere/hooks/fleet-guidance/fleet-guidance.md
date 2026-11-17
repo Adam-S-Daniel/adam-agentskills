@@ -135,6 +135,10 @@ Under https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/
 - `network-allowlists.md`: editing either egress allowlist
 - `code-scanning-alerts.md`: reading alerts when the token gets 403
 
+## Eval rules
+
+Link skills-evals' `docs/rules.md`; never restate one.
+
 ## Automation vs branch protection
 
 Fleet repos are PR-only on the default branch via ruleset, managed in
@@ -340,14 +344,14 @@ name outlives a rename).
 
 - **Lockfile, the target:** `.github/workflows/actions.lock` covers every
   workflow; each `uses:` on its most exact tag, by hand; local actions
-  `$/<path>`. Then `gh actions-lock --no-narrow`. Repos where actionlint
+  `$/<path>`, not `./`. Then `gh actions-lock --no-narrow`. Repos where actionlint
   meets `$/`, or with `./` refs into a runtime checkout (`cms-platform`),
   stay legacy.
-- **Legacy:** full 40-character SHA, no trailing version comment.
+- **Legacy:** full 40-hex SHA, no trailing version comment.
 - **Cross-repo reusable workflows take a full SHA in both forms**; no lockfile
   covers them.
 - **The runner runs whatever commit the lockfile names**, even off-tag:
-  require `Adam-S-Daniel/verify-actions-lock` (fails on any pin finding) and
+  require `Adam-S-Daniel/verify-actions-lock` (fails on a pin error) and
   the Require lockfile policy. Review `actions.lock` as pins.
 - **Wait 7 days after a third-party release**, else pin the previous.
 - **Dereference annotated tags:** `git ls-remote <url> 'refs/tags/<tag>^{}'`.

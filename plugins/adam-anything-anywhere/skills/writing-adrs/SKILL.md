@@ -1,6 +1,6 @@
 ---
 name: writing-adrs
-description: Write a lightweight Nygard-style Architecture Decision Record under `docs/decisions/` when a non-obvious decision needs context that won't fit in a code comment and would rot if left only in a PR description. Trigger when the user asks "should I document this", "add an ADR", "why did we do X" referring to a past choice with no comment trail, or when you find yourself drafting a multi-paragraph PR description justifying a one-line change. Also covers the bootstrap case (creating `docs/decisions/README.md` + the first ADR from scratch) if the folder doesn't exist yet.
+description: Write a Nygard-style Architecture Decision Record in docs/decisions/ for a non-obvious decision whose context won't fit a code comment and would rot in a PR description. For "should I document this", "add an ADR", "why did we do X" about a past choice with no comment trail, or a multi-paragraph PR description justifying a one-line change. Bootstraps the folder (README + first ADR) if missing.
 ---
 
 # Writing Architecture Decision Records

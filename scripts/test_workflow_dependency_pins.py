@@ -432,37 +432,121 @@ def governed_files(root=REPO_ROOT):
     )
 
 
+# What may stand right before a `#` for bash to read it as a comment: the start
+# of the text, a blank, or an operator character. Anywhere else the `#` is part
+# of a word (`a#b`, `$#`, `${#x}`).
+COMMENT_MAY_FOLLOW = frozenset(" \t\n;&|()<>")
+
+
 def join_continuations(body: str) -> str:
-    """Fold `\\`-continued shell lines into one, so a command split across
-    lines is one command to the scanner. account-skill-zips.yml (since
-    retired, ADR 0014) wrote its install that way.
+    """The shell text with `\\`-continued lines folded into one and every `#`
+    comment dropped, ready for shlex. Raises ValueError on a live backtick.
 
-    The continuation is REMOVED rather than replaced by a space, because that
-    is what bash does: `pi\\` newline `p install` is `pip install` to bash, and
-    substituting a space made it `pi p install` here — a command with no `pip`
-    token, so an install split mid-word passed in silence. The next line's
-    leading whitespace is left where it is; it already separates whatever bash
-    separates.
+    One character walk does all three, because each depends on where the walk
+    is: inside single quotes, inside double quotes, in a comment or in plain
+    text. Doing them as separate passes is what let installs through.
 
-    A BACKSLASH THAT IS ITSELF ESCAPED CONTINUES NOTHING, which is why the run
-    is counted rather than matched. `echo hi\\\\` newline `pip install
-    pyyaml==6.0.1` is TWO commands to bash — the pair is one literal
-    backslash, and the newline still ends the line — but folding them glued
-    `hi` to `pip`, leaving a single `echo` command with no `pip` token and the
-    install never classified at all. Measured: `scan_shell_body` on that body
-    returned `([], [])`, a silent pass of an unpinned install, which is the
-    one outcome this file promises never to produce, and which this file did
-    not guard against until this fix.
-    Backslashes pair off, so an ODD run ends in a continuation and an even one
-    does not.
+    CONTINUATIONS. A command split across lines is one command to the scanner
+    (account-skill-zips.yml, since retired by ADR 0014, wrote its install that
+    way). The backslash-newline is REMOVED rather than replaced by a space,
+    because that is what bash does: `pi\\` newline `p install` is `pip
+    install`. A backslash that is itself escaped continues nothing: `echo
+    hi\\\\` newline `pip install x` is two commands, and gluing `hi` to
+    `pip` once returned `([], [])` for it. Escapes are consumed in pairs here,
+    so that falls out of the walk. Inside single quotes a backslash is
+    literal, as in bash.
+
+    COMMENTS. Bash does not continue a comment: in `# note\\` newline `pip
+    install foo` the second line runs. Folding first and letting shlex drop
+    the comment glued the install into it, a silent pass (issue #184). So the
+    comment is dropped here, up to but not including its newline, and its
+    backslashes are dropped with it. A `#` starts a comment only at the start
+    of a word, as in bash: shlex also cuts at a `#` inside a word, so `echo
+    a#b; pip install x` lost the install the same way.
+
+    BACKTICKS. A backtick outside single quotes and not escaped starts a
+    command substitution, which bash parses as a separate command line. shlex
+    does not: an apostrophe inside it pairs with a later quote, so in
+    `` `'` pip install foo `` newline `$'x` everything between reads as one
+    quoted word and the install as no command at all (issue #184). Rather than
+    parse a second shell grammar, a live backtick is unreadable here, and the
+    caller fails closed on it the same way it does on an unbalanced quote.
+    Write `$(...)`, which shlex splits into ordinary tokens.
     """
-    def fold(match):
-        run = match.group(1)
-        if len(run) % 2 == 0:          # every backslash is paired: no continuation
-            return match.group(0)
-        return run[:-1]                # drop the continuing backslash and the newline
-
-    return re.sub(r"(\\+)\n", fold, body)
+    out = []
+    state = "plain"   # plain | single | ansi | double | comment
+    index, length = 0, len(body)
+    while index < length:
+        char = body[index]
+        following = body[index + 1] if index + 1 < length else ""
+        if state == "comment":
+            if char == "\n":
+                out.append(char)
+                state = "plain"
+            index += 1
+            continue
+        if state == "single":
+            out.append(char)
+            if char == "'":
+                state = "plain"
+            index += 1
+            continue
+        if state == "ansi":
+            # `$'...'`: a backslash escapes the next character, `\\'` included.
+            # shlex has no `$'...'` and reads it as a plain quote, where `\\'`
+            # ENDS the quote and the next `'` opens one that swallows the
+            # following lines. So an escaped quote is written out the way a
+            # plain quote spells it: close, escaped `'`, reopen.
+            if char == "\\" and following == "'":
+                out.append("'\\''")
+                index += 2
+                continue
+            out.append(char)
+            if char == "\\" and following:
+                out.append(following)
+                index += 2
+                continue
+            if char == "'":
+                state = "plain"
+            index += 1
+            continue
+        # plain or double
+        if char == "\\":
+            if following == "\n":
+                index += 2               # a continuation: drop both
+                continue
+            out.append(char + following)  # an escape: the pair is literal
+            index += 2
+            continue
+        if char == "`":
+            raise ValueError(
+                "a backtick command substitution, whose body bash parses "
+                "separately and shlex does not; write $(...) instead")
+        if state == "double":
+            out.append(char)
+            if char == '"':
+                state = "plain"
+            index += 1
+            continue
+        # An escape pair is one entry in `out`, so `\\ #` (an escaped blank)
+        # does not count as a blank and `\\$'` does not open `$'...'`.
+        if char == "#" and (not out or out[-1] in COMMENT_MAY_FOLLOW):
+            state = "comment"
+            index += 1
+            continue
+        if char == "'":
+            # `$'` opens `$'...'` only when its `$` is not the second half of
+            # `$$` (the PID): `$$'\\'` is `$$` then a quoted backslash, so
+            # count the run of bare `$` and take an odd one.
+            dollars = 0
+            while dollars < len(out) and out[-1 - dollars] == "$":
+                dollars += 1
+            state = "ansi" if dollars % 2 else "single"
+        elif char == '"':
+            state = "double"
+        out.append(char)
+        index += 1
+    return "".join(out)
 
 
 def runs_a_command_line(shell) -> bool:
@@ -527,16 +611,17 @@ def split_heredocs(body: str):
 def shell_tokens(body: str):
     """The shell tokens of one `run:` body, separators included.
 
-    Quoting, escaping and `#` comments are shlex's job, which is the point:
-    `echo "pip install x"` comes back as two tokens and the second is not
-    `pip`, and a comment is gone before anything looks at it. Raises
-    ValueError on text shlex cannot tokenise, e.g. an unbalanced quote.
+    Quoting and escaping are shlex's job, which is the point: `echo "pip
+    install x"` comes back as two tokens and the second is not `pip`.
+    Comments are join_continuations' job, because only a walk that knows
+    where the quotes are can tell where one starts. Raises ValueError on text
+    neither can read, e.g. an unbalanced quote or a backtick.
     """
     lexer = shlex.shlex(join_continuations(body), posix=True,
                         punctuation_chars=PUNCTUATION)
     lexer.whitespace_split = True
     lexer.whitespace = " \t\r"  # `\n` is a separator here, not whitespace
-    lexer.commenters = "#"
+    lexer.commenters = ""        # dropped already, quote-aware
     return list(lexer)
 
 
@@ -1968,6 +2053,26 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
     ("echo '\"$X\"'; timeout \"$X\" install pyyaml==6.0.1", "unplaceable"),
     ('timeout -k $K 5 install pyyaml==6.0.1', "unplaceable"),
     ('timeout -s $S 5 install pyyaml==6.0.1', "unplaceable"),
+    # Issue #184. Bash does not continue a comment, so the install runs;
+    # folding first glued it into the comment.
+    ("# note\\\npip install pyyaml==6.0.1", "install"),
+    ("echo hi # note\\\npip install pyyaml==6.0.1", "install"),
+    # shlex cut at a `#` inside a word; bash does not.
+    ("echo a#b; pip install pyyaml==6.0.1", "install"),
+    # Issue #184. A backtick body is its own command line to bash, so the
+    # apostrophe in it pairs with nothing; shlex paired it with `$'`.
+    ("`'` pip install pyyaml==6.0.1\n$'x", "unplaceable"),
+    ('echo "`date`"; pip install pyyaml==6.0.1', "unplaceable"),
+    # `$$` is the PID, so the `'` after it opens a plain quote, not `$'...'`.
+    # Read as `$'`, `\\'` stayed in the quote, the comment's apostrophe
+    # survived to shlex and paired with the last line's, swallowing the
+    # install.
+    ("echo $$'\\' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
+    # An odd run does open `$'...'`. shlex has no `$'...'`, so its `\\'` is
+    # rewritten as a plain quote spells it; left alone, shlex paired the next
+    # `'` with the last line's and swallowed the install.
+    ("echo $$$'\\'' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
+    ("echo $'it\\'s' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
 ]
 
 
@@ -1994,6 +2099,12 @@ ORDINARY_SHELL_THAT_MUST_STAY_QUIET = [
     "python3 -m pytest scripts/ -q",
     "bash -c 'set -o pipefail; make'",
     'echo "a pipeline, not a pip install"',
+    # Comments, now dropped by join_continuations rather than shlex.
+    "npm install left-pad  # it's pinned in package.json",
+    "npm install left-pad  # pip install x\\\nnpm ci",
+    "echo '#' $# \\#; npm install left-pad",
+    "echo 'a `pip install` in single quotes is text'; npm install left-pad",
+    "echo \\`; npm install left-pad",
 ]
 
 

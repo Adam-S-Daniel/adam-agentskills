@@ -118,12 +118,17 @@ stop_pid() {
 
 # Stop whatever this shell has running in the background and wait for it. It
 # walks the job table instead of saved pids, so a signal that lands between a
-# fork and the line that records its pid still finds the job.
+# fork and the line that records its pid still finds the job. It waits for each
+# of those pids once, never with a bare `wait`: bash 5.3 can keep a job it has
+# already reaped marked running when a trap interrupts `wait "$!"`, and a bare
+# `wait` then retries it forever ("pid N is not a child of this shell"), so the
+# watcher spun and the hook never returned (adam-agentskills#182).
 # shellcheck disable=SC2329  # invoked by traps only
 stop_jobs() {
-  local p
-  for p in $(jobs -rp 2>/dev/null); do stop_pid "$p"; done
-  { wait; } 2>/dev/null
+  local p pids
+  pids="$(jobs -rp 2>/dev/null)"
+  for p in $pids; do stop_pid "$p"; done
+  for p in $pids; do { wait "$p"; } 2>/dev/null; done
 }
 
 # Runs on every exit, a signal included: stops the fetch and its watcher if they

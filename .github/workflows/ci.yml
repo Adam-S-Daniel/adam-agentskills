@@ -92,20 +92,30 @@ jobs:
           delays=(5 10 20 40 80)
           read -r -a sleep_cmd <<<"${SLEEP_CMD:-sleep}"
           read -r -a now_cmd <<<"${NOW_CMD:-date +%s}"
-          errf="$(mktemp)"
-          trap 'rm -f "$errf"' EXIT
+          # Output goes to files, never through $( ): a `timeout` that ends
+          # only its direct child (uutils `timeout`, Ubuntu 26.04's default)
+          # leaves grandchildren alive, and one holding a $( ) pipe open makes
+          # the shell wait for it however long it runs (#182). Each attempt
+          # gets new files, so a leftover writer cannot reach a later attempt.
+          outf=""
+          errf=""
+          trap 'rm -f "$outf" "$errf"' EXIT
           start="$("${now_cmd[@]}")"
           elapsed() { echo $(("$("${now_cmd[@]}")" - start)); }
           attempt=0
           last_error=""
           while :; do
             attempt=$((attempt + 1))
+            rm -f "$outf" "$errf"
+            outf="$(mktemp)"
+            errf="$(mktemp)"
             args=(-g)
             ((attempt == 1)) || args+=(--force)
             budget=$((limit - $(elapsed)))
             ((budget >= 1)) || budget=1
             rc=0
-            out="$(timeout -k 10 "$budget" npm install "${args[@]}" "@anthropic-ai/claude-code@${latest}" 2>&1)" || rc=$?
+            timeout -k 10 "$budget" npm install "${args[@]}" "@anthropic-ai/claude-code@${latest}" >"$outf" 2>&1 || rc=$?
+            out="$(<"$outf")"
             if ((rc != 0)); then
               last_error="${out:-npm install exited ${rc}}"
             else
@@ -115,7 +125,8 @@ jobs:
               ((vt <= 60)) || vt=60
               rc=0
               # stdout alone is the version; stderr only explains a failure.
-              version="$(timeout -k 10 "$vt" claude --version 2>"$errf")" || rc=$?
+              timeout -k 10 "$vt" claude --version >"$outf" 2>"$errf" || rc=$?
+              version="$(<"$outf")"
               if ((rc != 0)); then
                 last_error="${version:-$(<"$errf")}"
                 last_error="${last_error:-claude --version failed (exit ${rc})}"

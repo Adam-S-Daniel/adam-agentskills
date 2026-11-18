@@ -493,6 +493,14 @@ def join_continuations(body: str) -> str:
             continue
         if state == "ansi":
             # `$'...'`: a backslash escapes the next character, `\\'` included.
+            # shlex has no `$'...'` and reads it as a plain quote, where `\\'`
+            # ENDS the quote and the next `'` opens one that swallows the
+            # following lines. So an escaped quote is written out the way a
+            # plain quote spells it: close, escaped `'`, reopen.
+            if char == "\\" and following == "'":
+                out.append("'\\''")
+                index += 2
+                continue
             out.append(char)
             if char == "\\" and following:
                 out.append(following)
@@ -2060,9 +2068,11 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
     # survived to shlex and paired with the last line's, swallowing the
     # install.
     ("echo $$'\\' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
-    # An odd run does open `$'...'`, and the walk drops the comment; shlex
-    # cannot read `$'\\''` itself, so the body fails closed rather than passes.
-    ("echo $$$'\\'' # it's\npip install pyyaml==6.0.1", "unplaceable"),
+    # An odd run does open `$'...'`. shlex has no `$'...'`, so its `\\'` is
+    # rewritten as a plain quote spells it; left alone, shlex paired the next
+    # `'` with the last line's and swallowed the install.
+    ("echo $$$'\\'' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
+    ("echo $'it\\'s' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
 ]
 
 

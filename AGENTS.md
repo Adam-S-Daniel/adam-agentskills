@@ -73,7 +73,7 @@ wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
 `paths:` filter because its check is required; whether a change is salient is
 decided in its `detect` job.
 
-Two changes do not wait (ADR 0016, update of 2026-11-17): a file listed in
+Two changes do not wait (ADR 0016, its "two changes" update): a file listed in
 [`scripts/plugin_runtime_upstream_copies.json`](scripts/plugin_runtime_upstream_copies.json)
 whose bytes equal its upstream branch tip (today the bundled
 `fleet-guidance.md` fallback, so copy it from `_agent-guidance`'s current

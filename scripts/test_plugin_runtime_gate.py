@@ -2175,3 +2175,568 @@ def test_the_detect_job_installs_pyyaml_from_the_base_requirements_before_the_ga
     # The file is the base checkout's (no head ref) and pins PyYAML exactly.
     pins = (REPO_ROOT / "requirements-dev.txt").read_text(encoding="utf-8").lower()
     assert re.search(r"^pyyaml==\d+(\.\d+)*$", pins, re.M)
+
+
+# =================================================================================
+# Own-action lockfile bumps (ADR 0026)
+#
+# Every refusal is asserted by its message, so a case cannot pass because some
+# other check happened to refuse it. All ids and names but the owner's are invented.
+# =================================================================================
+
+LOCK = gate.ACTIONS_LOCK
+OWN_ID = gate.OWN_ACTIONS_OWNER_ID
+OWN_OLD = "adam-s-daniel/tool@v1.0.0"
+OWN_NEW = "adam-s-daniel/tool@v1.1.0"
+OWN_REPO_ID = 3001
+THIRD = "actions/checkout@v7.0.0"
+SHA_OLD, SHA_NEW, SHA_THIRD, SHA_OTHER = "1" * 40, "2" * 40, "3" * 40, "4" * 40
+CI_FLOW = ".github/workflows/ci.yml"
+GATE_FLOW_TEXT = b"on: pull_request_target\njobs:\n  detect:\n    steps:\n      - uses: actions/checkout@v7.0.0\n"
+
+
+def lock_entry(ref, sha, owner_id=OWN_ID, repo_id=OWN_REPO_ID):
+    return {"ref": ref, "commit": f"sha1-{sha}", "owner_id": owner_id, "repo_id": repo_id}
+
+
+def render_lock(deps, flows, version="v0.0.3"):
+    """The layout gh actions-lock writes."""
+    lines = ["# generated", f"version: '{version}'", "workflows:"]
+    for name, items in flows.items():
+        lines.append(f"    '{name}':" + ("" if items else " []"))
+        lines += [f"        - '{item}'" for item in items]
+    lines.append("dependencies:")
+    for key, entry in deps.items():
+        lines += [f"    '{key}':", f"        ref: '{entry['ref']}'",
+                  f"        commit: '{entry['commit']}'",
+                  f"        owner_id: {entry['owner_id']}", f"        repo_id: {entry['repo_id']}"]
+    return ("\n".join(lines) + "\n").encode()
+
+
+class LockFetcher(FakeFetcher):
+    """FakeFetcher plus what GitHub says about the own action."""
+
+    def __init__(self, base, head, repos=None, tags=None, modes=None, **kw):
+        super().__init__(base, head, **kw)
+        self.repos = {"adam-s-daniel/tool": {
+            "id": OWN_REPO_ID, "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID}} \
+            if repos is None else repos
+        self.tags = {("adam-s-daniel/tool", "v1.1.0"): SHA_NEW} if tags is None else tags
+        self.modes = modes or {}
+        self.api_calls = 0
+
+    def file_mode(self, path, sha):
+        return self.modes.get(sha, "100644") if path in self.trees[sha] else ""
+
+    def action_repo(self, name):
+        self.api_calls += 1
+        return self.repos.get(name)
+
+    def action_tag_commit(self, name, tag):
+        return self.tags.get((name, tag))
+
+
+def lock_parts():
+    """Base dependencies and workflow lists: one third-party action, one own."""
+    deps = {THIRD: lock_entry("v7.0.0", SHA_THIRD, 2001, 2002),
+            OWN_OLD: lock_entry("v1.0.0", SHA_OLD)}
+    flows = {gate.GATE_WORKFLOW: [THIRD], CI_FLOW: [THIRD, OWN_OLD]}
+    return deps, flows
+
+
+def bump_own(deps, flows):
+    del deps[OWN_OLD]
+    deps[OWN_NEW] = lock_entry("v1.1.0", SHA_NEW)
+    flows[CI_FLOW] = [THIRD, OWN_NEW]
+
+
+def lock_trees(mutate=None, bump=True):
+    """(base tree, head tree) for an own bump, then `mutate(deps, flows)`."""
+    deps, flows = lock_parts()
+    base = tree(**{LOCK: render_lock(deps, flows), gate.GATE_WORKFLOW: GATE_FLOW_TEXT})
+    if bump:
+        bump_own(deps, flows)
+    if mutate:
+        mutate(deps, flows)
+    return base, dict(base, **{LOCK: render_lock(deps, flows)})
+
+
+def run_lock(base, head, **kw):
+    return gate.decide(LockFetcher(base, head, **kw), BASE, HEAD)
+
+
+def assert_lock_refused(result, message):
+    gated, reasons = result
+    assert gated and ("gate-itself", LOCK) in reasons, reasons
+    details = [detail for code, detail in reasons if code == "lock-not-exempt"]
+    assert len(details) == 1 and message in details[0], reasons
+
+
+def test_own_action_bump_does_not_gate():
+    assert_not_gated(run_lock(*lock_trees()))
+
+
+def test_own_action_bump_with_its_workflow_edit_does_not_gate():
+    base, head = lock_trees()
+    base[CI_FLOW] = b"uses: Adam-S-Daniel/tool@v1.0.0\n"
+    head[CI_FLOW] = b"uses: Adam-S-Daniel/tool@v1.1.0\n"
+    assert_not_gated(run_lock(base, head))
+
+
+def test_own_action_key_in_mixed_case_counts_as_own():
+    def mutate(deps, flows):
+        deps["Adam-S-Daniel/tool@v1.1.0"] = deps.pop(OWN_NEW)
+        flows[CI_FLOW] = [THIRD, "Adam-S-Daniel/tool@v1.1.0"]
+    assert_not_gated(run_lock(*lock_trees(mutate)))
+
+
+def test_adding_an_own_action_does_not_gate():
+    def mutate(deps, flows):
+        deps[OWN_NEW] = lock_entry("v1.1.0", SHA_NEW)
+        flows[CI_FLOW] = [THIRD, OWN_OLD, OWN_NEW]
+    assert_not_gated(run_lock(*lock_trees(mutate, bump=False)))
+
+
+def test_removing_an_own_action_makes_no_github_call_and_does_not_gate():
+    def mutate(deps, flows):
+        del deps[OWN_OLD]
+        flows[CI_FLOW] = [THIRD]
+    base, head = lock_trees(mutate, bump=False)
+    fetcher = LockFetcher(base, head)
+    assert_not_gated(gate.decide(fetcher, BASE, HEAD))
+    assert fetcher.api_calls == 0
+
+
+def test_third_party_change_gates():
+    def mutate(deps, flows):
+        deps[THIRD] = lock_entry("v7.0.0", SHA_OTHER, 2001, 2002)
+    assert_lock_refused(run_lock(*lock_trees(mutate, bump=False)), "not an own action changed")
+
+
+def test_new_third_party_dependency_alongside_an_own_bump_gates():
+    def mutate(deps, flows):
+        deps["evil/tool@v1"] = lock_entry("v1", SHA_OTHER, 9, 9)
+        flows[CI_FLOW] = flows[CI_FLOW] + ["evil/tool@v1"]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "not an own action changed")
+
+
+def test_third_party_commit_swapped_alongside_an_own_bump_gates():
+    def mutate(deps, flows):
+        deps[THIRD]["commit"] = f"sha1-{SHA_OTHER}"
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "not an own action changed")
+
+
+@pytest.mark.parametrize("field,value", [("repo_id", 9), ("owner_id", 9), ("ref", "v9")])
+def test_third_party_field_changed_alongside_an_own_bump_gates(field, value):
+    def mutate(deps, flows):
+        deps[THIRD][field] = value
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "not an own action changed")
+
+
+def test_wrong_owner_id_gates():
+    def mutate(deps, flows):
+        deps[OWN_NEW]["owner_id"] = OWN_ID + 1
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "wrong owner_id")
+
+
+@pytest.mark.parametrize("owner", [
+    "adam-ſ-daniel",  # U+017F folds to `s` under a non-ASCII IGNORECASE
+    "adam-s-daniel-x", "xadam-s-daniel", "adam-s-danie1", "adam_s_daniel"])
+def test_a_look_alike_owner_gates_even_with_the_right_owner_id(owner):
+    key = f"{owner}/tool@v1.1.0"
+    def mutate(deps, flows):
+        deps[key] = deps.pop(OWN_NEW)
+        flows[CI_FLOW] = [THIRD, key]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "not an own action changed")
+
+
+@pytest.mark.parametrize("key", [
+    "adam-s-daniel/../actions@v1.1.0", "adam-s-daniel/tool/sub@v1.1.0",
+    "adam-s-daniel/tool@v1.1.0/x", "adam-s-daniel/.hidden@v1.1.0"])
+def test_an_own_key_of_the_wrong_form_gates(key):
+    def mutate(deps, flows):
+        deps[key] = deps.pop(OWN_NEW)
+        flows[CI_FLOW] = [THIRD, key]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "not an own action changed")
+
+
+def test_an_own_key_with_a_trailing_newline_is_not_own():
+    assert not gate._is_own_action(OWN_NEW + "\n")
+
+
+def test_top_level_version_change_gates():
+    base, _ = lock_trees()
+    deps, flows = lock_parts()
+    bump_own(deps, flows)
+    head = dict(base, **{LOCK: render_lock(deps, flows, version="v0.0.4")})
+    assert_lock_refused(run_lock(base, head), "version changed")
+
+
+@pytest.mark.parametrize("side", ["base", "head"])
+def test_malformed_yaml_gates(side):
+    base, head = lock_trees()
+    (base if side == "base" else head)[LOCK] = b"version: 'v0.0.3'\nworkflows: [\n"
+    assert_lock_refused(run_lock(base, head), "does not parse")
+
+
+def test_a_lockfile_that_is_not_utf8_gates():
+    base, head = lock_trees()
+    head[LOCK] = head[LOCK] + b"# \xff\n"
+    assert_lock_refused(run_lock(base, head), "does not parse")
+
+
+@pytest.mark.parametrize("repeat", [
+    # A repeated key, at each level the comparison relies on.
+    lambda text: text + "version: 'v0.0.3'\n",
+    lambda text: text.replace("dependencies:\n", (
+        "dependencies:\n    'adam-s-daniel/tool@v1.1.0':\n        ref: 'v1.1.0'\n"
+        f"        commit: 'sha1-{SHA_NEW}'\n        owner_id: {OWN_ID}\n"
+        f"        repo_id: {OWN_REPO_ID}\n"), 1),
+    lambda text: text.replace("        ref: 'v7.0.0'\n",
+                              "        ref: 'v7.0.0'\n        ref: 'v7.0.0'\n", 1),
+])
+def test_duplicate_key_gates(repeat):
+    base, head = lock_trees()
+    head[LOCK] = repeat(head[LOCK].decode()).encode()
+    assert_lock_refused(run_lock(base, head), "does not parse")
+
+
+def test_two_spellings_of_one_dependency_gate():
+    def mutate(deps, flows):
+        deps["Adam-S-Daniel/tool@v1.1.0"] = dict(deps[OWN_NEW])
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "repeated in another case")
+
+
+@pytest.mark.parametrize("old,new,message", [
+    # Each is valid YAML that a second parser may read differently.
+    (f"owner_id: {OWN_ID}", f"owner_id: {hex(OWN_ID)}", "scalar in an unexpected form"),
+    (f"owner_id: {OWN_ID}", f"owner_id: {OWN_ID}.0", "scalar in an unexpected form"),
+    ("ref: 'v7.0.0'", 'ref: "v7.0.0"', "scalar in an unexpected form"),
+    ("ref: 'v7.0.0'", "ref: !!str 'v7.0.0'", "alias, anchor or explicit tag"),
+    ("ref: 'v7.0.0'", "ref: &a 'v7.0.0'", "alias, anchor or explicit tag"),
+    ("        ref: 'v1.1.0'\n", "        <<: {ref: 'v1.1.0'}\n", "scalar in an unexpected form"),
+])
+def test_yaml_two_parsers_may_read_differently_gates(old, new, message):
+    base, head = lock_trees()
+    text = head[LOCK].decode()
+    assert old in text
+    head[LOCK] = text.replace(old, new, 1).encode()
+    assert_lock_refused(run_lock(base, head), message)
+
+
+def test_an_alias_gates():
+    base, head = lock_trees()
+    head[LOCK] = head[LOCK] + b"x: &a {ref: 'v1'}\ny: *a\n"
+    assert_lock_refused(run_lock(base, head), "alias, anchor or explicit tag")
+
+
+def test_a_document_marker_gates():
+    base, head = lock_trees()
+    head[LOCK] = b"---\n" + head[LOCK]
+    assert_lock_refused(run_lock(base, head), "document marker")
+
+
+@pytest.mark.parametrize("body,message", [
+    (b"- a\n", "top-level keys"),
+    (b"version: 'v0.0.3'\nworkflows: {}\n", "top-level keys"),
+    (b"version: 'v0.0.3'\nworkflows: {}\ndependencies: {}\nextra: 'x'\n", "top-level keys"),
+    (b"version: 1\nworkflows: {}\ndependencies: {}\n", "unexpected types"),
+    (b"version: 'v'\nworkflows: []\ndependencies: {}\n", "unexpected types"),
+    (b"version: 'v'\nworkflows:\n    'a': 'b'\ndependencies: {}\n", "`workflows` value"),
+    (b"version: 'v'\nworkflows:\n    'a': ['b', 'b']\ndependencies: {}\n", "`workflows` value"),
+    (b"version: 'v'\nworkflows: {}\ndependencies:\n    'a': 'b'\n", "dependency has an unexpected"),
+])
+def test_an_unexpected_shape_gates(body, message):
+    base, head = lock_trees()
+    head[LOCK] = body
+    assert_lock_refused(run_lock(base, head), message)
+
+
+@pytest.mark.parametrize("old,new", [
+    (f"commit: 'sha1-{SHA_NEW}'", f"commit: 'sha256-{'a' * 64}'"),
+    (f"commit: 'sha1-{SHA_NEW}'", f"commit: '{SHA_NEW}'"),
+    (f"commit: 'sha1-{SHA_NEW}'", "commit: 7"),
+    (f"owner_id: {OWN_ID}", "owner_id: true"),
+    (f"owner_id: {OWN_ID}", f"owner_id: '{OWN_ID}'"),
+    (f"repo_id: {OWN_REPO_ID}", f"repo_id: '{OWN_REPO_ID}'"),
+    ("ref: 'v1.1.0'", "ref: 7"),
+    (f"        repo_id: {OWN_REPO_ID}\n", ""),
+    (f"        repo_id: {OWN_REPO_ID}\n", f"        repo_id: {OWN_REPO_ID}\n        extra: 'x'\n"),
+])
+def test_a_bad_dependency_entry_gates(old, new):
+    base, head = lock_trees()
+    text = head[LOCK].decode()
+    assert text.count(old) == 1
+    head[LOCK] = text.replace(old, new).encode()
+    assert_lock_refused(run_lock(base, head), "dependency has an unexpected shape")
+
+
+def test_deleted_lockfile_gates():
+    base, head = lock_trees()
+    del head[LOCK]
+    assert_lock_refused(run_lock(base, head), "not simply modified")
+
+
+def test_a_lockfile_listed_as_modified_but_missing_at_head_gates():
+    base, head = lock_trees()
+    del head[LOCK]
+    files = [{"filename": LOCK, "status": "modified", "previous_filename": None}]
+    assert_lock_refused(run_lock(base, head, files=files), "not a regular file")
+
+    class ModeSaysPresent(LockFetcher):
+        def file_mode(self, path, sha):
+            return "100644"
+    result = gate.decide(ModeSaysPresent(base, head, files=files), BASE, HEAD)
+    assert_lock_refused(result, "could not be evaluated")
+
+
+def test_added_lockfile_gates():
+    base, head = lock_trees()
+    del base[LOCK]
+    assert_lock_refused(run_lock(base, head), "not simply modified")
+
+
+def test_renamed_lockfile_gates():
+    base, head = lock_trees()
+    head[".github/workflows/other.lock"] = head.pop(LOCK)
+    result = run_lock(base, head, renames={".github/workflows/other.lock": LOCK})
+    assert_lock_refused(result, "not simply modified")
+
+
+def test_a_lockfile_renamed_into_place_gates():
+    base, head = lock_trees()
+    base[".github/workflows/other.lock"] = base.pop(LOCK)
+    result = run_lock(base, head, renames={LOCK: ".github/workflows/other.lock"})
+    assert_lock_refused(result, "not simply modified")
+
+
+@pytest.mark.parametrize("sha", [BASE, HEAD])
+def test_a_lockfile_that_is_a_symlink_gates(sha):
+    result = run_lock(*lock_trees(), modes={sha: "120000"})
+    assert_lock_refused(result, "not a regular file")
+
+
+def test_a_lockfile_with_only_a_new_comment_gates():
+    base, head = lock_trees(bump=False)
+    head[LOCK] = head[LOCK] + b"# a comment\n"
+    assert_lock_refused(run_lock(base, head), "did not change")
+
+
+def test_a_fetcher_without_the_lookups_gates():
+    base, head = lock_trees()
+    assert_lock_refused(gate.decide(FakeFetcher(base, head), BASE, HEAD), "could not be evaluated")
+
+
+@pytest.mark.parametrize("path", sorted(gate.GATE_FILES - {LOCK}))
+def test_an_own_bump_plus_a_gate_file_gates(path):
+    base, head = lock_trees()
+    base.setdefault(path, b"before\n")
+    head[path] = b"after\n"
+    fetcher = LockFetcher(base, head)
+    result = gate.decide(fetcher, BASE, HEAD)
+    assert ("gate-itself", path) in result[1], result
+    assert_lock_refused(result, "another gate file changed")
+    assert fetcher.api_calls == 0
+
+
+def test_an_own_bump_plus_a_plugin_hook_gates():
+    base, head = lock_trees()
+    head["plugins/alpha/hooks/run.sh"] = b"echo hi\n"
+    result = run_lock(base, head)
+    assert_gated(result, "hook-file")
+    assert ("gate-itself", LOCK) not in result[1], result
+
+
+def test_an_own_bump_plus_a_marketplace_change_gates():
+    base, head = lock_trees()
+    head[".claude-plugin/marketplace.json"] = marketplace("alpha", "beta")
+    assert_gated(run_lock(base, head), "marketplace-runtime-key")
+
+
+def test_a_third_party_item_added_to_a_workflow_list_gates():
+    """Its dependency entry is already in base, so only the list changes."""
+    deps, flows = lock_parts()
+    deps["actions/other@v1"] = lock_entry("v1", SHA_OTHER, 2001, 2003)
+    base = tree(**{LOCK: render_lock(deps, flows), gate.GATE_WORKFLOW: GATE_FLOW_TEXT})
+    bump_own(deps, flows)
+    flows[CI_FLOW] = flows[CI_FLOW] + ["actions/other@v1"]
+    head = dict(base, **{LOCK: render_lock(deps, flows)})
+    assert_lock_refused(run_lock(base, head), "more than own actions")
+
+
+def test_a_third_party_item_removed_from_a_workflow_list_gates():
+    def mutate(deps, flows):
+        flows[CI_FLOW] = [OWN_NEW]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "more than own actions")
+
+
+@pytest.mark.parametrize("items", [[], [THIRD]])
+def test_a_workflow_added_to_the_lock_gates(items):
+    def mutate(deps, flows):
+        flows[".github/workflows/new.yml"] = items
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "list of workflows changed")
+
+
+def test_a_workflow_listing_an_action_with_no_entry_gates():
+    def mutate(deps, flows):
+        flows[CI_FLOW] = [THIRD, OWN_NEW, "adam-s-daniel/ghost@v1"]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "no dependency entry")
+
+
+def test_an_own_action_added_to_the_gate_workflows_list_gates():
+    def mutate(deps, flows):
+        flows[gate.GATE_WORKFLOW] = [THIRD, OWN_NEW]
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "gate workflow's own list")
+
+
+def test_a_bump_of_an_own_action_the_gate_lists_gates():
+    deps, flows = lock_parts()
+    flows[gate.GATE_WORKFLOW] = [THIRD, OWN_OLD]
+    base = tree(**{LOCK: render_lock(deps, flows), gate.GATE_WORKFLOW: GATE_FLOW_TEXT})
+    bump_own(deps, flows)
+    flows[gate.GATE_WORKFLOW] = [THIRD, OWN_NEW]
+    head = dict(base, **{LOCK: render_lock(deps, flows)})
+    assert_lock_refused(run_lock(base, head), "gate workflow's own list")
+
+
+@pytest.mark.parametrize("uses", ["Adam-S-Daniel/tool@v1.0.0", "ADAM-S-DANIEL/tool/sub@v1"])
+def test_a_bump_when_the_gate_workflow_uses_an_own_action_gates(uses):
+    base, head = lock_trees()
+    text = b"jobs:\n  detect:\n    steps:\n      - uses: " + uses.encode() + b"\n"
+    base[gate.GATE_WORKFLOW] = head[gate.GATE_WORKFLOW] = text
+    assert_lock_refused(run_lock(base, head), "gate workflow uses an own action")
+
+
+@pytest.mark.parametrize("text,message", [
+    (None, "gate workflow is missing"), (b"a: [\n", "gate workflow does not parse")])
+def test_an_unreadable_gate_workflow_gates(text, message):
+    base, head = lock_trees()
+    for side in (base, head):
+        del side[gate.GATE_WORKFLOW]
+        if text is not None:
+            side[gate.GATE_WORKFLOW] = text
+    assert_lock_refused(run_lock(base, head), message)
+
+
+def test_a_lock_that_does_not_list_the_gate_workflow_gates():
+    deps, flows = lock_parts()
+    del flows[gate.GATE_WORKFLOW]
+    base = tree(**{LOCK: render_lock(deps, flows), gate.GATE_WORKFLOW: GATE_FLOW_TEXT})
+    bump_own(deps, flows)
+    head = dict(base, **{LOCK: render_lock(deps, flows)})
+    assert_lock_refused(run_lock(base, head), "does not list the gate workflow")
+
+
+def test_a_ref_that_disagrees_with_its_key_gates():
+    def mutate(deps, flows):
+        deps[OWN_NEW]["ref"] = "v9.9.9"
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "ref does not match")
+
+
+def test_an_imposter_commit_gates():
+    """The commit is the lockfile's claim; a fork-network commit is reachable
+    through the owner's repo, so the tag has to be asked of GitHub."""
+    def mutate(deps, flows):
+        deps[OWN_NEW]["commit"] = f"sha1-{SHA_OTHER}"
+    assert_lock_refused(run_lock(*lock_trees(mutate)), "tag is not at the locked commit")
+
+
+def test_a_missing_tag_gates():
+    assert_lock_refused(run_lock(*lock_trees(), tags={}), "tag is not at the locked commit")
+
+
+@pytest.mark.parametrize("repo", [
+    None,
+    {"id": OWN_REPO_ID + 1, "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID},
+    {"id": OWN_REPO_ID, "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID + 1},
+    {"id": OWN_REPO_ID, "full_name": "Adam-S-Daniel/renamed", "owner_id": OWN_ID},
+    {"id": str(OWN_REPO_ID), "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID},
+    {"id": OWN_REPO_ID, "owner_id": OWN_ID},
+])
+def test_a_repository_github_does_not_confirm_gates(repo):
+    repos = {} if repo is None else {"adam-s-daniel/tool": repo}
+    assert_lock_refused(run_lock(*lock_trees(), repos=repos), "does not confirm")
+
+
+def test_the_github_lookup_failing_gates():
+    class Broken(LockFetcher):
+        def action_tag_commit(self, name, tag):
+            raise gate.GateError("resolving a tag failed (gh exit 1)")
+    base, head = lock_trees()
+    assert_lock_refused(gate.decide(Broken(base, head), BASE, HEAD), "could not be evaluated")
+
+
+def test_without_pyyaml_a_lockfile_change_gates(monkeypatch):
+    base, head = lock_trees()
+    monkeypatch.setitem(sys.modules, "yaml", None)
+    assert_lock_refused(run_lock(base, head), "PyYAML is not installed")
+
+
+def test_the_refusal_prints_nothing_from_the_lockfile(capsys, monkeypatch):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    def mutate(deps, flows):
+        deps["evil-marker/tool@v1"] = lock_entry("v1", SHA_OTHER, 9, 9)
+    base, head = lock_trees(mutate)
+    assert gate.main(["--repo", "o/r", "--pr", "1", "--base", BASE, "--head", HEAD],
+                     fetcher=LockFetcher(base, head)) == 0
+    out = capsys.readouterr().out
+    assert "gated=true" in out and "lock-not-exempt" in out and "evil-marker" not in out
+
+
+def test_the_checked_in_lockfile_is_the_shape_the_exemption_accepts():
+    """If gh actions-lock changes its output, every own bump would quietly go
+    back to waiting for the owner; this says so instead."""
+    data = (WORKFLOW.parent / "actions.lock").read_bytes()
+    version, flows, deps = gate._parse_action_lock(data)
+    assert version and gate.GATE_WORKFLOW in flows and deps
+    assert not any(gate._is_own_action(item) for item in flows[gate.GATE_WORKFLOW])
+    assert all(item in deps for items in flows.values() for item in items)
+
+
+def test_the_gate_workflow_uses_no_own_action():
+    uses = list(gate._uses_values(load_workflow()))
+    assert uses and not any(u.split("/")[0].lower() == gate.OWN_ACTIONS_OWNER for u in uses)
+
+
+def test_action_repo_reads_the_repository_from_the_api(monkeypatch, no_backoff):
+    runs = _Runs((0, b'{"id": 5, "full_name": "o/r", "owner_id": 7}', b""),
+                 (1, b"", b"gh: Not Found (HTTP 404)"))
+    monkeypatch.setattr(gate.subprocess, "run", runs)
+    fetcher = gate.GhFetcher("o/r", 1)
+    assert fetcher.action_repo("o/r") == {"id": 5, "full_name": "o/r", "owner_id": 7}
+    assert fetcher.action_repo("o/gone") is None
+
+
+def _ref(kind, sha, ref="refs/tags/v1"):
+    return (0, json.dumps({"ref": ref, "type": kind, "sha": sha}).encode(), b"")
+
+
+def _tag(kind, sha):
+    return (0, json.dumps({"type": kind, "sha": sha}).encode(), b"")
+
+
+@pytest.mark.parametrize("outcomes,expected", [
+    ([_ref("commit", SHA_NEW)], SHA_NEW),
+    ([_ref("tag", SHA_OLD), _tag("commit", SHA_NEW)], SHA_NEW),            # annotated
+    ([_ref("tag", SHA_OLD), _tag("tag", SHA_OTHER), _tag("commit", SHA_NEW)], SHA_NEW),
+    ([(1, b"", b"gh: Not Found (HTTP 404)")], None),                       # no such tag
+    ([_ref("commit", SHA_NEW, ref="refs/tags/v1-rc")], None),              # another ref
+    ([_ref("commit", "not-a-sha")], None),
+    ([_ref("tree", SHA_NEW)], None),
+    ([_ref("tag", SHA_OLD), (1, b"", b"gh: Not Found (HTTP 404)")], None),
+    ([_ref("tag", SHA_OLD)] + [_tag("tag", SHA_OLD)] * gate.MAX_TAG_DEPTH, None),  # a tag loop
+])
+def test_action_tag_commit_follows_tags_to_a_commit(monkeypatch, no_backoff, outcomes, expected):
+    monkeypatch.setattr(gate.subprocess, "run", _Runs(*outcomes))
+    assert gate.GhFetcher("o/r", 1).action_tag_commit("o/r", "v1") == expected
+
+
+def test_file_mode_asks_the_tree_for_that_path(monkeypatch):
+    seen = []
+    def fake(args, **kwargs):
+        seen.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout=b"120000\n", stderr=b"")
+    monkeypatch.setattr(gate.subprocess, "run", fake)
+    assert gate.GhFetcher("o/r", 1).file_mode(LOCK, BASE) == "120000"
+    assert f"repos/o/r/git/trees/{BASE}?recursive=1" in seen[0]
+    assert json.dumps(LOCK) in seen[0][-1]

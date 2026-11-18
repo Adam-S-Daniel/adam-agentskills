@@ -39,7 +39,9 @@ The gate denies by default. A pull request is GATED when any of these holds:
                           it to where local Codex runs it at every session
                           start, so it is runtime code too), and
                           scripts/cloud-env-setup.sh (every owner cloud
-                          environment runs it as root at setup).
+                          environment runs it as root at setup), and
+                          .github/workflows/actions.lock, unless the change
+                          is an own-action bump (below; ADR 0026).
   (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
                           3000-file cap, or anything unexpected.
@@ -72,10 +74,21 @@ load-time command at base or head. Nothing under <root>/hooks or <root>/bin is
 inert. (check_consistency.py already refuses any symlink under plugins/; the
 gate cannot see file modes.)
 
+An own-action bump is the one lockfile change that does not gate. No other gate
+file may change in the same pull request, the lockfile must be a regular file
+modified in place, and both sides must parse strictly to the expected shape with
+one `version`. Every dependency that differs must be adam-s-daniel/<repo>@<tag>;
+every other entry and every non-own `workflows` item must be identical; the gate
+workflow must neither use nor list an own action. Each added or changed entry
+must carry the owner's numeric id, and the GitHub API, not the pull request, must
+confirm that the repo has that owner and id and that the tag is at that commit.
+Anything else adds the reason `lock-not-exempt` beside gate-itself.
+
 Everything read from the pull request is untrusted DATA. It is fetched through
-the GitHub API (never checked out), parsed with json only, capped in size, and
-never executed. The summary prints repo-relative paths (JSON-quoted, so a path
-cannot inject a workflow command) and reason codes, never file contents.
+the GitHub API (never checked out), parsed with json or a strict YAML loader,
+capped in size, and never executed. The summary prints repo-relative paths
+(JSON-quoted, so a path cannot inject a workflow command), reason codes and
+fixed refusal messages, never file contents.
 
 Exit status: 0 whether gated or not; 2 only on a usage error. The workflow
 treats a failed or empty result as gated.
@@ -142,16 +155,37 @@ ROOT_FILES = frozenset({
 # Under pull_request_target the BASE branch's workflow and script run, so a
 # change to either takes effect only after it merges — which is why changing
 # them is itself gated. The action lockfile is listed too: it chooses the
-# commit each tag-pinned action (the gate's checkout among them) runs at. The
-# local-Codex launcher is listed because it runs at every Codex session start.
+# commit each tag-pinned action (the gate's checkout among them) runs at; only
+# an own-action bump is excused (ADR 0026). The local-Codex launcher is listed
+# because it runs at every Codex session start.
+ACTIONS_LOCK = ".github/workflows/actions.lock"
+GATE_WORKFLOW = ".github/workflows/plugin-runtime-review.yml"
 GATE_FILES = frozenset({
-    ".github/workflows/actions.lock",
-    ".github/workflows/plugin-runtime-review.yml",
+    ACTIONS_LOCK,
+    GATE_WORKFLOW,
     "scripts/cloud-env-setup.sh",
     "scripts/codex-session-start.sh",
     "scripts/plugin_runtime_gate.py",
     "scripts/test_plugin_runtime_gate.py",
 })
+
+# The account whose actions may be bumped without review. The login is matched
+# case-insensitively because gh actions-lock lowercases keys; the numeric id is
+# what survives a rename, so it is the id that decides.
+OWN_ACTIONS_OWNER = "adam-s-daniel"
+OWN_ACTIONS_OWNER_ID = 4205216
+# re.ASCII matters: without it IGNORECASE lets U+017F (long s) match `s`.
+_OWN_ACTION_KEY = re.compile(
+    re.escape(OWN_ACTIONS_OWNER) + r"/([a-z0-9][a-z0-9._-]*)@([a-z0-9][a-z0-9._-]*)",
+    re.IGNORECASE | re.ASCII)
+_LOCK_KEYS = frozenset({"version", "workflows", "dependencies"})
+_LOCK_ENTRY_KEYS = frozenset({"ref", "commit", "owner_id", "repo_id"})
+_LOCK_COMMIT = re.compile(r"sha1-([0-9a-f]{40})")
+# What gh actions-lock writes unquoted: field names and decimal ids. Anything
+# else (0x10, 1e3, ~, a timestamp) is where two YAML parsers may disagree.
+_LOCK_PLAIN_SCALAR = re.compile(r"[A-Za-z_][A-Za-z0-9_]*|[1-9][0-9]*")
+REGULAR_FILE_MODE = "100644"
+MAX_TAG_DEPTH = 5  # how many annotated tags may wrap the commit
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -234,6 +268,53 @@ class GhFetcher:
              f"repos/{self.repo}/contents/{quote(path, safe='/')}?ref={sha}"],
             f"reading {json.dumps(path)}", ok_404=True)
         return None if proc is None else proc.stdout
+
+    def file_mode(self, path: str, sha: str) -> str:
+        """The file's git mode at sha, "" when the tree has no such path. The
+        contents API follows a symlink, so only the tree can tell one apart."""
+        proc = self._gh(
+            ["api", f"repos/{self.repo}/git/trees/{sha}?recursive=1",
+             "--jq", f".tree[] | select(.path == {json.dumps(path)}) | .mode"],
+            f"reading the mode of {json.dumps(path)}")
+        return proc.stdout.decode("utf-8").strip()
+
+    def _one_object(self, endpoint: str, jq: str, what: str) -> Optional[dict]:
+        """One JSON object from the API; None on a 404 or any other shape."""
+        proc = self._gh(["api", endpoint, "--jq", jq], what, ok_404=True)
+        if proc is None:
+            return None
+        values = _json_values(proc.stdout.decode("utf-8"))
+        return values[0] if len(values) == 1 and isinstance(values[0], dict) else None
+
+    def action_repo(self, name: str) -> Optional[dict]:
+        """{id, full_name, owner_id} of an action's repository, from GitHub."""
+        return self._one_object(
+            f"repos/{quote(name, safe='/')}", "{id, full_name, owner_id: .owner.id}",
+            f"reading the repository {json.dumps(name)}")
+
+    def action_tag_commit(self, name: str, tag: str) -> Optional[str]:
+        """The commit a tag resolves to, through any annotated tags; None when
+        the tag does not exist or does not end at a commit."""
+        repo = quote(name, safe="/")
+        what = f"resolving a tag of {json.dumps(name)}"
+        target = "{type: .object.type, sha: .object.sha}"
+        found = self._one_object(
+            f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}",
+            "{ref, type: .object.type, sha: .object.sha}", what)
+        if found is None or found.get("ref") != f"refs/tags/{tag}":
+            return None
+        for _ in range(MAX_TAG_DEPTH):
+            sha = found.get("sha")
+            if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+                return None
+            if found.get("type") == "commit":
+                return sha
+            if found.get("type") != "tag":
+                return None
+            found = self._one_object(f"repos/{repo}/git/tags/{sha}", target, what)
+            if found is None:
+                return None
+        return None
 
 
 def _json_values(text: str) -> List[object]:
@@ -649,6 +730,184 @@ def _is_skill_file(path: str, roots: Set[str], named: Set[str]) -> bool:
     return False
 
 
+class _LockNotExempt(Exception):
+    """Why a lockfile change is not an own-action bump. Fixed text only: the
+    message is printed, so it never carries anything from the pull request."""
+
+
+def _is_own_action(key: str) -> bool:
+    return _OWN_ACTION_KEY.fullmatch(key) is not None
+
+
+def _is_positive_int(value) -> bool:
+    return type(value) is int and value > 0  # bool is an int subclass; 1.0 == 1
+
+
+def _parse_action_lock(data: bytes) -> Tuple[str, Dict[str, list], Dict[str, dict]]:
+    """(version, workflows, dependencies) of an actions.lock, or _LockNotExempt.
+
+    The runner reads this file with a different YAML parser, so everything two
+    parsers might read differently is refused before comparing: aliases,
+    anchors, explicit tags, directives, repeated keys, merge keys (the strict
+    loader has no constructor for one) and unusual scalars."""
+    try:
+        import yaml  # third-party; the workflow installs the base branch's pin
+    except ImportError:
+        raise _LockNotExempt("PyYAML is not installed") from None
+    try:
+        text = data.decode("utf-8")
+        for event in yaml.parse(text, Loader=yaml.SafeLoader):
+            if isinstance(event, yaml.AliasEvent) or getattr(event, "anchor", None) is not None \
+                    or getattr(event, "tag", None) is not None:
+                raise _LockNotExempt("the lockfile uses an alias, anchor or explicit tag")
+            if isinstance(event, yaml.DocumentStartEvent) and event.explicit:
+                raise _LockNotExempt("the lockfile has a document marker or directive")
+            if isinstance(event, yaml.ScalarEvent) and not (
+                    event.style == "'" or (event.style is None
+                                           and _LOCK_PLAIN_SCALAR.fullmatch(event.value))):
+                raise _LockNotExempt("the lockfile has a scalar in an unexpected form")
+        doc = _strict_yaml_load(yaml, text)
+    except (yaml.YAMLError, UnicodeDecodeError):
+        raise _LockNotExempt("the lockfile does not parse strictly") from None
+
+    if not isinstance(doc, dict) or set(doc) != _LOCK_KEYS:
+        raise _LockNotExempt("the lockfile's top-level keys are not the expected ones")
+    version, workflows, dependencies = doc["version"], doc["workflows"], doc["dependencies"]
+    if not isinstance(version, str) or not isinstance(workflows, dict) \
+            or not isinstance(dependencies, dict):
+        raise _LockNotExempt("the lockfile's top-level values have unexpected types")
+    for name, items in workflows.items():
+        if not isinstance(name, str) or not isinstance(items, list) \
+                or not all(isinstance(item, str) for item in items) \
+                or len(items) != len(set(items)):
+            raise _LockNotExempt("a lockfile `workflows` value has an unexpected shape")
+    for key, entry in dependencies.items():
+        if not isinstance(key, str) or not isinstance(entry, dict) \
+                or set(entry) != _LOCK_ENTRY_KEYS \
+                or not isinstance(entry["ref"], str) \
+                or not isinstance(entry["commit"], str) \
+                or not _LOCK_COMMIT.fullmatch(entry["commit"]) \
+                or not _is_positive_int(entry["owner_id"]) \
+                or not _is_positive_int(entry["repo_id"]):
+            raise _LockNotExempt("a lockfile dependency has an unexpected shape")
+    # The key names are lowercased by the tool, so two spellings of one action
+    # could resolve to the same thing while reading as two entries here.
+    if len({key.lower() for key in dependencies}) != len(dependencies):
+        raise _LockNotExempt("a lockfile dependency is repeated in another case")
+    return version, workflows, dependencies
+
+
+def _uses_values(node) -> Iterable[str]:
+    """Every `uses` value anywhere in a parsed workflow."""
+    if isinstance(node, dict):
+        if isinstance(node.get("uses"), str):
+            yield node["uses"]
+        for value in node.values():
+            yield from _uses_values(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _uses_values(value)
+
+
+def _check_gate_runs_no_own_action(base_snap: Snapshot) -> None:
+    """A bump must not be able to change what the gate itself runs. The other
+    gate files are unchanged by now, so the base copy is also the head copy."""
+    import yaml
+    data = base_snap.raw(GATE_WORKFLOW)
+    if data is None:
+        raise _LockNotExempt("the gate workflow is missing")
+    try:
+        workflow = _strict_yaml_load(yaml, data.decode("utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError):
+        raise _LockNotExempt("the gate workflow does not parse") from None
+    if any(uses.split("/", 1)[0].lower() == OWN_ACTIONS_OWNER for uses in _uses_values(workflow)):
+        raise _LockNotExempt("the gate workflow uses an own action")
+
+
+def _check_own_action_on_github(fetcher, key: str, entry: dict) -> None:
+    """The lockfile is the pull request's word. Only GitHub can say the repo
+    still belongs to the owner and the tag really is at this commit; ci.yml's
+    lockfile verifier cannot, since this bump may be the one replacing it."""
+    match = _OWN_ACTION_KEY.fullmatch(key)
+    name = f"{OWN_ACTIONS_OWNER}/{match.group(1)}".lower()
+    repo = fetcher.action_repo(name)
+    if not isinstance(repo, dict) or not _is_positive_int(repo.get("id")) \
+            or repo["id"] != entry["repo_id"] \
+            or not _is_positive_int(repo.get("owner_id")) \
+            or repo["owner_id"] != OWN_ACTIONS_OWNER_ID \
+            or not isinstance(repo.get("full_name"), str) \
+            or repo["full_name"].lower() != name:
+        raise _LockNotExempt("GitHub does not confirm an own action's repository and owner")
+    commit = _LOCK_COMMIT.fullmatch(entry["commit"]).group(1)
+    if fetcher.action_tag_commit(name, match.group(2)) != commit:
+        raise _LockNotExempt("an own action's tag is not at the locked commit")
+
+
+def _check_own_action_bump(fetcher, files: List[dict], base_snap: Snapshot,
+                           head_snap: Snapshot) -> None:
+    """Return only if the lockfile change is an own-action bump (ADR 0026)."""
+    listed = [item for item in files if ACTIONS_LOCK in
+              (item.get("filename"), item.get("previous_filename"))]
+    if len(listed) != 1 or listed[0].get("status") != "modified" \
+            or listed[0].get("filename") != ACTIONS_LOCK \
+            or listed[0].get("previous_filename") is not None:
+        raise _LockNotExempt("the lockfile is not simply modified")
+    for snap in (base_snap, head_snap):
+        if fetcher.file_mode(ACTIONS_LOCK, snap.sha) != REGULAR_FILE_MODE:
+            raise _LockNotExempt("the lockfile is not a regular file on both sides")
+    # Snapshot.raw raises if a file listed as modified is missing on either side.
+    base_version, base_flows, base_deps = _parse_action_lock(base_snap.raw(ACTIONS_LOCK))
+    head_version, head_flows, head_deps = _parse_action_lock(head_snap.raw(ACTIONS_LOCK))
+    if base_version != head_version:
+        raise _LockNotExempt("the lockfile's version changed")
+
+    differing = {key for key in set(base_deps) | set(head_deps)
+                 if base_deps.get(key) != head_deps.get(key)}
+    for key in differing:
+        if not _is_own_action(key):
+            raise _LockNotExempt("a dependency that is not an own action changed")
+    bumped = {key: head_deps[key] for key in differing if key in head_deps}
+    for key, entry in bumped.items():
+        if entry["owner_id"] != OWN_ACTIONS_OWNER_ID:
+            raise _LockNotExempt("an own action's entry has the wrong owner_id")
+        if entry["ref"] != _OWN_ACTION_KEY.fullmatch(key).group(2):
+            raise _LockNotExempt("an own action's ref does not match its key")
+
+    if set(base_flows) != set(head_flows):
+        raise _LockNotExempt("the lockfile's list of workflows changed")
+    for name, items in base_flows.items():
+        if [i for i in items if not _is_own_action(i)] != \
+                [i for i in head_flows[name] if not _is_own_action(i)]:
+            raise _LockNotExempt("a workflow's list changed in more than own actions")
+    if any(item not in head_deps for items in head_flows.values() for item in items):
+        raise _LockNotExempt("a workflow lists an action with no dependency entry")
+    if not differing and base_flows == head_flows:
+        raise _LockNotExempt("the lockfile's content did not change")
+
+    # The gate's own pins: third-party ones are already proven identical above.
+    if GATE_WORKFLOW not in base_flows:
+        raise _LockNotExempt("the lockfile does not list the gate workflow")
+    if base_flows[GATE_WORKFLOW] != head_flows[GATE_WORKFLOW] \
+            or any(_is_own_action(item) for item in base_flows[GATE_WORKFLOW]):
+        raise _LockNotExempt("the gate workflow's own list is involved")
+    _check_gate_runs_no_own_action(base_snap)
+
+    for key in sorted(bumped):  # last: the only step that spends API calls
+        _check_own_action_on_github(fetcher, key, bumped[key])
+
+
+def _lock_refusal(fetcher, files: List[dict], base_snap: Snapshot,
+                  head_snap: Snapshot) -> Optional[str]:
+    """Why the lockfile change still gates; None only for an own-action bump."""
+    try:
+        _check_own_action_bump(fetcher, files, base_snap, head_snap)
+    except _LockNotExempt as exc:
+        return str(exc)
+    except Exception as exc:  # noqa: BLE001 — anything unexpected keeps the gate
+        return f"the lockfile change could not be evaluated ({type(exc).__name__})"
+    return None
+
+
 def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     """The (reason code, path) pairs that gate this pull request; empty when
     nothing does. Raises GateError (or anything else) when it cannot decide."""
@@ -689,8 +948,15 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
     reasons: Set[Tuple[str, str]] = set()
 
     # (f) first: it needs nothing fetched.
-    for path in changed & GATE_FILES:
+    other_gate_files = (changed & GATE_FILES) - {ACTIONS_LOCK}
+    for path in other_gate_files:
         reasons.add(("gate-itself", path))
+    if ACTIONS_LOCK in changed:
+        refusal = ("another gate file changed too" if other_gate_files
+                   else _lock_refusal(fetcher, files, base_snap, head_snap))
+        if refusal is not None:
+            reasons.add(("gate-itself", ACTIONS_LOCK))
+            reasons.add(("lock-not-exempt", refusal))
 
     markets = {"base": base_snap.json(MARKETPLACE), "head": head_snap.json(MARKETPLACE)}
     entry_roots = {side: _local_roots(markets[side]) for side in markets}

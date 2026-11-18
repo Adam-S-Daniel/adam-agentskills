@@ -221,6 +221,37 @@ tests and copy list, `scripts/cloud-env-setup.sh` and
 `scripts/codex-session-start.sh`, and a Dependabot bump of an action the gate
 workflow itself uses. Those were the other 16 pull requests.
 
+### Update 2026-11-18: own-action pins need GitHub's word, and the gate checks the pull request did not move
+
+Two safeguards from the narrower rule the owner set aside
+([#181](https://github.com/Adam-S-Daniel/adam-agentskills/pull/181), closed as
+superseded by [#179](https://github.com/Adam-S-Daniel/adam-agentskills/pull/179))
+come back on top of the lockfile rule above, at the owner's request.
+
+- **An own-action pin must be a real release.** The lockfile is the pull
+  request's word, and Dependabot can propose an own-action bump soon after a
+  release (#180 drops the cooldown for own actions). So in a lockfile change the rule above lets through, every entry
+  added or changed for an `adam-s-daniel/*` action (by key, or by the owner's
+  numeric id 4205216) must be exactly `adam-s-daniel/<repo>@<tag>` with gh
+  actions-lock's four keys and `ref` equal to the tag, and GitHub must confirm
+  that the repository has that `repo_id`, the owner's id and is not a fork,
+  that the tag resolves to the locked commit, that the commit is on the
+  default branch, and that the tag's release is published, not a prerelease
+  and immutable. Anything else gates as `gate-itself` with the extra reason
+  `own-action-unverified` and a fixed message; an API error fails closed.
+  Removing an own entry, and third-party entries, ask GitHub nothing.
+- **The pull request must still be the one the event named.** The file list
+  carries no sha: it describes the pull request when it is listed. The gate
+  now re-reads the pull request after listing and fails closed unless its
+  head sha, base sha and base branch equal the event's (`GITHUB_BASE_REF`,
+  which the runner sets on `pull_request_target`) and the base branch is the
+  repository's default branch. A pull request into any other branch therefore
+  always waits for the owner.
+
+Not carried over from #181, because the owner asked for these two only: its
+byte-for-byte check that the lockfile is in the form gh actions-lock writes,
+and its comparison from the merge base as well as from the base.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —

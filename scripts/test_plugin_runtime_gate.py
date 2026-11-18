@@ -41,6 +41,7 @@ WORKFLOW = REPO_ROOT / ".github" / "workflows" / "plugin-runtime-review.yml"
 BASE = "a" * 40
 HEAD = "b" * 40
 UPSTREAM_SHA = "c" * 40
+BASE_REF = "main"
 
 
 # =================================================================================
@@ -61,6 +62,7 @@ class FakeFetcher:
         # (repo, branch, path) -> bytes at that branch's tip, for upstream copies.
         self.upstream = upstream or {}
         self.upstream_reads = []
+        self.pr_now = {"head": HEAD, "base": BASE, "base_ref": BASE_REF, "default_branch": BASE_REF}
 
     @staticmethod
     def _encode(tree):
@@ -97,6 +99,11 @@ class FakeFetcher:
         if self.fail_on == path:
             raise gate.GateError(f"reading {json.dumps(path)} failed (gh exit 1)")
         return self.trees[sha].get(path)
+
+    def pull_request(self):
+        """The pull request as GitHub has it when the gate re-reads it; by
+        default unmoved from the event."""
+        return dict(self.pr_now)
 
     def read_upstream(self, repo, branch, path):
         self.upstream_reads.append((repo, branch, path))
@@ -135,7 +142,7 @@ def hook_config(*commands, args=None):
 
 
 def run(base, head, **kw):
-    return gate.decide(FakeFetcher(base, head, **kw), BASE, HEAD)
+    return gate.decide(FakeFetcher(base, head, **kw), BASE, HEAD, BASE_REF)
 
 
 def codes(result):
@@ -669,6 +676,246 @@ def test_the_real_lockfile_reads_and_an_unrelated_entry_does_not_gate():
     assert_gated(run(base, dict(base, **{LOCK: yaml.safe_dump(doc).encode()})), "gate-itself")
 
 
+# ---- own-action pins in an unreviewed lockfile change: GitHub must confirm them ----
+#
+# Each refusal is asserted by its message, so a case cannot pass because some
+# other check happened to refuse it. Every id and name but the owner's is invented.
+
+OWN_ID = gate.OWN_ACTIONS_OWNER_ID
+OWN_OLD = "adam-s-daniel/tool@v1.0.0"
+OWN_NEW = "adam-s-daniel/tool@v1.1.0"
+OWN_REPO_ID = 3001
+SHA_OWN_OLD, SHA_OWN_NEW = "6" * 40, "7" * 40
+CI = ".github/workflows/ci.yml"
+
+
+def own_entry(ref="v1.1.0", sha=SHA_OWN_NEW, **changes):
+    return dict({"ref": ref, "commit": f"sha1-{sha}", "owner_id": OWN_ID,
+                 "repo_id": OWN_REPO_ID}, **changes)
+
+
+def own_repo(**changes):
+    return dict({"id": OWN_REPO_ID, "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID,
+                 "fork": False, "default_branch": "main"}, **changes)
+
+
+def own_release(**changes):
+    return dict({"tag_name": "v1.1.0", "immutable": True, "draft": False,
+                 "prerelease": False}, **changes)
+
+
+class OwnFetcher(FakeFetcher):
+    """FakeFetcher plus what GitHub says about adam-s-daniel/tool. By default
+    v1.1.0 is a released, immutable tag at SHA_OWN_NEW on main."""
+
+    def __init__(self, base, head, repos=None, tags=None, releases=None, on_branch=None, **kw):
+        super().__init__(base, head, **kw)
+        self.repos = {"adam-s-daniel/tool": own_repo()} if repos is None else repos
+        self.tags = {("adam-s-daniel/tool", "v1.1.0"): SHA_OWN_NEW} if tags is None else tags
+        self.releases = {("adam-s-daniel/tool", "v1.1.0"): own_release()} \
+            if releases is None else releases
+        self.on_branch = {("adam-s-daniel/tool", "main", SHA_OWN_NEW)} \
+            if on_branch is None else on_branch
+        self.api_calls = []
+
+    def action_repo(self, name):
+        self.api_calls.append(("repo", name))
+        return self.repos.get(name)
+
+    def action_tag_commit(self, name, tag):
+        self.api_calls.append(("tag", name, tag))
+        return self.tags.get((name, tag))
+
+    def action_release(self, name, tag):
+        self.api_calls.append(("release", name, tag))
+        return self.releases.get((name, tag))
+
+    def commit_on_branch(self, name, branch, sha):
+        self.api_calls.append(("branch", name, branch, sha))
+        return (name, branch, sha) in self.on_branch
+
+
+def own_trees(head_deps, base_deps=None, head_ci=None):
+    """(base, head) where ci.yml uses the own action; the gate workflow does not."""
+    base_deps = {OWN_OLD: own_entry("v1.0.0", SHA_OWN_OLD)} if base_deps is None else base_deps
+    base_ci = sorted(["actions/checkout@v7.0.1", *base_deps])
+    base = tree(**{LOCK: lock_doc(workflows={CI: base_ci}, dependencies=base_deps),
+                   GATE_WF: GATE_WORKFLOW_BYTES})
+    head_ci = sorted(["actions/checkout@v7.0.1", *(k for k, v in head_deps.items() if v)]) \
+        if head_ci is None else head_ci
+    head = dict(base, **{LOCK: lock_doc(workflows={CI: head_ci}, dependencies=head_deps)})
+    return base, head
+
+
+def own_run(head_deps, base_deps=None, **kw):
+    fetcher = OwnFetcher(*own_trees(head_deps, base_deps), **kw)
+    return gate.decide(fetcher, BASE, HEAD, BASE_REF), fetcher
+
+
+def assert_own_refused(result, message):
+    gated, reasons = result
+    assert gated and ("gate-itself", LOCK) in reasons, reasons
+    details = [detail for code, detail in reasons if code == "own-action-unverified"]
+    assert len(details) == 1 and message in details[0], reasons
+
+
+BUMP = {OWN_OLD: None, OWN_NEW: own_entry()}
+
+
+def test_a_confirmed_own_action_bump_does_not_gate_and_checks_every_fact():
+    result, fetcher = own_run(BUMP)
+    assert_not_gated(result)
+    assert fetcher.api_calls == [
+        ("repo", "adam-s-daniel/tool"), ("tag", "adam-s-daniel/tool", "v1.1.0"),
+        ("branch", "adam-s-daniel/tool", "main", SHA_OWN_NEW),
+        ("release", "adam-s-daniel/tool", "v1.1.0")]
+
+
+def test_a_confirmed_own_action_added_beside_the_old_one_does_not_gate():
+    assert_not_gated(own_run({OWN_NEW: own_entry()})[0])
+
+
+def test_removing_an_own_action_asks_github_nothing_and_does_not_gate():
+    result, fetcher = own_run({OWN_OLD: None})
+    assert_not_gated(result)
+    assert fetcher.api_calls == []
+
+
+def test_a_third_party_bump_asks_github_nothing_and_does_not_gate():
+    """The broader rule stands: only own pins need GitHub's word, and the own
+    entry this lockfile already holds, unchanged, is not asked about."""
+    result, fetcher = own_run(
+        {"actions/setup-node@v7.1.0": dict(SETUP_NODE, commit="sha1-" + "9" * 40)})
+    assert_not_gated(result)
+    assert fetcher.api_calls == []
+
+
+@pytest.mark.parametrize("key,entry,message", [
+    ("Adam-S-Daniel/tool@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    ("adam-s-daniel/tool/sub@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    # Another key, but the owner's id: still an own pin, and still refused.
+    ("example-owner/tool@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    (OWN_NEW, dict(own_entry(), uses=["example-owner/x@v1"]), "expected keys"),
+    (OWN_NEW, {"ref": "v1.1.0", "commit": f"sha1-{SHA_OWN_NEW}"}, "expected keys"),
+    (OWN_NEW, own_entry(ref="v1.2.0"), "ref does not match"),
+    (OWN_NEW, own_entry(owner_id=99), "wrong owner_id"),
+    (OWN_NEW, own_entry(owner_id=float(OWN_ID)), "wrong owner_id"),
+    (OWN_NEW, own_entry(repo_id=0), "no repo_id"),
+    (OWN_NEW, own_entry(repo_id=True), "no repo_id"),
+    (OWN_NEW, own_entry(commit=SHA_OWN_NEW), "not a sha1 pin"),
+], ids=repr)
+def test_an_own_entry_not_in_gh_actions_locks_shape_gates(key, entry, message):
+    assert_own_refused(own_run({OWN_OLD: None, key: entry})[0], message)
+
+
+@pytest.mark.parametrize("repo,message", [
+    (None, "does not confirm an own action's repository"),
+    (own_repo(id=4444), "does not confirm an own action's repository"),
+    (own_repo(owner_id=5555), "does not confirm an own action's repository"),
+    (own_repo(full_name="example-owner/tool"), "does not confirm an own action's repository"),
+    (own_repo(fork=True), "is a fork"),
+    (own_repo(fork=None), "is a fork"),
+    (own_repo(default_branch=None), "default branch"),
+    (own_repo(default_branch="-x"), "default branch"),
+], ids=repr)
+def test_an_own_repository_github_does_not_confirm_gates(repo, message):
+    repos = {} if repo is None else {"adam-s-daniel/tool": repo}
+    assert_own_refused(own_run(BUMP, repos=repos)[0], message)
+
+
+def test_an_own_tag_not_at_the_locked_commit_gates():
+    assert_own_refused(own_run(BUMP, tags={("adam-s-daniel/tool", "v1.1.0"): "8" * 40})[0],
+                       "tag is not at the locked commit")
+    assert_own_refused(own_run(BUMP, tags={})[0], "tag is not at the locked commit")
+
+
+def test_an_own_commit_off_the_default_branch_gates():
+    assert_own_refused(own_run(BUMP, on_branch=set())[0], "not on its default branch")
+
+
+@pytest.mark.parametrize("release,message", [
+    (None, "no published release"),
+    (own_release(tag_name="v1.1"), "no published release"),
+    (own_release(draft=True), "no published release"),
+    (own_release(prerelease=True), "no published release"),
+    (own_release(prerelease=None), "no published release"),
+    (own_release(immutable=False), "not immutable"),
+    (own_release(immutable=None), "not immutable"),
+], ids=repr)
+def test_an_own_release_that_is_not_published_and_immutable_gates(release, message):
+    releases = {} if release is None else {("adam-s-daniel/tool", "v1.1.0"): release}
+    assert_own_refused(own_run(BUMP, releases=releases)[0], message)
+
+
+def test_a_moved_own_pin_under_the_same_tag_is_checked_too():
+    base_deps = {OWN_NEW: own_entry(sha=SHA_OWN_OLD)}
+    result, _ = own_run({OWN_NEW: own_entry()}, base_deps=base_deps,
+                        tags={("adam-s-daniel/tool", "v1.1.0"): SHA_OWN_OLD})
+    assert_own_refused(result, "tag is not at the locked commit")
+
+
+def test_an_api_error_on_an_own_check_fails_closed():
+    class Down(OwnFetcher):
+        def action_repo(self, name):
+            raise gate.GateError("reading the repository failed (gh exit 1)")
+    fetcher = Down(*own_trees(BUMP))
+    assert codes(gate.decide(fetcher, BASE, HEAD, BASE_REF)) == {"fail-closed"}
+
+
+ARGS_FOR_LOCK = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD,
+                 "--base-ref", BASE_REF]
+
+
+def test_main_prints_an_own_action_refusal_as_fixed_text(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    fetcher = OwnFetcher(*own_trees(BUMP), releases={})
+    gate.main(ARGS_FOR_LOCK, fetcher=fetcher)
+    assert capsys.readouterr().out == (
+        "gated=true\n"
+        f'  gate-itself: "{LOCK}"\n'
+        '  own-action-unverified: "an own action\'s tag has no published release"\n')
+
+
+# ---- the pull request must still be the one the event named ----
+
+@pytest.mark.parametrize("moved,message", [
+    ({"head": "c" * 40}, "no longer matches the event"),
+    ({"base": "c" * 40}, "no longer matches the event"),
+    ({"base_ref": "release/1"}, "no longer matches the event"),
+    ({"default_branch": "trunk"}, "does not target the default branch"),
+], ids=repr)
+def test_a_pull_request_that_moved_or_misses_the_default_branch_fails_closed(moved, message):
+    fetcher = FakeFetcher(tree(), tree())
+    fetcher.pr_now.update(moved)
+    gated, reasons = gate.decide(fetcher, BASE, HEAD, BASE_REF)
+    assert gated and len(reasons) == 1 and reasons[0][0] == "fail-closed", reasons
+    assert message in reasons[0][1]
+
+
+def test_an_unreadable_pull_request_fails_closed():
+    class Gone(FakeFetcher):
+        def pull_request(self):
+            return None
+    gated, reasons = gate.decide(Gone(tree(), tree()), BASE, HEAD, BASE_REF)
+    assert gated and reasons[0][0] == "fail-closed" and "no longer matches" in reasons[0][1]
+
+
+def test_the_pull_request_is_read_after_its_file_list():
+    """Read before, a push in between could pair one commit's files with another's verdict."""
+    order = []
+
+    class Ordered(FakeFetcher):
+        def changed_files(self):
+            order.append("files")
+            return super().changed_files()
+
+        def pull_request(self):
+            order.append("pull")
+            return super().pull_request()
+    gate.decide(Ordered(tree(), tree()), BASE, HEAD, BASE_REF)
+    assert order == ["files", "pull"]
+
+
 # ---- upstream copies: text a hook also fetches live ----
 
 COPY = "plugins/alpha/hooks/guidance/fallback.md"
@@ -690,7 +937,7 @@ def copy_run(head_bytes, upstream_bytes=b"new text\n", copies=COPIES, extra_head
         head[COPY] = head_bytes
     upstream = {} if upstream_bytes is None else {UPSTREAM_KEY: upstream_bytes}
     fetcher = FakeFetcher(base, head, upstream=upstream, **kw)
-    return gate.decide(fetcher, BASE, HEAD, copies=copies, notes=notes), fetcher
+    return gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=copies, notes=notes), fetcher
 
 
 def test_an_upstream_copy_equal_to_its_upstream_does_not_gate():
@@ -751,13 +998,13 @@ def test_a_listed_skill_file_is_still_judged_by_what_it_changes():
     base = tree(**{SKILL: b"---\nname: one\n---\n"})
     head = dict(base, **{SKILL: HOOKED})
     fetcher = FakeFetcher(base, head, upstream={UPSTREAM_KEY: HOOKED})
-    assert_gated(gate.decide(fetcher, BASE, HEAD, copies=listed), "skill-frontmatter-runtime-key")
+    assert_gated(gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=listed), "skill-frontmatter-runtime-key")
 
 
 def test_an_untouched_upstream_copy_is_never_fetched():
     base = tree(**{COPY: b"old text\n"})
     fetcher = FakeFetcher(base, dict(base, **{"docs/x.md": b"x\n"}))
-    assert_not_gated(gate.decide(fetcher, BASE, HEAD, copies=COPIES))
+    assert_not_gated(gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=COPIES))
     assert fetcher.upstream_reads == []
 
 
@@ -818,7 +1065,7 @@ def test_a_missing_or_refused_upstream_copies_file_fails_the_whole_gate_closed(t
         gate.load_upstream_copies(str(tmp_path / "absent.json"))
     monkeypatch.setattr(gate, "load_upstream_copies",
                         lambda: (_ for _ in ()).throw(gate.GateError("refused")))
-    assert gate.decide(FakeFetcher(tree(), tree()), BASE, HEAD) == (True, [("fail-closed", "refused")])
+    assert gate.decide(FakeFetcher(tree(), tree()), BASE, HEAD, BASE_REF) == (True, [("fail-closed", "refused")])
 
 
 def test_a_well_formed_upstream_copies_file_loads(tmp_path):
@@ -832,7 +1079,8 @@ def test_main_prints_a_verified_copy_as_a_note(tmp_path, monkeypatch, capsys):
     base = tree(**{COPY: b"old text\n"})
     fetcher = FakeFetcher(base, dict(base, **{COPY: b"new text\n"}),
                           upstream={UPSTREAM_KEY: b"new text\n"})
-    assert gate.main(["--repo", "owner/repo", "--pr", "12", "--base", BASE, "--head", HEAD],
+    assert gate.main(["--repo", "owner/repo", "--pr", "12", "--base", BASE, "--head", HEAD,
+                      "--base-ref", BASE_REF],
                      fetcher=fetcher) == 0
     assert capsys.readouterr().out == (
         "gated=false\n"
@@ -1472,7 +1720,7 @@ def test_an_unexpected_error_gates_without_printing_its_message():
     class Broken(FakeFetcher):
         def changed_files(self):
             raise KeyError("secret-looking content")
-    gated, reasons = gate.decide(Broken(tree(), tree()), BASE, HEAD)
+    gated, reasons = gate.decide(Broken(tree(), tree()), BASE, HEAD, BASE_REF)
     assert gated and reasons == [("fail-closed", "unexpected KeyError")]
 
 
@@ -2167,7 +2415,7 @@ def test_r4_a_404_on_a_listed_file_fails_closed():
 
     base = base_p(**{SCRIPT: b"1\n"})
     head = dict(base, **{SCRIPT: b"2\n"})
-    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD, BASE_REF), "fail-closed")
 
 
 # Round 5 of the #164 review.
@@ -2197,7 +2445,7 @@ def test_r5_a_404_on_a_hook_config_the_tree_lists_fails_closed():
     man = {"name": "p", "hooks": "./config/hooks.json"}
     base = base_p(**{PR + "/.claude-plugin/plugin.json": man, PR + "/README.md": b"a\n"})
     head = dict(base, **{PR + "/README.md": b"b\n"})
-    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD, BASE_REF), "fail-closed")
     assert_not_gated(run(base, head))
 
 
@@ -2226,7 +2474,8 @@ def test_r5_a_retired_skill_named_only_inside_itself_does_not_gate():
 # =================================================================================
 
 
-ARGS = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD]
+ARGS = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD,
+        "--base-ref", BASE_REF]
 
 
 def test_main_writes_the_verdict_and_exits_zero(tmp_path, monkeypatch, capsys):
@@ -2259,9 +2508,10 @@ def test_main_never_prints_file_contents(monkeypatch, capsys):
 
 @pytest.mark.parametrize("bad", [
     ["--repo", "not a repo"], ["--pr", "x"], ["--pr", "0"], ["--base", "abc"], ["--head", "B" * 40],
+    ["--base-ref", "not a branch"], ["--base-ref", ""], ["--base-ref", "-x"],
 ])
 def test_a_usage_error_exits_nonzero(bad, monkeypatch):
-    for name in ("REPO", "PR_NUMBER", "BASE_SHA", "HEAD_SHA"):
+    for name in ("REPO", "PR_NUMBER", "BASE_SHA", "HEAD_SHA", "GITHUB_BASE_REF"):
         monkeypatch.delenv(name, raising=False)
     args = list(ARGS)
     flag = args.index(bad[0])
@@ -2276,8 +2526,10 @@ def test_arguments_default_to_the_environment(monkeypatch):
     monkeypatch.setenv("PR_NUMBER", "12")
     monkeypatch.setenv("BASE_SHA", BASE)
     monkeypatch.setenv("HEAD_SHA", HEAD)
+    monkeypatch.setenv("GITHUB_BASE_REF", "release/1")
     args = gate._parse_args([])
-    assert (args.repo, args.pr, args.base, args.head) == ("owner/repo", 12, BASE, HEAD)
+    assert (args.repo, args.pr, args.base, args.head, args.base_ref) == (
+        "owner/repo", 12, BASE, HEAD, "release/1")
 
 
 def test_gh_output_is_read_as_a_stream_of_json_values():

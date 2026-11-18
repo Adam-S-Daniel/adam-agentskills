@@ -46,7 +46,10 @@ The gate denies by default. A pull request is GATED when any of these holds:
                           gate" below).
   (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
-                          3000-file cap, or anything unexpected.
+                          3000-file cap, a pull request whose head, base or
+                          base branch moved from the event's, one that does
+                          not target the default branch, or anything
+                          unexpected.
   (6) skill and command files, judged by what they change rather than by path
       (a prose edit does not gate; these gate):
       skill-frontmatter-runtime-key  YAML frontmatter `hooks`, `allowed-tools`
@@ -94,12 +97,21 @@ what runs (ADR 0016, update of 2026-11-17):
     version or letter case, plus entries those name) differs between base and
     head, or when either side is missing or is not the expected shape. An
     entry only other workflows use does not gate: those workflows run the pull
-    request's own code already.
+    request's own code already. One more condition holds for that change:
+    each entry it adds or changes for an own action (adam-s-daniel/*, by key
+    or by owner id) must be exactly adam-s-daniel/<repo>@<tag> with gh
+    actions-lock's four keys, and GitHub, not the pull request, must confirm
+    that the repo has that id, the owner's id and is not a fork, that the tag
+    is at the locked commit, that the commit is on the default branch, and
+    that the tag's release is published, not a prerelease and immutable.
+    Anything else gates as gate-itself with the extra reason
+    own-action-unverified and a fixed message.
 
 Everything read from the pull request is untrusted DATA. It is fetched through
 the GitHub API (never checked out), parsed with json only, capped in size, and
 never executed. The summary prints repo-relative paths (JSON-quoted, so a path
-cannot inject a workflow command) and reason codes, never file contents.
+cannot inject a workflow command), reason codes and fixed refusal messages,
+never file contents.
 
 Exit status: 0 whether gated or not; 2 only on a usage error. The workflow
 treats a failed or empty result as gated.
@@ -107,8 +119,10 @@ treats a failed or empty result as gated.
 Usage:
   python3 scripts/plugin_runtime_gate.py [--repo OWNER/REPO] [--pr N]
                                          [--base SHA] [--head SHA]
+                                         [--base-ref BRANCH]
   Each flag defaults to an environment variable: REPO, PR_NUMBER, BASE_SHA,
-  HEAD_SHA. GH_TOKEN must be set for `gh api`.
+  HEAD_SHA, and GITHUB_BASE_REF, which the runner sets from the event.
+  GH_TOKEN must be set for `gh api`.
 """
 
 import argparse
@@ -185,6 +199,19 @@ GATE_FILES = frozenset({
 # changes is still judged in (6).
 COPY_EXCUSED_CODES = frozenset({"hook-file", "hook-referenced", "plugin-path"})
 LOCK_KEYS = frozenset({"version", "workflows", "dependencies"})
+
+# The account whose actions an unreviewed lockfile change may add or move. Such a
+# pin is the pull request's word alone, so GitHub must confirm it is a real,
+# released commit of that account's repository (ADR 0016, update of
+# 2026-11-18). gh actions-lock writes owner/repo in lowercase and keeps the tag
+# exact; the numeric id is what survives a rename, so it is the id that decides.
+OWN_ACTIONS_OWNER = "adam-s-daniel"
+OWN_ACTIONS_OWNER_ID = 4205216
+_OWN_ACTION_KEY = re.compile(
+    re.escape(OWN_ACTIONS_OWNER) + r"/([a-z0-9][a-z0-9._-]*)@([A-Za-z0-9][A-Za-z0-9._-]*)")
+_OWN_ENTRY_KEYS = frozenset({"ref", "commit", "owner_id", "repo_id"})
+_LOCK_COMMIT = re.compile(r"sha1-([0-9a-f]{40})")
+MAX_TAG_DEPTH = 5  # how many annotated tags may wrap the commit
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -288,6 +315,68 @@ class GhFetcher:
              f"repos/{repo}/contents/{quote(path, safe='/')}?ref={sha}"],
             f"reading {json.dumps(path)} in {repo}", ok_404=True)
         return sha, (None if proc is None else proc.stdout)
+
+    def _one_object(self, endpoint: str, jq: str, what: str) -> Optional[dict]:
+        """One JSON object from the API; None on a 404 or any other shape."""
+        proc = self._gh(["api", endpoint, "--jq", jq], what, ok_404=True)
+        if proc is None:
+            return None
+        values = _json_values(proc.stdout.decode("utf-8"))
+        return values[0] if len(values) == 1 and isinstance(values[0], dict) else None
+
+    def pull_request(self) -> Optional[dict]:
+        """The pull request as GitHub has it now."""
+        return self._one_object(
+            f"repos/{self.repo}/pulls/{self.pr}",
+            "{head: .head.sha, base: .base.sha, base_ref: .base.ref, "
+            "default_branch: .base.repo.default_branch}",
+            "reading the pull request")
+
+    def action_repo(self, name: str) -> Optional[dict]:
+        """An action repository's identity, from GitHub."""
+        return self._one_object(
+            f"repos/{quote(name, safe='/')}",
+            "{id, full_name, owner_id: .owner.id, fork, default_branch}",
+            f"reading the repository {json.dumps(name)}")
+
+    def action_release(self, name: str, tag: str) -> Optional[dict]:
+        """The release published for exactly this tag; None when there is none."""
+        return self._one_object(
+            f"repos/{quote(name, safe='/')}/releases/tags/{quote(tag, safe='')}",
+            "{tag_name, immutable, draft, prerelease}", f"reading a release of {json.dumps(name)}")
+
+    def commit_on_branch(self, name: str, branch: str, sha: str) -> bool:
+        """Whether the branch contains the commit. Compared from the branch, the
+        commit is `behind` or `identical` only then; a commit that exists only
+        in a fork of the repository is `diverged` or `ahead`."""
+        found = self._one_object(
+            f"repos/{quote(name, safe='/')}/compare/{quote(branch, safe='')}...{sha}?per_page=1",
+            "{status}", f"comparing a commit of {json.dumps(name)}")
+        return found is not None and found.get("status") in ("behind", "identical")
+
+    def action_tag_commit(self, name: str, tag: str) -> Optional[str]:
+        """The commit a tag resolves to, through any annotated tags; None when
+        the tag does not exist or does not end at a commit."""
+        repo = quote(name, safe="/")
+        what = f"resolving a tag of {json.dumps(name)}"
+        found = self._one_object(
+            f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}",
+            "{ref, type: .object.type, sha: .object.sha}", what)
+        if found is None or found.get("ref") != f"refs/tags/{tag}":
+            return None
+        for _ in range(MAX_TAG_DEPTH):
+            sha = found.get("sha")
+            if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+                return None
+            if found.get("type") == "commit":
+                return sha
+            if found.get("type") != "tag":
+                return None
+            found = self._one_object(
+                f"repos/{repo}/git/tags/{sha}", "{type: .object.type, sha: .object.sha}", what)
+            if found is None:
+                return None
+        return None
 
 
 def _json_values(text: str) -> List[object]:
@@ -851,13 +940,112 @@ def _lockfile_changes_the_gate(base_snap: Snapshot, head_snap: Snapshot) -> bool
     return view(locks[0]) != view(locks[1])
 
 
-def evaluate(fetcher, base: str, head: str, copies: Iterable[dict] = (),
+class _OwnActionUnverified(Exception):
+    """Why an own-action pin in an unreviewed lockfile change is not confirmed.
+    Fixed text only: the message is printed, so it never carries anything from
+    the pull request."""
+
+
+def _is_positive_int(value) -> bool:
+    return type(value) is int and value > 0  # bool is an int subclass; 1.0 == 1
+
+
+def _is_own_entry(key: str, entry) -> bool:
+    """An entry for an own action, by its key's owner or by the owner id it
+    claims, so neither spelling can carry an own pin past the check."""
+    identity = _action_identity(key)
+    if identity is not None and identity.split("/", 1)[0] == OWN_ACTIONS_OWNER:
+        return True
+    return isinstance(entry, dict) and entry.get("owner_id") == OWN_ACTIONS_OWNER_ID
+
+
+def _check_own_action_on_github(fetcher, key: str, entry) -> None:
+    """The lockfile is the pull request's word. Only GitHub can say the repo
+    still belongs to the owner and this commit is a real, released one on its
+    default branch."""
+    match = _OWN_ACTION_KEY.fullmatch(key)
+    if match is None:
+        raise _OwnActionUnverified("an own action's key is not adam-s-daniel/<repo>@<tag>")
+    # Exactly gh actions-lock's keys: a nested `uses` list would pin actions
+    # GitHub cannot vouch for here.
+    if not isinstance(entry, dict) or set(entry) != _OWN_ENTRY_KEYS:
+        raise _OwnActionUnverified("an own action's entry does not have the expected keys")
+    name, tag = f"{OWN_ACTIONS_OWNER}/{match.group(1)}", match.group(2)
+    if entry["ref"] != tag:
+        raise _OwnActionUnverified("an own action's ref does not match its key")
+    if entry["owner_id"] != OWN_ACTIONS_OWNER_ID or type(entry["owner_id"]) is not int:
+        raise _OwnActionUnverified("an own action's entry has the wrong owner_id")
+    if not _is_positive_int(entry["repo_id"]):
+        raise _OwnActionUnverified("an own action's entry has no repo_id")
+    commit_match = _LOCK_COMMIT.fullmatch(entry["commit"]) if isinstance(entry["commit"], str) else None
+    if commit_match is None:
+        raise _OwnActionUnverified("an own action's commit is not a sha1 pin")
+    commit = commit_match.group(1)
+
+    repo = fetcher.action_repo(name)
+    if not isinstance(repo, dict) or not _is_positive_int(repo.get("id")) \
+            or repo["id"] != entry["repo_id"] \
+            or not _is_positive_int(repo.get("owner_id")) \
+            or repo["owner_id"] != OWN_ACTIONS_OWNER_ID \
+            or not isinstance(repo.get("full_name"), str) \
+            or repo["full_name"].lower() != name:
+        raise _OwnActionUnverified("GitHub does not confirm an own action's repository and owner")
+    if repo.get("fork") is not False:
+        raise _OwnActionUnverified("an own action's repository is a fork, or GitHub does not say")
+    branch = repo.get("default_branch")
+    if not isinstance(branch, str) or not BRANCH_RE.fullmatch(branch):
+        raise _OwnActionUnverified("GitHub does not name an own action's default branch")
+    if fetcher.action_tag_commit(name, tag) != commit:
+        raise _OwnActionUnverified("an own action's tag is not at the locked commit")
+    if fetcher.commit_on_branch(name, branch, commit) is not True:
+        raise _OwnActionUnverified("an own action's commit is not on its default branch")
+    release = fetcher.action_release(name, tag)
+    if not isinstance(release, dict) or release.get("tag_name") != tag \
+            or release.get("draft") is not False \
+            or release.get("prerelease") is not False:
+        raise _OwnActionUnverified("an own action's tag has no published release")
+    if release.get("immutable") is not True:
+        raise _OwnActionUnverified("an own action's release is not immutable")
+
+
+def _own_action_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot) -> Optional[str]:
+    """Why an otherwise unreviewed lockfile change still gates; None when every
+    own-action entry it adds or changes is confirmed by GitHub. Removing an own
+    entry adds no code, so it needs nothing. Runs only after
+    _lockfile_changes_the_gate has read both sides, so both parse."""
+    base_deps = _load_yaml(base_snap.raw(LOCKFILE), f"{LOCKFILE} at base")["dependencies"]
+    head_deps = _load_yaml(head_snap.raw(LOCKFILE), f"{LOCKFILE} at head")["dependencies"]
+    bumped = sorted(key for key, entry in head_deps.items()
+                    if _is_own_entry(key, entry) and base_deps.get(key, _ABSENT) != entry)
+    try:
+        for key in bumped:
+            _check_own_action_on_github(fetcher, key, head_deps[key])
+    except _OwnActionUnverified as exc:
+        return str(exc)
+    return None
+
+
+def _check_pull_request_unmoved(fetcher, base: str, head: str, base_ref: str) -> None:
+    """The file list has no sha of its own: it describes the pull request as it
+    is when listed. Reading the pull request AFTER it ties the list to the
+    commits the event named, so a push or a retarget in between cannot pair one
+    commit's verdict with another commit's files."""
+    current = fetcher.pull_request()
+    if not isinstance(current, dict) or current.get("head") != head \
+            or current.get("base") != base or current.get("base_ref") != base_ref:
+        raise GateError("the pull request no longer matches the event that started this run")
+    if current.get("default_branch") != base_ref:
+        raise GateError("the pull request does not target the default branch")
+
+
+def evaluate(fetcher, base: str, head: str, base_ref: str, copies: Iterable[dict] = (),
              notes: Optional[List[str]] = None) -> List[Tuple[str, str]]:
     """The (reason code, path) pairs that gate this pull request; empty when
     nothing does. Raises GateError (or anything else) when it cannot decide.
     `copies` are the upstream copies the base checkout declares; a line is
     appended to `notes` for each one this run verified."""
     files = fetcher.changed_files()
+    _check_pull_request_unmoved(fetcher, base, head, base_ref)
     if not isinstance(files, list):
         raise GateError("the pull request's file list is not a list")
     if len(files) >= MAX_CHANGED_FILES:
@@ -894,10 +1082,16 @@ def evaluate(fetcher, base: str, head: str, copies: Iterable[dict] = (),
     reasons: Set[Tuple[str, str]] = set()
 
     # (4) first. Only the lockfile is read: it gates when it changes what the
-    # gate's own workflow runs.
+    # gate's own workflow runs, or adds or moves an own-action pin GitHub does
+    # not confirm.
     for path in changed & GATE_FILES:
         if path != LOCKFILE or _lockfile_changes_the_gate(base_snap, head_snap):
             reasons.add(("gate-itself", path))
+            continue
+        refusal = _own_action_refusal(fetcher, base_snap, head_snap)
+        if refusal is not None:
+            reasons.add(("gate-itself", path))
+            reasons.add(("own-action-unverified", refusal))
 
     markets = {"base": base_snap.json(MARKETPLACE), "head": head_snap.json(MARKETPLACE)}
     entry_roots = {side: _local_roots(markets[side]) for side in markets}
@@ -1164,14 +1358,15 @@ def evaluate(fetcher, base: str, head: str, copies: Iterable[dict] = (),
     return sorted(reasons)
 
 
-def decide(fetcher, base: str, head: str, copies: Optional[Iterable[dict]] = None,
+def decide(fetcher, base: str, head: str, base_ref: str,
+           copies: Optional[Iterable[dict]] = None,
            notes: Optional[List[str]] = None) -> Tuple[bool, List[Tuple[str, str]]]:
     """evaluate(), failing closed on anything it raises. `copies` defaults to
     the list beside this script."""
     try:
         if copies is None:
             copies = load_upstream_copies()
-        reasons = evaluate(fetcher, base, head, copies, notes)
+        reasons = evaluate(fetcher, base, head, base_ref, copies, notes)
     except GateError as exc:
         reasons = [("fail-closed", str(exc))]
     except Exception as exc:  # noqa: BLE001 — anything unexpected gates
@@ -1185,6 +1380,7 @@ def _parse_args(argv):
     parser.add_argument("--pr", default=os.environ.get("PR_NUMBER"))
     parser.add_argument("--base", default=os.environ.get("BASE_SHA"))
     parser.add_argument("--head", default=os.environ.get("HEAD_SHA"))
+    parser.add_argument("--base-ref", default=os.environ.get("GITHUB_BASE_REF"))
     args = parser.parse_args(argv)
     if not args.repo or not REPO_RE.match(args.repo):
         parser.error("--repo / REPO must be OWNER/REPO")
@@ -1193,6 +1389,8 @@ def _parse_args(argv):
     for flag in ("base", "head"):
         if not getattr(args, flag) or not SHA_RE.match(getattr(args, flag)):
             parser.error(f"--{flag} must be a 40-character lowercase hex sha")
+    if not args.base_ref or not BRANCH_RE.fullmatch(args.base_ref):
+        parser.error("--base-ref / GITHUB_BASE_REF must be a branch name")
     args.pr = int(args.pr)
     return args
 
@@ -1202,7 +1400,7 @@ def main(argv=None, fetcher=None) -> int:
     if fetcher is None:
         fetcher = GhFetcher(args.repo, args.pr)
     notes: List[str] = []
-    gated, reasons = decide(fetcher, args.base, args.head, notes=notes)
+    gated, reasons = decide(fetcher, args.base, args.head, args.base_ref, notes=notes)
     print(f"gated={'true' if gated else 'false'}")
     for code, detail in reasons:
         # A path comes from the pull request: JSON-quoting it keeps a newline

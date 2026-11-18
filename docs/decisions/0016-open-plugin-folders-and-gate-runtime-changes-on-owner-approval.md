@@ -1,6 +1,6 @@
 # 0016. Open plugin folders and gate runtime changes on owner approval
 
-- **Status:** Accepted
+- **Status:** Accepted (`actions.lock` clause amended by [0026](0026-exempt-own-action-lockfile-bumps-from-the-plugin-runtime-gate.md))
 - **Date:** 2026-10-08
 - **Deciders:** Adam Daniel
 

@@ -82,6 +82,11 @@ workflow, or a rename of the file, must be mirrored in that policy first**.
 Otherwise its runs are blocked and every pull request here becomes
 unmergeable.
 
+An `actions.lock` change gates too, unless it only bumps `Adam-S-Daniel/*`
+actions and passes every check in
+[ADR 0026](docs/decisions/0026-exempt-own-action-lockfile-bumps-from-the-plugin-runtime-gate.md). The job log's
+`lock-not-exempt` line says which check refused it.
+
 ### Plugin hooks run in Claude Code AND Codex
 
 Codex loads a plugin's `hooks/hooks.json` too

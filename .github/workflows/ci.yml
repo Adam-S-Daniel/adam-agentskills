@@ -632,46 +632,6 @@ jobs:
       # of them; and this step targets a DIRECTORY, so a new federated test is
       # picked up with no edit here — which a hand-listed job is exactly what
       # this comment's opening paragraph says goes wrong.
-      - name: TEMP diagnose Ubuntu 26.04 hook hang (remove before merge)
-        if: steps.salient.outputs.run == 'true'
-        continue-on-error: true
-        timeout-minutes: 6
-        run: |
-          set +e
-          bash --version | head -1
-          cat > /tmp/repro.sh <<'EOS'
-          #!/usr/bin/env bash
-          # Usage: repro.sh <variant>. Mirrors the hook's watcher and how the hook stops it.
-          v=$1; form=${2:-pid}
-          stop_jobs() { local p; for p in $(jobs -rp 2>/dev/null); do kill -TERM "$p" 2>/dev/null; done; { wait; } 2>/dev/null; }
-          if [ "$v" = plain ]; then trapcmd='exit 0'; else trapcmd='stop_jobs; exit 0'; fi
-          (
-            trap "$trapcmd" HUP TERM
-            sleep 30 &
-            if [ "$form" = pid ]; then { wait "$!"; } 2>>"/tmp/w.$v.err" && kill -0 "$$" 2>/dev/null && echo fired
-            else { wait; } 2>>"/tmp/w.$v.err" && kill -0 "$$" 2>/dev/null && echo fired; fi
-          ) </dev/null >/dev/null 2>"/tmp/w.$v.err2" &
-          w=$!
-          sleep 0.5
-          case $v in
-            childonly) for c in $(pgrep -P $w); do kill -TERM $c; done ;;
-            watcheronly) kill -TERM $w ;;
-            *) for c in $(pgrep -P $w); do kill -TERM $c; done; kill -TERM $w ;;
-          esac
-          { wait $w; } 2>/dev/null; echo "$v/$form: rc=$?"
-          EOS
-          chmod +x /tmp/repro.sh
-          for f in pid noarg; do for v in plain both childonly watcheronly; do rm -f /tmp/w.*; timeout 8 /tmp/repro.sh $v $f || echo "$v/$f: TIMED OUT"; head -c 300 /tmp/w.$v.err 2>/dev/null; echo; done; done
-          sudo apt-get install -y -qq strace >/dev/null 2>&1
-          ( timeout 100 python3 -m pytest scripts/test_fleet_guidance_hook.py -q -n 4 -p no:cacheprovider > /tmp/h.txt 2>&1 ) &
-          sleep 30
-          hook=plugins/adam-anything-anywhere/hooks/fleet-guidance/on-session-start.sh
-          for p in $(pgrep -f "$hook"); do
-            [ "$(awk '{print $3}' /proc/$p/stat 2>/dev/null)" = R ] || continue
-            sudo timeout 1 strace -s 400 -e trace=write,wait4,kill -p $p 2>&1 | head -8
-            break
-          done
-          wait
       - name: Run every test suite in the repo
         if: steps.salient.outputs.run == 'true'
         run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto

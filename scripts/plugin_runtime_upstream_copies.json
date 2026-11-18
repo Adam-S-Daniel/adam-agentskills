@@ -1,0 +1,10 @@
+{
+  "copies": [
+    {
+      "path": "plugins/adam-anything-anywhere/hooks/fleet-guidance/fleet-guidance.md",
+      "upstream_repo": "Adam-S-Daniel/_agent-guidance",
+      "upstream_branch": "main",
+      "upstream_path": "agents-md/base.md"
+    }
+  ]
+}

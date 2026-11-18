@@ -35,8 +35,9 @@ of this holds:
   merge base and the head.
 - All three copies are ASCII, parse with no repeated key, have the expected
   shape and lowercase `owner/repo` keys, and are byte for byte what
-  `gh actions-lock` writes for their values, apart from a leading comment block.
-  That comparison is what refuses CRLF, flow style, complex keys, aliases,
+  `gh actions-lock` writes for their values, apart from a leading block of
+  comment lines. An entry may carry the `uses` list the tool writes for a
+  composite action's nested actions. That comparison is what refuses CRLF, flow style, complex keys, aliases,
   anchors, tags, other quoting and stray comments, so the runner's parser has
   nothing to read differently.
 - From base to head **and** from merge base to head: `version` is the same,
@@ -45,7 +46,8 @@ of this holds:
   its base: an older third-party pin the branch carries can match `main` today
   and undo a later fix when merged.
 - Each added or changed entry has `owner_id: 4205216`, the numeric id of
-  `Adam-S-Daniel`, and a `ref` equal to its key's tag.
+  `Adam-S-Daniel`, a `ref` equal to its key's tag, and no `uses` list: GitHub
+  confirms the entry's own commit, not the nested pins beside it.
 - `workflows` keeps the same keys, and each list changes only in own items.
   Every listed item has a dependency entry.
 - At least one dependency or list changed from base to head.
@@ -54,8 +56,8 @@ of this holds:
 - **GitHub confirms each added or changed entry**: the repository has that
   `repo_id`, that name and owner id `4205216`, and is not a fork; the tag
   resolves, through any annotated tags, to the locked commit; that commit is on
-  the repository's default branch; and the tag has a published release marked
-  `immutable: true`.
+  the repository's default branch; and the tag has a published release, not a
+  prerelease, marked `immutable: true`.
 
 Separately, for **every** pull request, the gate re-reads the pull request after
 listing its files and fails closed unless the head sha, base sha and base branch
@@ -75,11 +77,15 @@ workflow, its required check and the environment do not change.
   "Shipped names and loop pull requests pass the one-way-door check", the test
   suites and the one-way-door re-check near the end of the job. A step can change what later
   steps run through `GITHUB_PATH` and `GITHUB_ENV`, so a malicious release could
-  affect those checks, on the bump's own pull request and on later ones.
-- **It arrives quickly.** With Dependabot checking own actions daily and no
-  cooldown for them, and `dependabot-auto-merge.yml` sweeping daily and already
-  allowing `actions.lock` and `uses:`-only workflow edits, a new own release can
-  reach `main` within about a day or two.
+  affect those checks, on the bump's own pull request and on later ones. The
+  job also runs on every push to `main`. Its token is read-only (`contents`,
+  `pull-requests`), it references no repository secrets, and it uses no cache.
+- **It can arrive quickly.** `dependabot-auto-merge.yml` sweeps daily and already
+  allows `actions.lock` and `uses:`-only workflow edits. Once
+  `.github/dependabot.yml` checks own actions daily with no cooldown for them, as
+  [#180](https://github.com/Adam-S-Daniel/adam-agentskills/pull/180) proposes, a
+  new own release can reach `main` within about a day or two. Until then that
+  file checks weekly and applies a 7-day cooldown.
 - The provenance checks reduce that risk and do not remove it. They require a
   commit on the default branch and an immutable release, so a stray tag, a
   fork-network commit or a tag moved later does not qualify. An attacker who can
@@ -89,9 +95,14 @@ workflow, its required check and the environment do not change.
   so a bump can return to an older release with a known flaw.
 - An own action without immutable releases, or in a private repository the
   workflow's token cannot read, gates.
-- A pull request behind `main` is compared with `main`'s tip, so a third-party
-  bump that landed meanwhile gates it until it is rebased. That errs toward
-  asking.
+- A pull request is compared with the base commit of its latest event. A
+  third-party bump that reached `main` before that event gates it until it is
+  rebased, which errs toward asking. One that lands afterward starts no new run,
+  so the verdict stands; the merge still combines the two lockfiles as text.
+- Changing a pull request's base starts no new gate run, because the workflow
+  does not listen for `edited`. A pull request aimed at another branch gates, so
+  this matters only if the owner approves it there and it is then retargeted to
+  the default branch.
 - Any pull request aimed at a branch other than the default now gates, and so
   does one whose head or base moves while the gate reads it, until a new run.
 - A change in `gh actions-lock`'s output makes own bumps gate again.
@@ -105,7 +116,7 @@ workflow, its required check and the environment do not change.
   proves nothing about a renamed owner or an imposter commit.
 - **Screen YAML features one by one.** Each screen is another place for two
   parsers to differ; comparing against the tool's exact output closes them
-  together, and it accepts every real lockfile checked.
+  together. It accepts all 20 fleet lockfiles read on 2026-11-18.
 - **Rely on `verify-actions-lock` for the pin.** A bump of that action would
   choose its own judge.
 - **Exempt every entry the gate workflow does not use.** The owner's decision

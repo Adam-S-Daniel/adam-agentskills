@@ -186,8 +186,9 @@ _OWN_ACTION_KEY = re.compile(
     re.escape(OWN_ACTIONS_OWNER) + r"/([a-z0-9][a-z0-9._-]*)@([A-Za-z0-9][A-Za-z0-9._-]*)")
 _LOCK_KEYS = frozenset({"version", "workflows", "dependencies"})
 _LOCK_ENTRY_KEYS = frozenset({"ref", "commit", "owner_id", "repo_id"})
+_LOCK_ENTRY_OPTIONAL_KEYS = frozenset({"uses"})  # the nested actions of a composite action
 _LOCK_COMMIT = re.compile(r"sha1-([0-9a-f]{40})")
-_LOCK_HEADER = re.compile(r"(?:#[^\n]*\n)*")
+_LOCK_HEADER = re.compile(r"(?:#[^\r\n]*\n)*")  # YAML ends a comment at a CR too
 _BRANCH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
 REGULAR_FILE_MODE = "100644"
 MAX_TAG_DEPTH = 5  # how many annotated tags may wrap the commit
@@ -317,7 +318,7 @@ class GhFetcher:
         """The release published for exactly this tag; None when there is none."""
         return self._one_object(
             f"repos/{quote(name, safe='/')}/releases/tags/{quote(tag, safe='')}",
-            "{tag_name, immutable, draft}", f"reading a release of {json.dumps(name)}")
+            "{tag_name, immutable, draft, prerelease}", f"reading a release of {json.dumps(name)}")
 
     def commit_on_branch(self, name: str, branch: str, sha: str) -> bool:
         """Whether the branch contains the commit. Compared from the branch, the
@@ -796,7 +797,17 @@ def _render_action_lock(version: str, workflows: Dict[str, list],
                   f"        commit: {quoted(entry['commit'])}",
                   f"        owner_id: {entry['owner_id']}",
                   f"        repo_id: {entry['repo_id']}"]
+        if "uses" in entry:
+            lines.append("        uses:")
+            lines += [f"            - {quoted(item)}" for item in entry["uses"]]
     return "\n".join(lines) + "\n"
+
+
+def _lock_entry_uses_ok(entry: dict) -> bool:
+    if "uses" not in entry:
+        return True
+    uses = entry["uses"]
+    return isinstance(uses, list) and bool(uses) and all(isinstance(item, str) for item in uses)
 
 
 def _parse_action_lock(data: bytes) -> Tuple[str, Dict[str, list], Dict[str, dict]]:
@@ -833,7 +844,9 @@ def _parse_action_lock(data: bytes) -> Tuple[str, Dict[str, list], Dict[str, dic
             raise _LockNotExempt("a lockfile `workflows` value has an unexpected shape")
     for key, entry in dependencies.items():
         if not isinstance(key, str) or not isinstance(entry, dict) \
-                or set(entry) != _LOCK_ENTRY_KEYS \
+                or not _LOCK_ENTRY_KEYS <= set(entry) \
+                or set(entry) - _LOCK_ENTRY_KEYS - _LOCK_ENTRY_OPTIONAL_KEYS \
+                or not _lock_entry_uses_ok(entry) \
                 or not isinstance(entry["ref"], str) \
                 or not isinstance(entry["commit"], str) \
                 or not _LOCK_COMMIT.fullmatch(entry["commit"]) \
@@ -902,7 +915,8 @@ def _check_own_action_on_github(fetcher, key: str, entry: dict) -> None:
         raise _LockNotExempt("an own action's commit is not on its default branch")
     release = fetcher.action_release(name, tag)
     if not isinstance(release, dict) or release.get("tag_name") != tag \
-            or release.get("draft") is not False:
+            or release.get("draft") is not False \
+            or release.get("prerelease") is not False:
         raise _LockNotExempt("an own action's tag has no published release")
     if release.get("immutable") is not True:
         raise _LockNotExempt("an own action's release is not immutable")
@@ -925,6 +939,9 @@ def _own_only_changes(old: _ParsedLock, new: _ParsedLock) -> Tuple[Dict[str, dic
             raise _LockNotExempt("a dependency that is not an own action changed")
     bumped = {key: new_deps[key] for key in differing if key in new_deps}
     for key, entry in bumped.items():
+        # GitHub cannot vouch for these pins the way it does for the entry's own.
+        if "uses" in entry:
+            raise _LockNotExempt("an own action's entry pins nested actions")
         if entry["owner_id"] != OWN_ACTIONS_OWNER_ID:
             raise _LockNotExempt("an own action's entry has the wrong owner_id")
         if entry["ref"] != _OWN_ACTION_KEY.fullmatch(key).group(2):

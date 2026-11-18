@@ -2219,6 +2219,9 @@ def render_lock(deps, flows, version="v0.0.3"):
         lines += [f"    '{key}':", f"        ref: '{entry['ref']}'",
                   f"        commit: '{entry['commit']}'",
                   f"        owner_id: {entry['owner_id']}", f"        repo_id: {entry['repo_id']}"]
+        if "uses" in entry:
+            lines.append("        uses:")
+            lines += [f"            - '{item}'" for item in entry["uses"]]
     return ("\n".join(lines) + "\n").encode()
 
 
@@ -2228,7 +2231,7 @@ def own_repo(**changes):
 
 
 def own_release(**changes):
-    return dict({"tag_name": "v1.1.0", "immutable": True, "draft": False}, **changes)
+    return dict({"tag_name": "v1.1.0", "immutable": True, "draft": False, "prerelease": False}, **changes)
 
 
 class LockFetcher(FakeFetcher):
@@ -2517,6 +2520,60 @@ def test_the_comment_header_is_the_only_comment_allowed():
     assert_not_gated(run_lock(base, head))
 
 
+@pytest.mark.parametrize("header", [b"# c\r\n", b"# c\r---\n", b"# c\r&a\n"])
+def test_a_carriage_return_in_the_comment_header_gates(header):
+    """YAML ends a comment at a CR, so what follows one is not a comment."""
+    base, head = lock_trees()
+    head[LOCK] = header + head[LOCK]
+    assert_lock_refused(run_lock(base, head), NOT_CANONICAL)
+
+
+NESTED = "actions/upload-artifact@" + SHA_OTHER
+
+
+def third_party_with_nested_pin(deps, flows):
+    deps[THIRD] = dict(deps[THIRD], uses=[NESTED])
+
+
+def lock_trees_with_nested_pin(mutate_head=None):
+    """An own bump in a lockfile whose third-party entry pins a nested action."""
+    deps, flows = lock_parts()
+    third_party_with_nested_pin(deps, flows)
+    base = tree(**{LOCK: render_lock(deps, flows), gate.GATE_WORKFLOW: GATE_FLOW_TEXT})
+    bump_own(deps, flows)
+    if mutate_head:
+        mutate_head(deps, flows)
+    return base, dict(base, **{LOCK: render_lock(deps, flows)})
+
+
+def test_an_own_bump_beside_an_unchanged_nested_pin_does_not_gate():
+    assert_not_gated(run_lock(*lock_trees_with_nested_pin()))
+
+
+@pytest.mark.parametrize("uses", [[], [NESTED, NESTED + "0"]])
+def test_a_changed_third_party_nested_pin_gates(uses):
+    def change(deps, flows):
+        deps[THIRD] = dict(deps[THIRD], uses=uses)
+    if not uses:  # an empty list is not something the tool writes
+        base, head = lock_trees_with_nested_pin()
+        head[LOCK] = head[LOCK].replace(f"            - '{NESTED}'\n".encode(), b"")
+        assert_lock_refused(run_lock(base, head), "unexpected shape")
+    else:
+        assert_lock_refused(run_lock(*lock_trees_with_nested_pin(change)), "not an own action")
+
+
+def test_a_bumped_own_entry_with_nested_pins_gates():
+    def nest(deps, flows):
+        deps[OWN_NEW] = dict(deps[OWN_NEW], uses=[NESTED])
+    assert_lock_refused(run_lock(*lock_trees(nest)), "pins nested actions")
+
+
+def test_a_nested_pin_that_is_not_a_string_gates():
+    base, head = lock_trees_with_nested_pin()
+    head[LOCK] = head[LOCK].replace(f"- '{NESTED}'".encode(), b"- 1")
+    assert_lock_refused(run_lock(base, head), "unexpected shape")
+
+
 @pytest.mark.parametrize("side", ["base", "merge"])
 def test_a_non_canonical_older_side_gates(side):
     base, head = lock_trees()
@@ -2643,6 +2700,8 @@ def test_the_commit_is_checked_against_the_repositorys_own_default_branch():
     (own_release(tag_name="v1.1.0-rc"), "no published release"),
     (own_release(draft=True), "no published release"),
     (own_release(draft=None), "no published release"),
+    (own_release(prerelease=True), "no published release"),
+    (own_release(prerelease=None), "no published release"),
     (own_release(immutable=False), "not immutable"),
     (own_release(immutable=None), "not immutable"),
     (own_release(immutable="true"), "not immutable"),

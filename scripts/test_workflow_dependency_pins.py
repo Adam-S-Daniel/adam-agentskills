@@ -582,7 +582,24 @@ def command_program(tokens):
 TIMEOUT_VALUE_OPTIONS = {"-k", "--kill-after", "-s", "--signal"}
 
 
-def unwrap_timeout(tokens):
+EXPANSION = re.compile(r"\$(\{)?([A-Za-z_][A-Za-z0-9_]*)(?(1)\})")
+
+
+def always_quoted_names(text: str) -> frozenset:
+    """Variables every one of whose expansions in `text` is a whole
+    double-quoted word, `"$x"` or `"${x}"`. shlex drops the quotes, so a token
+    `$x` cannot say whether it was quoted; for these names it was, and such a
+    word stays one word at job time. One bare or partly quoted use (`$x`,
+    `"a $x"`) and the name is out."""
+    quoted, other = set(), set()
+    for match in EXPANSION.finditer(text):
+        whole = (match.start() > 0 and text[match.start() - 1] == '"'
+                 and text[match.end():match.end() + 1] == '"')
+        (quoted if whole else other).add(match.group(2))
+    return frozenset(quoted - other)
+
+
+def unwrap_timeout(tokens, quoted_names=frozenset()):
     """The command `timeout` runs, with any `NAME=value` prefix kept, or None
     when the command is not `timeout`. Its duration is a number at job time
     even when spelled `"$budget"`, so it must not count as a word in front of
@@ -594,25 +611,34 @@ def unwrap_timeout(tokens):
         index += 1
     if index >= len(tokens) or tokens[index] != "timeout":
         return None
-    prefix, index = tokens[:index], index + 1
+    prefix, start, index = tokens[:index], index + 1, index + 1
     while index < len(tokens) and tokens[index].startswith("-"):
         if tokens[index] == "--":
             index += 1
             break
         index += 2 if tokens[index] in TIMEOUT_VALUE_OPTIONS else 1
+    # The tokeniser drops quotes, so `"$budget"` and a bare `$X` that splits
+    # into `5 pip` look alike. Unwrap only when every dropped word is literal
+    # or a variable the body always quotes as a whole word; otherwise the
+    # caller's fail-closed rules see the whole command.
+    quoted = {f"${name}" for name in quoted_names} | {
+        f"${{{name}}}" for name in quoted_names}
+    if any(UNRESOLVABLE.search(token) and token not in quoted
+           for token in tokens[start:index + 1]):
+        return None
     return prefix + tokens[index + 1:]
 
 
-def classify_command(tokens):
+def classify_command(tokens, quoted_names=frozenset()):
     """('install', args) | ('other', None) | ('unplaceable', reason).
 
     `args` is the tokens after the `install` subcommand. Whatever sits in
     front of pip is ignored on purpose: a wrapper is how the anchored
     recogniser this replaced was defeated.
     """
-    wrapped = unwrap_timeout(tokens)
+    wrapped = unwrap_timeout(tokens, quoted_names)
     if wrapped is not None:
-        return classify_command(wrapped)
+        return classify_command(wrapped, quoted_names)
     for index, token in enumerate(tokens):
         module = attached_module(token)
         if not PIP_PROGRAM.fullmatch(token) and not (
@@ -716,8 +742,9 @@ def scan_shell_body(body: str, shell=None, strict: bool = True):
             return found, unplaceable
         return found, unplaceable + [
             (body.strip(), f"could not be tokenised as shell: {exc}")]
+    quoted_names = always_quoted_names(text)
     for command in shell_commands(tokens):
-        kind, payload = classify_command(command)
+        kind, payload = classify_command(command, quoted_names)
         text = shlex.join(command)
         if kind == "install":
             found.append((text, payload))
@@ -1888,8 +1915,15 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
      "unplaceable"),
     ('bash -c "pip install pyyaml==6.0.1"', "unplaceable"),
     ("sh -c 'pip3 install pyyaml==6.0.1'", "unplaceable"),
-    ('timeout -k 10 "$t" pip install pyyaml==6.0.1', "install"),
+    ('timeout -k 10 60 pip install pyyaml==6.0.1', "install"),
     ('timeout --signal KILL 5 $PIP install pyyaml==6.0.1', "unplaceable"),
+    # A variable timeout drops could split into `5 pip` at job time, unless
+    # the body quotes it as a whole word everywhere.
+    ('timeout $X install pyyaml==6.0.1', "unplaceable"),
+    ('timeout "$X" install x; echo $X', "unplaceable"),
+    ('timeout "$X pip" install pyyaml==6.0.1', "unplaceable"),
+    ('timeout -k $K 5 install pyyaml==6.0.1', "unplaceable"),
+    ('timeout -s $S 5 install pyyaml==6.0.1', "unplaceable"),
 ]
 
 

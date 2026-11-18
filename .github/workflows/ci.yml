@@ -95,9 +95,10 @@ jobs:
           # Output goes to files, never through $( ): a `timeout` that ends
           # only its direct child (uutils `timeout`, Ubuntu 26.04's default)
           # leaves grandchildren alive, and one holding a $( ) pipe open makes
-          # the shell wait for it however long it runs (#182).
-          outf="$(mktemp)"
-          errf="$(mktemp)"
+          # the shell wait for it however long it runs (#182). Each attempt
+          # gets new files, so a leftover writer cannot reach a later attempt.
+          outf=""
+          errf=""
           trap 'rm -f "$outf" "$errf"' EXIT
           start="$("${now_cmd[@]}")"
           elapsed() { echo $(("$("${now_cmd[@]}")" - start)); }
@@ -105,6 +106,9 @@ jobs:
           last_error=""
           while :; do
             attempt=$((attempt + 1))
+            rm -f "$outf" "$errf"
+            outf="$(mktemp)"
+            errf="$(mktemp)"
             args=(-g)
             ((attempt == 1)) || args+=(--force)
             budget=$((limit - $(elapsed)))

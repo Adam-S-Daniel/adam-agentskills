@@ -1,6 +1,6 @@
 # Dependabot for this repo.
 #
-# github-actions only: onboards weekly bumps for the actions across
+# github-actions only: onboards daily bumps for the actions across
 # .github/workflows/*.yml, each named by exact release tag and locked to a
 # commit in .github/workflows/actions.lock (Dependabot updates both). One
 # cooldown block carries two different waits:
@@ -8,9 +8,10 @@
 #     third-party action releases (pinned through actions.lock per
 #     _agent-guidance ADR 0024), matching cms-platform's own
 #     .github/dependabot.yml.
-#   - exclude below — a cms-platform release is this account's own code,
-#     gated by its own required checks before a tag ever exists, so it is
-#     exempted from that 7-day wait; only third-party actions keep it
+#   - exclude below — an action from Adam-S-Daniel or jodidaniel (cms-platform
+#     included) is this account's own code, gated by its own required checks
+#     before a tag ever exists, so it is exempted from that 7-day wait; only
+#     third-party actions keep it
 #     (https://github.com/Adam-S-Daniel/cms-platform/issues/424).
 #
 # No semver-major-days (or any semver-*-days key): GitHub's Dependabot
@@ -31,7 +32,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
-      exclude: ["Adam-S-Daniel/cms-platform/*"]
+      exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]

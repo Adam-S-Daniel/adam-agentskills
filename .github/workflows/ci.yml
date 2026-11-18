@@ -434,7 +434,7 @@ jobs:
       # workflow dependencies, so this step has no `if:` and runs on every PR.
       # The runner rejects forged pins; this check gives early feedback.
       - name: Verify action lockfile
-        uses: Adam-S-Daniel/verify-actions-lock@v1.1.0
+        uses: Adam-S-Daniel/verify-actions-lock@v1.2.0
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'

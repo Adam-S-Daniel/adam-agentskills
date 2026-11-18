@@ -9,7 +9,7 @@ workflows:
         - 'actions/checkout@v7.0.1'
         - 'actions/setup-node@v7.1.0'
         - 'actions/setup-python@v7.1.0'
-        - 'adam-s-daniel/verify-actions-lock@v1.1.0'
+        - 'adam-s-daniel/verify-actions-lock@v1.2.0'
     '.github/workflows/dependabot-auto-merge.yml': []
     '.github/workflows/plugin-runtime-review.yml':
         - 'actions/checkout@v7.0.1'
@@ -34,8 +34,8 @@ dependencies:
         commit: 'sha1-6d4fd22b20465ccc0f7354476588e8df7c9ca0e0'
         owner_id: 44036562
         repo_id: 192625525
-    'adam-s-daniel/verify-actions-lock@v1.1.0':
-        ref: 'v1.1.0'
-        commit: 'sha1-f3dac77f0df52b32167b2c46b70e9f1ffa9c050d'
+    'adam-s-daniel/verify-actions-lock@v1.2.0':
+        ref: 'v1.2.0'
+        commit: 'sha1-c19e5c280ff1df59d0a5143dba27682f2d04cc9c'
         owner_id: 4205216
         repo_id: 1427158560

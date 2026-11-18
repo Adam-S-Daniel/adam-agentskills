@@ -578,6 +578,31 @@ def command_program(tokens):
     return None
 
 
+# timeout's options that take a separate value: `-k 10`, `--signal TERM`.
+TIMEOUT_VALUE_OPTIONS = {"-k", "--kill-after", "-s", "--signal"}
+
+
+def unwrap_timeout(tokens):
+    """The command `timeout` runs, with any `NAME=value` prefix kept, or None
+    when the command is not `timeout`. Its duration is a number at job time
+    even when spelled `"$budget"`, so it must not count as a word in front of
+    the wrapped command that could be pip (#182 moved the install step's
+    `timeout ... npm install` out of a `$( )`, where this file never read it).
+    """
+    index = 0
+    while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
+        index += 1
+    if index >= len(tokens) or tokens[index] != "timeout":
+        return None
+    prefix, index = tokens[:index], index + 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        if tokens[index] == "--":
+            index += 1
+            break
+        index += 2 if tokens[index] in TIMEOUT_VALUE_OPTIONS else 1
+    return prefix + tokens[index + 1:]
+
+
 def classify_command(tokens):
     """('install', args) | ('other', None) | ('unplaceable', reason).
 
@@ -585,6 +610,9 @@ def classify_command(tokens):
     front of pip is ignored on purpose: a wrapper is how the anchored
     recogniser this replaced was defeated.
     """
+    wrapped = unwrap_timeout(tokens)
+    if wrapped is not None:
+        return classify_command(wrapped)
     for index, token in enumerate(tokens):
         module = attached_module(token)
         if not PIP_PROGRAM.fullmatch(token) and not (
@@ -1860,6 +1888,8 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
      "unplaceable"),
     ('bash -c "pip install pyyaml==6.0.1"', "unplaceable"),
     ("sh -c 'pip3 install pyyaml==6.0.1'", "unplaceable"),
+    ('timeout -k 10 "$t" pip install pyyaml==6.0.1', "install"),
+    ('timeout --signal KILL 5 $PIP install pyyaml==6.0.1', "unplaceable"),
 ]
 
 
@@ -1880,6 +1910,7 @@ def test_an_install_the_token_walk_could_still_have_missed(body, expected):
 
 ORDINARY_SHELL_THAT_MUST_STAY_QUIET = [
     "env PATH=$PATH npm install left-pad",
+    'timeout -k 10 "$budget" npm install -g left-pad',
     "npm install --prefix $DIR left-pad",
     "drift=$(PYTHONPATH=scripts python3 -c 'from x import Y; print(Y)')",
     "python3 -m pytest scripts/ -q",

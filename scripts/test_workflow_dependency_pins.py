@@ -578,13 +578,107 @@ def command_program(tokens):
     return None
 
 
-def classify_command(tokens):
+# timeout's options that take a separate value: `-k 10`, `--signal TERM`.
+TIMEOUT_VALUE_OPTIONS = {"-k", "--kill-after", "-s", "--signal"}
+
+
+EXPANSION = re.compile(r"\$(\{)?([A-Za-z_][A-Za-z0-9_]*)(?(1)\})")
+
+
+def always_quoted_names(text: str) -> frozenset:
+    """Variables every one of whose expansions in `text` is a whole
+    double-quoted word, `"$x"` or `"${x}"`. shlex drops the quotes, so a token
+    `$x` cannot say whether it was quoted; for these names it was, and such a
+    word stays one word at job time. One bare or partly quoted use (`$x`,
+    `"a $x"`, `""$x""`, `"a "$x" b"`) and the name is out.
+
+    Quote state comes from a left-to-right scan (backslash escapes outside
+    single quotes, single quotes, double quotes, `#` comments), so a `"` is known to open or
+    close a string rather than guessed from its neighbors."""
+    boundary = set(" \t\r\n;&|()<>")
+    # opener[i]: for a character inside a double-quoted string, the index of
+    # the `"` that opened it; -1 outside one; -2 inside single quotes.
+    opener, state, open_at, i = [-1] * len(text), None, -1, 0
+    closes = {}
+    while i < len(text):
+        char = text[i]
+        if state == "'":
+            opener[i] = -2
+            if char == "'":
+                state = None
+        elif state == '"':
+            opener[i] = open_at
+            if char == "\\":
+                if i + 1 < len(text):
+                    opener[i + 1] = open_at
+                i += 1
+            elif char == '"':
+                closes[open_at] = i
+                state = None
+        elif char == "\\":
+            i += 1
+        elif char == "#" and (i == 0 or text[i - 1] in boundary):
+            # A comment, as shlex reads it: an apostrophe in it opens nothing.
+            newline = text.find("\n", i)
+            i = len(text) if newline < 0 else newline
+            continue
+        elif char == "'":
+            state = "'"
+        elif char == '"':
+            state, open_at = '"', i
+        i += 1
+    quoted, other = set(), set()
+    for match in EXPANSION.finditer(text):
+        start, end = match.start(), match.end()
+        begin = opener[start]
+        whole = (begin >= 0 and begin == start - 1
+                 and closes.get(begin) == end
+                 and (begin == 0 or text[begin - 1] in boundary)
+                 and (end + 1 == len(text) or text[end + 1] in boundary))
+        (quoted if whole else other).add(match.group(2))
+    return frozenset(quoted - other)
+
+
+def unwrap_timeout(tokens, quoted_names=frozenset()):
+    """The command `timeout` runs, with any `NAME=value` prefix kept, or None
+    when the command is not `timeout`. Its duration is a number at job time
+    even when spelled `"$budget"`, so it must not count as a word in front of
+    the wrapped command that could be pip (#182 moved the install step's
+    `timeout ... npm install` out of a `$( )`, where this file never read it).
+    """
+    index = 0
+    while index < len(tokens) and ASSIGNMENT.match(tokens[index]):
+        index += 1
+    if index >= len(tokens) or tokens[index] != "timeout":
+        return None
+    prefix, start, index = tokens[:index], index + 1, index + 1
+    while index < len(tokens) and tokens[index].startswith("-"):
+        if tokens[index] == "--":
+            index += 1
+            break
+        index += 2 if tokens[index] in TIMEOUT_VALUE_OPTIONS else 1
+    # The tokeniser drops quotes, so `"$budget"` and a bare `$X` that splits
+    # into `5 pip` look alike. Unwrap only when every dropped word is literal
+    # or a variable the body always quotes as a whole word; otherwise the
+    # caller's fail-closed rules see the whole command.
+    quoted = {f"${name}" for name in quoted_names} | {
+        f"${{{name}}}" for name in quoted_names}
+    if any(UNRESOLVABLE.search(token) and token not in quoted
+           for token in tokens[start:index + 1]):
+        return None
+    return prefix + tokens[index + 1:]
+
+
+def classify_command(tokens, quoted_names=frozenset()):
     """('install', args) | ('other', None) | ('unplaceable', reason).
 
     `args` is the tokens after the `install` subcommand. Whatever sits in
     front of pip is ignored on purpose: a wrapper is how the anchored
     recogniser this replaced was defeated.
     """
+    wrapped = unwrap_timeout(tokens, quoted_names)
+    if wrapped is not None:
+        return classify_command(wrapped, quoted_names)
     for index, token in enumerate(tokens):
         module = attached_module(token)
         if not PIP_PROGRAM.fullmatch(token) and not (
@@ -688,8 +782,9 @@ def scan_shell_body(body: str, shell=None, strict: bool = True):
             return found, unplaceable
         return found, unplaceable + [
             (body.strip(), f"could not be tokenised as shell: {exc}")]
+    quoted_names = always_quoted_names(text)
     for command in shell_commands(tokens):
-        kind, payload = classify_command(command)
+        kind, payload = classify_command(command, quoted_names)
         text = shlex.join(command)
         if kind == "install":
             found.append((text, payload))
@@ -1860,6 +1955,19 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
      "unplaceable"),
     ('bash -c "pip install pyyaml==6.0.1"', "unplaceable"),
     ("sh -c 'pip3 install pyyaml==6.0.1'", "unplaceable"),
+    ('timeout -k 10 60 pip install pyyaml==6.0.1', "install"),
+    ('timeout --signal KILL 5 $PIP install pyyaml==6.0.1', "unplaceable"),
+    # A variable timeout drops could split into `5 pip` at job time, unless
+    # the body quotes it as a whole word everywhere.
+    ('timeout $X install pyyaml==6.0.1', "unplaceable"),
+    ('timeout "$X" install x; echo $X', "unplaceable"),
+    ('timeout "$X pip" install pyyaml==6.0.1', "unplaceable"),
+    ('timeout ""$X"" install pyyaml==6.0.1', "unplaceable"),
+    ('echo "x"$X"y"; timeout "$X" install pyyaml==6.0.1', "unplaceable"),
+    ('echo "a "$X" b"; timeout "$X" install pyyaml==6.0.1', "unplaceable"),
+    ("echo '\"$X\"'; timeout \"$X\" install pyyaml==6.0.1", "unplaceable"),
+    ('timeout -k $K 5 install pyyaml==6.0.1', "unplaceable"),
+    ('timeout -s $S 5 install pyyaml==6.0.1', "unplaceable"),
 ]
 
 
@@ -1880,6 +1988,7 @@ def test_an_install_the_token_walk_could_still_have_missed(body, expected):
 
 ORDINARY_SHELL_THAT_MUST_STAY_QUIET = [
     "env PATH=$PATH npm install left-pad",
+    'timeout -k 10 "$budget" npm install -g left-pad',
     "npm install --prefix $DIR left-pad",
     "drift=$(PYTHONPATH=scripts python3 -c 'from x import Y; print(Y)')",
     "python3 -m pytest scripts/ -q",

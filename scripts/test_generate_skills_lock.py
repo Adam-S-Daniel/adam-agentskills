@@ -4643,8 +4643,6 @@ _TESTS_IN_ANOTHER_REPO = {
 # citations are this repo's to keep true.
 _DELIVERED_BY_AGENT_GUIDANCE_SYNC = {
     ".claude/hooks/agent-checks-guard.sh",
-    ".claude/hooks/fleet-memory.sh",
-    ".claude/hooks/guidance-load-record.sh",
     # The plugin's bundled verbatim copy of fleet-memory.sh, refreshed by hand
     # in a reviewed pull request and never edited here (AGENTS.md).
     "plugins/adam-anything-anywhere/hooks/fleet-guidance/fleet-memory.sh",

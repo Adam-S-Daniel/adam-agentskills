@@ -590,11 +590,51 @@ def always_quoted_names(text: str) -> frozenset:
     double-quoted word, `"$x"` or `"${x}"`. shlex drops the quotes, so a token
     `$x` cannot say whether it was quoted; for these names it was, and such a
     word stays one word at job time. One bare or partly quoted use (`$x`,
-    `"a $x"`) and the name is out."""
+    `"a $x"`, `""$x""`, `"a "$x" b"`) and the name is out.
+
+    Quote state comes from a left-to-right scan (backslash escapes outside
+    single quotes, single quotes, double quotes, `#` comments), so a `"` is known to open or
+    close a string rather than guessed from its neighbors."""
+    boundary = set(" \t\r\n;&|()<>")
+    # opener[i]: for a character inside a double-quoted string, the index of
+    # the `"` that opened it; -1 outside one; -2 inside single quotes.
+    opener, state, open_at, i = [-1] * len(text), None, -1, 0
+    closes = {}
+    while i < len(text):
+        char = text[i]
+        if state == "'":
+            opener[i] = -2
+            if char == "'":
+                state = None
+        elif state == '"':
+            opener[i] = open_at
+            if char == "\\":
+                if i + 1 < len(text):
+                    opener[i + 1] = open_at
+                i += 1
+            elif char == '"':
+                closes[open_at] = i
+                state = None
+        elif char == "\\":
+            i += 1
+        elif char == "#" and (i == 0 or text[i - 1] in boundary):
+            # A comment, as shlex reads it: an apostrophe in it opens nothing.
+            newline = text.find("\n", i)
+            i = len(text) if newline < 0 else newline
+            continue
+        elif char == "'":
+            state = "'"
+        elif char == '"':
+            state, open_at = '"', i
+        i += 1
     quoted, other = set(), set()
     for match in EXPANSION.finditer(text):
-        whole = (match.start() > 0 and text[match.start() - 1] == '"'
-                 and text[match.end():match.end() + 1] == '"')
+        start, end = match.start(), match.end()
+        begin = opener[start]
+        whole = (begin >= 0 and begin == start - 1
+                 and closes.get(begin) == end
+                 and (begin == 0 or text[begin - 1] in boundary)
+                 and (end + 1 == len(text) or text[end + 1] in boundary))
         (quoted if whole else other).add(match.group(2))
     return frozenset(quoted - other)
 
@@ -1922,6 +1962,10 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
     ('timeout $X install pyyaml==6.0.1', "unplaceable"),
     ('timeout "$X" install x; echo $X', "unplaceable"),
     ('timeout "$X pip" install pyyaml==6.0.1', "unplaceable"),
+    ('timeout ""$X"" install pyyaml==6.0.1', "unplaceable"),
+    ('echo "x"$X"y"; timeout "$X" install pyyaml==6.0.1', "unplaceable"),
+    ('echo "a "$X" b"; timeout "$X" install pyyaml==6.0.1', "unplaceable"),
+    ("echo '\"$X\"'; timeout \"$X\" install pyyaml==6.0.1", "unplaceable"),
     ('timeout -k $K 5 install pyyaml==6.0.1', "unplaceable"),
     ('timeout -s $S 5 install pyyaml==6.0.1', "unplaceable"),
 ]

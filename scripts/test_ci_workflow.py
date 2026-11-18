@@ -364,7 +364,10 @@ def test_the_install_step_bounds_version_and_records_it():
     run = _install_step()["run"]
     assert run.splitlines()[0] == "set -euo pipefail"
     # Each version check is bounded: 60 s, or what is left of the 180 s limit.
-    assert 'version="$(timeout -k 10 "$vt" claude --version 2>"$errf")"' in run
+    assert 'timeout -k 10 "$vt" claude --version >"$outf" 2>"$errf" || rc=$?' in run
+    # Never through $( ): a grandchild that outlives `timeout` would hold the
+    # pipe open (uutils `timeout` ends only its direct child; #182).
+    assert '$(timeout' not in run
     assert "((vt <= 60)) || vt=60" in run
     assert "limit=180" in run and "delays=(5 10 20 40 80)" in run
     assert "did not install a working claude after ${attempt} attempts" in run

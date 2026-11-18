@@ -527,7 +527,13 @@ def join_continuations(body: str) -> str:
             index += 1
             continue
         if char == "'":
-            state = "ansi" if out and out[-1] == "$" else "single"
+            # `$'` opens `$'...'` only when its `$` is not the second half of
+            # `$$` (the PID): `$$'\\'` is `$$` then a quoted backslash, so
+            # count the run of bare `$` and take an odd one.
+            dollars = 0
+            while dollars < len(out) and out[-1 - dollars] == "$":
+                dollars += 1
+            state = "ansi" if dollars % 2 else "single"
         elif char == '"':
             state = "double"
         out.append(char)
@@ -2049,6 +2055,14 @@ MORE_WAYS_TO_HIDE_AN_INSTALL = [
     # apostrophe in it pairs with nothing; shlex paired it with `$'`.
     ("`'` pip install pyyaml==6.0.1\n$'x", "unplaceable"),
     ('echo "`date`"; pip install pyyaml==6.0.1', "unplaceable"),
+    # `$$` is the PID, so the `'` after it opens a plain quote, not `$'...'`.
+    # Read as `$'`, `\\'` stayed in the quote, the comment's apostrophe
+    # survived to shlex and paired with the last line's, swallowing the
+    # install.
+    ("echo $$'\\' # it's\npip install pyyaml==6.0.1\necho \\'", "install"),
+    # An odd run does open `$'...'`, and the walk drops the comment; shlex
+    # cannot read `$'\\''` itself, so the body fails closed rather than passes.
+    ("echo $$$'\\'' # it's\npip install pyyaml==6.0.1", "unplaceable"),
 ]
 
 

@@ -62,6 +62,13 @@ no backfill is planned; the file adds the fields git does not capture.
 
 ---
 
+## 2026-11-17 — adam-anything-anywhere/writing-adrs — edit
+
+- Motivation: skills-evals description trim run `20261117T183407Z-68ebce`: the description was over the 400-character listing cap, waived until the improve lane trimmed it ([skills-evals#687](https://github.com/Adam-S-Daniel/skills-evals/issues/687)).
+- Change: SKILL.md description shortened from 572 to 395 characters by the trim loop, body unchanged; its `length-limit` waiver removed from `scripts/skills_waivers.yml`; bundle `adam-anything-anywhere` 1.2.4 -> 1.2.5, by skills-evals' `routine-improve-gate.yml`.
+- Eval: run `20261117T183407Z-68ebce`, objective checks passed on every fixture, baseline -> candidate, 3 trial(s) per fixture in the eval routine (a local exhibit, not badge input): bootstrap 27/27 -> 27/27; existing-convention 21/21 -> 21/21; pr-body-outgrows-itself 14/39 -> 14/39; supersede 39/39 -> 39/39; why-no-comment-trail 30/33 -> 30/33; all fixtures 131/159 -> 131/159.
+- Outcome: auto-merges once required checks pass, with no human review (ADR 0021, Adam's 2026-10-26 decision).
+
 ## 2026-11-12 — adam-coding-anywhere/ci-job-performance — edit
 
 - Motivation: prompt-audit sweep finding in [adam-agentskills#128](https://github.com/Adam-S-Daniel/adam-agentskills/issues/128): the section recommends dated tags such as `act-latest-20260815`, then says "Never use a `-latest` tag", which the recommended names contradict.

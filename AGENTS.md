@@ -79,7 +79,13 @@ whose bytes equal its upstream branch tip (today the bundled
 `fleet-guidance.md` fallback, so copy it from `_agent-guidance`'s current
 `main` or it gates), and an `actions.lock` change that leaves every entry for
 the actions `plugin-runtime-review.yml` uses untouched. The list takes `.md`
-files only; a bundled script always waits.
+files only; a bundled script always waits. In that lockfile change, every
+`adam-s-daniel/*` entry added or moved must be confirmed by GitHub as a
+published, immutable, non-prerelease release whose commit is on the action's
+default branch, or it waits with `own-action-unverified`. The gate also
+re-reads the pull request after listing its files and fails closed when the
+head, base or base branch has moved, or the base is not the default branch, so
+a pull request into any other branch always waits.
 
 It runs only on `pull_request_target`, which GitHub blocks by default on public
 repos from 2026-11-02. An Actions event policy declared in repo-settings'

@@ -92,8 +92,13 @@ jobs:
           delays=(5 10 20 40 80)
           read -r -a sleep_cmd <<<"${SLEEP_CMD:-sleep}"
           read -r -a now_cmd <<<"${NOW_CMD:-date +%s}"
+          # Output goes to files, never through $( ): a `timeout` that ends
+          # only its direct child (uutils `timeout`, Ubuntu 26.04's default)
+          # leaves grandchildren alive, and one holding a $( ) pipe open makes
+          # the shell wait for it however long it runs (#182).
+          outf="$(mktemp)"
           errf="$(mktemp)"
-          trap 'rm -f "$errf"' EXIT
+          trap 'rm -f "$outf" "$errf"' EXIT
           start="$("${now_cmd[@]}")"
           elapsed() { echo $(("$("${now_cmd[@]}")" - start)); }
           attempt=0
@@ -105,7 +110,8 @@ jobs:
             budget=$((limit - $(elapsed)))
             ((budget >= 1)) || budget=1
             rc=0
-            out="$(timeout -k 10 "$budget" npm install "${args[@]}" "@anthropic-ai/claude-code@${latest}" 2>&1)" || rc=$?
+            timeout -k 10 "$budget" npm install "${args[@]}" "@anthropic-ai/claude-code@${latest}" >"$outf" 2>&1 || rc=$?
+            out="$(<"$outf")"
             if ((rc != 0)); then
               last_error="${out:-npm install exited ${rc}}"
             else
@@ -115,7 +121,8 @@ jobs:
               ((vt <= 60)) || vt=60
               rc=0
               # stdout alone is the version; stderr only explains a failure.
-              version="$(timeout -k 10 "$vt" claude --version 2>"$errf")" || rc=$?
+              timeout -k 10 "$vt" claude --version >"$outf" 2>"$errf" || rc=$?
+              version="$(<"$outf")"
               if ((rc != 0)); then
                 last_error="${version:-$(<"$errf")}"
                 last_error="${last_error:-claude --version failed (exit ${rc})}"
@@ -625,25 +632,33 @@ jobs:
       # of them; and this step targets a DIRECTORY, so a new federated test is
       # picked up with no edit here — which a hand-listed job is exactly what
       # this comment's opening paragraph says goes wrong.
-      - name: TEMP diagnose Ubuntu 26.04 coreutils (remove before merge)
+      - name: TEMP diagnose Ubuntu 26.04 hook hang (remove before merge)
         if: steps.salient.outputs.run == 'true'
         continue-on-error: true
-        timeout-minutes: 12
+        timeout-minutes: 8
         run: |
           set +e
-          for c in timeout sleep pgrep kill; do echo "$c -> $(readlink -f "$(command -v $c)")"; done
-          timeout --version | head -1; sleep --version | head -1
-          s=$(date +%s); timeout -k 1 1 sh -c 'trap "" TERM; sleep 30'; echo "A plain: rc=$? after $(( $(date +%s) - s ))s"
-          s=$(date +%s); out=$(timeout -k 1 1 sh -c 'trap "" TERM; sleep 30'); echo "B subst: rc=$? after $(( $(date +%s) - s ))s"
-          timeout -k 1 1 sh -c 'trap "" TERM; sleep 30' & p=$!; sleep 3; echo "C forest at 3s:"; ps -o pid,ppid,pgid,stat,args -e --forest | grep -B3 -A1 'sleep 30' | grep -v grep; wait $p; echo "C rc=$?"
-          s=$(date +%s); timeout 1 sleep 30; echo "D timeout sleep: rc=$? after $(( $(date +%s) - s ))s"
-          sleep 30 & p=$!; sleep 0.5; kill -TERM $p; s=$(date +%s); wait $p; echo "E sleep on TERM: rc=$? after $(( $(date +%s) - s ))s"
-          bash -c 'trap "exit 0" TERM; sleep 30 & wait' & p=$!; sleep 0.5; kill -TERM $p; s=$(date +%s); wait $p; echo "F: rc=$? after $(( $(date +%s) - s ))s"
-          pip -q install -r requirements-dev.txt >/dev/null 2>&1 || true
-          s=$(date +%s); timeout 200 python3 -m pytest "scripts/test_ci_workflow.py::test_a_hanging_version_is_ended_even_if_it_ignores_sigterm" -q -p no:cacheprovider 2>&1 | tail -5; echo "G group1 after $(( $(date +%s) - s ))s"
-          ( for t in 45 90 150; do sleep $(( t - ${prev:-0} )); prev=$t; echo "=== forest at ${t}s ==="; ps -o pid,ppid,pgid,stat,etimes,args -e --forest | grep -v ' \[' | tail -n 60; done ) > /tmp/forest.txt 2>&1 &
-          s=$(date +%s); timeout 300 python3 -m pytest scripts/test_fleet_guidance_hook.py -q -n auto -p no:cacheprovider 2>&1 | tail -15; echo "H group2 after $(( $(date +%s) - s ))s"
-          cat /tmp/forest.txt
+          bash --version | head -1
+          sudo apt-get install -y -qq strace gdb >/dev/null 2>&1; command -v strace gdb
+          ( timeout 240 python3 -m pytest scripts/test_fleet_guidance_hook.py -q -n 4 -p no:cacheprovider > /tmp/h.txt 2>&1 ) &
+          for i in 1 2 3 4; do
+            sleep 25
+            hook=plugins/adam-anything-anywhere/hooks/fleet-guidance/on-session-start.sh
+            for p in $(pgrep -f "$hook"); do
+              st=$(awk '{print $3}' /proc/$p/stat 2>/dev/null); [ "$st" = R ] || continue
+              pp=$(awk '{print $4}' /proc/$p/stat)
+              echo "=== sample $i pid $p (parent $pp) state $st"
+              grep -E 'State|SigBlk|SigIgn|SigCgt|PPid' /proc/$p/status
+              ls -l /proc/$p/fd 2>&1 | tail -n +2 | awk '{print $9,$10,$11}'
+              echo "children: $(cat /proc/$p/task/*/children 2>/dev/null)"
+              echo "-- parent fds"; ls -l /proc/$pp/fd 2>&1 | tail -n +2 | awk '{print $9,$10,$11}'
+              sudo timeout 2 strace -p $p 2>&1 | head -25
+              sudo timeout 10 gdb -p $p -batch -ex 'bt 15' 2>&1 | grep '^#' | head -15
+              break
+            done
+          done
+          wait
+          tail -40 /tmp/h.txt
       - name: Run every test suite in the repo
         if: steps.salient.outputs.run == 'true'
         run: python3 -m pytest scripts/ plugins/*/skills/*/tests/ plugins/*/skills/*/scripts/ -q -rfEs -n auto

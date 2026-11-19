@@ -1003,7 +1003,7 @@ def test_the_same_bump_from_anyone_else_still_gates_with_no_extra_reason():
      "not a verified Dependabot commit"),
     (None, [dict(DEPENDABOT_COMMIT, reason="unknown_key")], "not a verified Dependabot commit"),
     (None, [dict(DEPENDABOT_COMMIT, sha="d" * 40)], "not the head the event named"),
-], ids=repr)
+])  # default ids: repr of 250 commits overflows Windows' 32767-character env var
 def test_a_bump_without_dependabots_verified_provenance_gates(origin, commits, message):
     result, fetcher, _ = bump_run(origin=origin, commits=commits)
     if message is None:

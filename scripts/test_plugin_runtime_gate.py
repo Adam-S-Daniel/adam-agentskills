@@ -898,7 +898,17 @@ DEPENDABOT_ORIGIN = {"author": "dependabot[bot]", "author_id": gate.DEPENDABOT_I
                      "head_ref": "dependabot/github_actions/actions/checkout-7.1.0",
                      "head_repo": "example/registry", "base_repo": "example/registry"}
 DEPENDABOT_COMMIT = {"sha": HEAD, "author": "dependabot[bot]", "author_id": gate.DEPENDABOT_ID,
-                     "verified": True}
+                     "committer": "web-flow", "committer_id": gate.WEB_FLOW_ID,
+                     "committer_email": "noreply@github.com", "verified": True, "reason": "valid"}
+NOW = gate.datetime(2026, 11, 19, 12, 0, 0, tzinfo=gate.timezone.utc)
+OLD_ENOUGH = "2026-11-12T11:59:59Z"   # 7 days and a second before NOW
+CHECKOUT_RELEASE = {"tag_name": "v7.1.0", "immutable": False, "draft": False,
+                    "prerelease": False, "published_at": OLD_ENOUGH}
+
+
+@pytest.fixture(autouse=True)
+def fixed_clock(monkeypatch):
+    monkeypatch.setattr(gate, "_now", lambda: NOW)
 SHA_CHECKOUT_NEW = "8" * 40
 CHECKOUT_NEW = dict(CHECKOUT, ref="v7.1.0", commit=f"sha1-{SHA_CHECKOUT_NEW}")
 CHECKOUT_REPO = {"actions/checkout": {
@@ -930,6 +940,7 @@ class BumpFetcher(OwnFetcher):
     def __init__(self, base, head, origin=None, commits=None, **kw):
         kw.setdefault("repos", dict(CHECKOUT_REPO))
         kw.setdefault("tags", {("actions/checkout", "v7.1.0"): SHA_CHECKOUT_NEW})
+        kw.setdefault("releases", {("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE)})
         super().__init__(base, head, **kw)
         self.origin = dict(DEPENDABOT_ORIGIN, **(origin or {}))
         self.commits = [dict(DEPENDABOT_COMMIT)] if commits is None else commits
@@ -959,7 +970,8 @@ def assert_bump_refused(result, message):
 def test_a_verified_dependabot_bump_of_the_gates_actions_does_not_gate():
     result, fetcher, notes = bump_run()
     assert_not_gated(result)
-    assert fetcher.api_calls == [("repo", "actions/checkout"), ("tag", "actions/checkout", "v7.1.0")]
+    assert fetcher.api_calls == [("repo", "actions/checkout"), ("tag", "actions/checkout", "v7.1.0"),
+                                 ("release", "actions/checkout", "v7.1.0")]
     assert notes and notes[0].startswith("dependabot-bump-verified:")
 
 
@@ -981,6 +993,15 @@ def test_the_same_bump_from_anyone_else_still_gates_with_no_extra_reason():
             {"sha": HEAD, "author": "example-user", "author_id": 1001, "verified": True}],
      "not a verified Dependabot commit"),
     (None, [dict(DEPENDABOT_COMMIT, author_id=1001)], "not a verified Dependabot commit"),
+    # The author is only the owner of the author email, which anyone can type:
+    # GitHub must have committed and signed it.
+    (None, [dict(DEPENDABOT_COMMIT, committer="example-user", committer_id=1001,
+                 committer_email="user@example.com")], "not a verified Dependabot commit"),
+    (None, [dict(DEPENDABOT_COMMIT, committer_id=1001)], "not a verified Dependabot commit"),
+    (None, [dict(DEPENDABOT_COMMIT, committer="example-user")], "not a verified Dependabot commit"),
+    (None, [dict(DEPENDABOT_COMMIT, committer_email="user@example.com")],
+     "not a verified Dependabot commit"),
+    (None, [dict(DEPENDABOT_COMMIT, reason="unknown_key")], "not a verified Dependabot commit"),
     (None, [dict(DEPENDABOT_COMMIT, sha="d" * 40)], "not the head the event named"),
 ], ids=repr)
 def test_a_bump_without_dependabots_verified_provenance_gates(origin, commits, message):
@@ -1017,6 +1038,22 @@ def test_a_bump_without_dependabots_verified_provenance_gates(origin, commits, m
     ({"tags": {("actions/checkout", "v7.1.0"): "9" * 40}}, "tag is not at the locked commit"),
     ({"tags": {}}, "tag is not at the locked commit"),
     ({"repos": {}}, "does not confirm a new pin's repository"),
+    # The release must be published, not a prerelease, and past the cooldown.
+    ({"releases": {}}, "no published, non-prerelease release"),
+    ({"releases": {("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE, prerelease=True)}},
+     "no published, non-prerelease release"),
+    ({"releases": {("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE, draft=True)}},
+     "no published, non-prerelease release"),
+    ({"releases": {("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE, tag_name="v7.1.1")}},
+     "no published, non-prerelease release"),
+    ({"releases": {("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE, published_at=None)}},
+     "no published, non-prerelease release"),
+    ({"releases": {("actions/checkout", "v7.1.0"): dict(
+        CHECKOUT_RELEASE, published_at="2026-11-12T12:00:01Z")}}, "younger than the cooldown"),
+    # A byte-level change to a line that is not a `uses:` line, which parsed
+    # YAML would read as equal (false and 0, false and off).
+    ({"head_workflow": gate_workflow("v7.1.0").replace(b"run: python3", b"run:  python3")},
+     "changed in more than its actions' refs"),
     ({"head_lock": lock_doc(version="v0.0.4", **{
         "workflows": {GATE_WF: ["actions/checkout@v7.1.0", "actions/setup-python@v7.1.0"]},
         "dependencies": {"actions/checkout@v7.1.0": dict(CHECKOUT_NEW)}})},
@@ -1039,7 +1076,44 @@ def test_a_bump_without_the_lockfile_gates():
     base = tree(**{LOCK: lock_doc(), GATE_WF: gate_workflow()})
     head = dict(base, **{GATE_WF: gate_workflow("v7.1.0")})
     result = gate.decide(BumpFetcher(base, head), BASE, HEAD, BASE_REF, copies=[])
-    assert_bump_refused(result, "without actions.lock")
+    assert_bump_refused(result, "does not move a pin of the gate's actions")
+
+
+def test_a_lockfile_change_that_moves_no_gate_pin_does_not_carry_a_workflow_rewrite():
+    """Review finding: `persist-credentials: false` rewritten as `0` parses as
+    an equal tree; paired with a lockfile change elsewhere it must still gate."""
+    with_input = yaml.safe_dump({"jobs": {"detect": {"steps": [
+        {"uses": "actions/checkout@v7.0.1", "with": {"persist-credentials": False}},
+        {"uses": "actions/setup-python@v7.1.0"}]}}}).encode()
+    rewritten = with_input.replace(b"persist-credentials: false", b"persist-credentials: 0")
+    assert rewritten != with_input
+    base = tree(**{LOCK: lock_doc(), GATE_WF: with_input})
+    head = dict(base, **{GATE_WF: rewritten, LOCK: lock_doc(dependencies={
+        "actions/setup-node@v7.1.0": dict(SETUP_NODE, commit="sha1-" + "9" * 40)})})
+    result = gate.decide(BumpFetcher(base, head), BASE, HEAD, BASE_REF, copies=[])
+    assert_bump_refused(result, "does not move a pin of the gate's actions")
+
+
+@pytest.mark.parametrize("new_tag", ["v1.0.0", "v7.0.1-rc.1", "latest", "v7.0.0"])
+def test_a_downgrade_or_a_tag_that_is_not_a_version_gates(new_tag):
+    lock = checkout_bump_lock(**{"actions/checkout@v7.1.0": None,
+                                 f"actions/checkout@{new_tag}": dict(CHECKOUT_NEW, ref=new_tag)})
+    lock = lock.replace(b"actions/checkout@v7.1.0", f"actions/checkout@{new_tag}".encode())
+    result, _, _ = bump_run(head_lock=lock, head_workflow=gate_workflow(new_tag),
+                            tags={("actions/checkout", new_tag): SHA_CHECKOUT_NEW})
+    assert_bump_refused(result, "not a higher version than the base pinned")
+
+
+def test_an_entry_a_gate_pin_names_is_covered_too():
+    """Review finding: an entry reached only through a gate action's entry
+    must be unchanged, as _lockfile_changes_the_gate counts it."""
+    nested = {"actions/checkout@v7.0.1": dict(CHECKOUT, needs=["other/helper@v1"]),
+              "other/helper@v1": {"ref": "v1", "commit": "sha1-" + "4" * 40}}
+    base = tree(**{LOCK: lock_doc(dependencies=nested), GATE_WF: gate_workflow()})
+    head_lock = checkout_bump_lock(**{"other/helper@v1": {"ref": "v1", "commit": "sha1-" + "5" * 40}})
+    head = dict(base, **{LOCK: head_lock, GATE_WF: gate_workflow("v7.1.0")})
+    result = gate.decide(BumpFetcher(base, head), BASE, HEAD, BASE_REF, copies=[])
+    assert_bump_refused(result, "an existing pin of the gate's actions changed")
 
 
 def test_any_other_gate_file_in_the_bump_keeps_it_gated():
@@ -1055,7 +1129,9 @@ def test_a_dependabot_bump_still_needs_github_to_vouch_for_an_own_pin():
     assert_bump_refused(result, "an own action's")
     result, fetcher, _ = bump_run(head_lock=lock, tags={("actions/checkout", "v7.1.0"): SHA_CHECKOUT_NEW,
                                                         ("adam-s-daniel/tool", "v1.1.0"): SHA_OWN_NEW},
-                                  repos=dict(CHECKOUT_REPO, **{"adam-s-daniel/tool": own_repo()}))
+                                  repos=dict(CHECKOUT_REPO, **{"adam-s-daniel/tool": own_repo()}),
+                                  releases={("actions/checkout", "v7.1.0"): dict(CHECKOUT_RELEASE),
+                                            ("adam-s-daniel/tool", "v1.1.0"): own_release()})
     assert_not_gated(result)
     assert ("release", "adam-s-daniel/tool", "v1.1.0") in fetcher.api_calls
 

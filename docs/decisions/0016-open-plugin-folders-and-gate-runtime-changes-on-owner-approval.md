@@ -270,20 +270,32 @@ fixed message (a pull request that is not Dependabot's gets no extra reason):
 - **Dependabot's own.** GitHub names `dependabot[bot]` (by login and account
   id) as the pull request's author, its branch is a
   `dependabot/github_actions/` branch in this repository, and every commit on
-  it is authored by that account with a signature GitHub verified, the last
-  being the head the event named. No person or agent can write such a commit,
-  so the change is exactly what Dependabot proposed, after its cooldown.
+  it is authored by that account and committed and signed by GitHub itself
+  (`web-flow`, by login, id and email, with a `valid` signature), the last
+  being the head the event named. The commit author alone proves nothing: it
+  is the account that owns the author email, which anyone can type, and a
+  verified signature vouches only for the committer.
 - **Only refs move.** Among the gate's files only the gate workflow and
-  `actions.lock` changed. The workflow, parsed, is identical at base and head
-  once each `uses:` value is cut to its action's name, and every action it
-  uses is a third-party `owner/repo@ref`.
+  `actions.lock` changed, and the lockfile change moves a pin of the gate's
+  actions. The workflow's text differs only on `uses:` lines, it parses to the
+  same tree once each `uses:` value is cut to its action's name, and every
+  action it uses is a third-party `owner/repo@ref`.
 - **The pins are GitHub's word.** `actions.lock` keeps its format version,
   lists for the gate workflow exactly the actions it uses and pins each one;
   an existing pin of those actions is unchanged; each new one has gh
   actions-lock's four keys, names the repository the base pinned (same
-  `owner_id` and `repo_id`, which GitHub confirms), and its tag resolves on
-  GitHub to the locked commit. Own-action pins in the same change still need
-  the 2026-11-18 checks.
+  `owner_id` and `repo_id`, which GitHub confirms), its tag resolves on
+  GitHub to the locked commit, it is a higher version than every base pin of
+  that action, and its release is published, not a prerelease, and at least 7
+  days old. Every entry those actions' entries name must be unchanged.
+  Own-action pins in the same change still need the 2026-11-18 checks.
+
+The release checks repeat Dependabot's cooldown inside the gate, so even a
+branch that only looks like Dependabot's (say, a GitHub-side rebase that
+keeps the author and re-signs as `web-flow`) can bring in nothing but what
+Dependabot itself would propose. One consequence: a security update to one of
+the gate workflow's own actions whose release is under 7 days old still waits
+for the owner. Every other workflow's security bumps are not affected.
 
 Any other change in the same pull request is judged as before, so a plugin
 change carried by a Dependabot branch still waits.

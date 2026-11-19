@@ -89,10 +89,12 @@ a pull request into any other branch always waits.
 
 A Dependabot bump of the actions `plugin-runtime-review.yml` itself uses does
 not wait either (ADR 0016, its Dependabot update), so third-party bumps land
-unreviewed after the cooldown as the fleet policy wants: every commit must be a
-GitHub-verified Dependabot commit, the workflow may change only in its `uses:`
-refs, and GitHub must confirm each new pin's repository and that its tag is at
-the locked commit. Otherwise it waits with `dependabot-bump-unverified`.
+unreviewed after the cooldown as the fleet policy wants: every commit must be
+Dependabot's, committed and signed by GitHub (`web-flow`), the workflow may
+change only on its `uses:` lines, and GitHub must confirm each new pin's
+repository, that its tag is at the locked commit, and that it is a higher,
+published, non-prerelease release at least 7 days old. Otherwise it waits with
+`dependabot-bump-unverified`.
 
 It runs only on `pull_request_target`, which GitHub blocks by default on public
 repos from 2026-11-02. An Actions event policy declared in repo-settings'

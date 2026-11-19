@@ -11,6 +11,10 @@ that gates and a nearby case that does not:
 a gate that has never been shown saying "no" would approve nothing, and one
 never shown saying "yes" would stop nothing.
 
+Two narrow exemptions have their own sections: an action-lockfile change that
+leaves the gate workflow's pins alone, and a listed copy of text a hook also
+fetches live, when it equals its upstream.
+
 The workflow-shape tests at the end parse plugin-runtime-review.yml as YAML
 rather than grepping it, for the reason scripts/test_ci_workflow.py gives.
 
@@ -36,6 +40,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "plugin-runtime-review.yml"
 BASE = "a" * 40
 HEAD = "b" * 40
+UPSTREAM_SHA = "c" * 40
+BASE_REF = "main"
 
 
 # =================================================================================
@@ -48,11 +54,15 @@ class FakeFetcher:
     (written as JSON) or bytes (written as-is). The file list is derived the
     way GitHub derives it, unless `files` overrides it."""
 
-    def __init__(self, base, head, files=None, renames=None, fail_on=None):
+    def __init__(self, base, head, files=None, renames=None, fail_on=None, upstream=None):
         self.trees = {BASE: self._encode(base), HEAD: self._encode(head)}
         self.renames = renames or {}
         self.files = files if files is not None else self._diff()
         self.fail_on = fail_on
+        # (repo, branch, path) -> bytes at that branch's tip, for upstream copies.
+        self.upstream = upstream or {}
+        self.upstream_reads = []
+        self.pr_now = {"head": HEAD, "base": BASE, "base_ref": BASE_REF, "default_branch": BASE_REF}
 
     @staticmethod
     def _encode(tree):
@@ -90,6 +100,17 @@ class FakeFetcher:
             raise gate.GateError(f"reading {json.dumps(path)} failed (gh exit 1)")
         return self.trees[sha].get(path)
 
+    def pull_request(self):
+        """The pull request as GitHub has it when the gate re-reads it; by
+        default unmoved from the event."""
+        return dict(self.pr_now)
+
+    def read_upstream(self, repo, branch, path):
+        self.upstream_reads.append((repo, branch, path))
+        if self.fail_on == "upstream":
+            raise gate.GateError(f"resolving {repo}@{branch} failed (gh exit 1)")
+        return UPSTREAM_SHA, self.upstream.get((repo, branch, path))
+
 
 def marketplace(*names, **entry_extra):
     return {"name": "m", "plugins": [
@@ -121,7 +142,7 @@ def hook_config(*commands, args=None):
 
 
 def run(base, head, **kw):
-    return gate.decide(FakeFetcher(base, head, **kw), BASE, HEAD)
+    return gate.decide(FakeFetcher(base, head, **kw), BASE, HEAD, BASE_REF)
 
 
 def codes(result):
@@ -513,13 +534,579 @@ def test_a_change_to_the_gate_gates(path):
     assert ("gate-itself", path) in result[1], result
 
 
-def test_a_lockfile_only_change_gates():
-    """actions.lock picks the commit the gate workflow's tag-pinned checkout
-    runs at, so a PR changing only the lockfile must wait for the owner."""
-    base = tree()
-    head = dict(base, **{".github/workflows/actions.lock": b"version: 'v0.0.3'\n"})
-    result = run(base, head)
-    assert ("gate-itself", ".github/workflows/actions.lock") in result[1], result
+# ---- the action lockfile: gated only for what the gate's own workflow runs ----
+
+LOCK = gate.LOCKFILE
+GATE_WF = gate.GATE_WORKFLOW
+CHECKOUT = {"ref": "v7.0.1", "commit": "sha1-" + "1" * 40, "owner_id": 1, "repo_id": 2}
+SETUP_PYTHON = {"ref": "v7.1.0", "commit": "sha1-" + "2" * 40, "owner_id": 1, "repo_id": 3}
+SETUP_NODE = {"ref": "v7.1.0", "commit": "sha1-" + "3" * 40, "owner_id": 1, "repo_id": 4}
+GATE_WORKFLOW_BYTES = yaml.safe_dump({"jobs": {"detect": {"steps": [
+    {"uses": "actions/checkout@v7.0.1"}, {"uses": "actions/setup-python@v7.1.0"},
+    {"run": "python3 scripts/plugin_runtime_gate.py"}]}}}).encode()
+
+
+def lock_doc(workflows=None, dependencies=None, **top):
+    """A lockfile in gh actions-lock's shape. By default the gate workflow uses
+    checkout and setup-python, and ci.yml uses checkout and setup-node."""
+    doc = {
+        "version": "v0.0.3",
+        "workflows": {
+            ".github/workflows/ci.yml": ["actions/checkout@v7.0.1", "actions/setup-node@v7.1.0"],
+            GATE_WF: ["actions/checkout@v7.0.1", "actions/setup-python@v7.1.0"],
+        },
+        "dependencies": {
+            "actions/checkout@v7.0.1": dict(CHECKOUT),
+            "actions/setup-node@v7.1.0": dict(SETUP_NODE),
+            "actions/setup-python@v7.1.0": dict(SETUP_PYTHON),
+        },
+    }
+    doc["workflows"].update(workflows or {})
+    doc["dependencies"].update(dependencies or {})
+    doc.update(top)
+    for part in ("workflows", "dependencies"):
+        doc[part] = {key: value for key, value in doc[part].items() if value is not None}
+    return yaml.safe_dump(doc).encode()
+
+
+def lock_run(head_lock, base_lock=b"default", head_workflow=GATE_WORKFLOW_BYTES):
+    """Run the gate over a lockfile change; None leaves a side without the file."""
+    base = tree(**{LOCK: lock_doc() if base_lock == b"default" else base_lock,
+                   GATE_WF: GATE_WORKFLOW_BYTES})
+    head = dict(base, **{LOCK: head_lock, GATE_WF: head_workflow})
+    for side in (base, head):
+        for path in (LOCK, GATE_WF):
+            if side[path] is None:
+                del side[path]
+    return run(base, head)
+
+
+def test_a_lockfile_change_for_another_workflow_does_not_gate():
+    """Adding a workflow to the lockfile, or moving a pin only other workflows
+    use, cannot change what the gate's workflow runs."""
+    assert_not_gated(lock_run(lock_doc(
+        workflows={".github/workflows/agent-checks.yml": ["actions/checkout@v7.0.1"],
+                   ".github/workflows/dependabot-auto-merge.yml": []})))
+    assert_not_gated(lock_run(lock_doc(
+        workflows={".github/workflows/ci.yml": ["actions/checkout@v7.0.1", "actions/setup-node@v8.0.0"]},
+        dependencies={"actions/setup-node@v7.1.0": None,
+                      "actions/setup-node@v8.0.0": dict(SETUP_NODE, ref="v8.0.0", commit="sha1-" + "9" * 40)})))
+
+
+@pytest.mark.parametrize("change", [
+    {"dependencies": {"actions/checkout@v7.0.1": dict(CHECKOUT, commit="sha1-" + "f" * 40)}},
+    {"dependencies": {"actions/setup-python@v7.1.0": dict(SETUP_PYTHON, repo_id=99)}},
+    {"dependencies": {"actions/checkout@v7.0.1": None}},
+    # Another version, or another spelling, of an action the gate uses.
+    {"dependencies": {"actions/checkout@v9.9.9": dict(CHECKOUT, ref="v9.9.9")}},
+    {"dependencies": {"Actions/Checkout@v7.0.1": dict(CHECKOUT, commit="sha1-" + "f" * 40)}},
+    {"dependencies": {"actions/checkout/sub@v7.0.1": dict(CHECKOUT)}},
+    # The gate workflow's own list, under its name or another spelling of it.
+    {"workflows": {GATE_WF: ["actions/checkout@v7.0.1"]}},
+    {"workflows": {"./" + GATE_WF: ["actions/checkout@v7.0.1"]}},
+    {"workflows": {GATE_WF.upper(): []}},
+    {"version": "v0.0.4"},
+    # An entry whose key cannot be read as owner/repo@ref.
+    {"dependencies": {"docker://alpine:3": {"ref": "3"}}},
+], ids=repr)
+def test_a_lockfile_change_that_can_reach_the_gate_workflow_gates(change):
+    result = lock_run(lock_doc(**change))
+    assert result == (True, [("gate-itself", LOCK)]), result
+
+
+def test_a_lockfile_entry_that_a_gate_entry_names_gates():
+    """A composite action's own dependencies would be other entries; an entry
+    named from one the gate uses counts as the gate's."""
+    nested = {"dependencies": {
+        "actions/checkout@v7.0.1": dict(CHECKOUT, needs=["other/helper@v1"]),
+        "other/helper@v1": {"ref": "v1", "commit": "sha1-" + "4" * 40}}}
+    moved = {"dependencies": dict(nested["dependencies"], **{
+        "other/helper@v1": {"ref": "v1", "commit": "sha1-" + "5" * 40}})}
+    assert_gated(lock_run(lock_doc(**moved), base_lock=lock_doc(**nested)), "gate-itself")
+    assert_not_gated(lock_run(
+        lock_doc(workflows={".github/workflows/x.yml": []}, **nested), base_lock=lock_doc(**nested)))
+
+
+def test_an_action_the_workflow_uses_but_the_lockfile_does_not_list_still_gates():
+    """The workflow's own `uses:` lines are read too, so a lockfile whose list
+    for the gate workflow is short cannot hide a pin."""
+    short = {"workflows": {GATE_WF: ["actions/checkout@v7.0.1"]}}
+    moved = dict(short, dependencies={
+        "actions/setup-python@v7.1.0": dict(SETUP_PYTHON, commit="sha1-" + "f" * 40)})
+    assert_gated(lock_run(lock_doc(**moved), base_lock=lock_doc(**short)), "gate-itself")
+
+
+def test_a_missing_lockfile_on_either_side_gates():
+    assert_gated(lock_run(None), "gate-itself")
+    assert_gated(lock_run(lock_doc(), base_lock=None), "gate-itself")
+
+
+@pytest.mark.parametrize("head_lock", [
+    b"version: 'v0.0.3'\n",                                   # no workflows or dependencies
+    b"- a list\n",
+    b"workflows: {}\ndependencies: {}\nextra: 1\n",          # a key this script does not know
+    b"workflows: {}\nworkflows: {}\ndependencies: {}\n",     # a repeated key
+    b"workflows: {1: []}\ndependencies: {}\n",               # a key that is not a string
+    b"workflows: {'" + GATE_WF.encode() + b"': 'actions/checkout@v7.0.1'}\ndependencies: {}\n",
+    b"\xff\xfe not text",
+    b"{ not yaml",
+], ids=repr)
+def test_a_lockfile_this_script_cannot_read_fails_closed(head_lock):
+    assert codes(lock_run(head_lock)) == {"fail-closed"}
+
+
+def test_a_gate_workflow_using_an_action_that_cannot_be_placed_fails_closed():
+    local = yaml.safe_dump({"jobs": {"detect": {"steps": [{"uses": "./.github/actions/x"}]}}}).encode()
+    result = lock_run(lock_doc(workflows={".github/workflows/x.yml": []}), head_workflow=local)
+    assert "fail-closed" in codes(result), result
+
+
+def test_the_real_lockfile_reads_and_an_unrelated_entry_does_not_gate():
+    """The checked-in lockfile and workflow are in the shape this script reads."""
+    real = (REPO_ROOT / LOCK).read_bytes()
+    doc = yaml.safe_load(real)
+    doc["workflows"][".github/workflows/some-new-workflow.yml"] = []
+    base = tree(**{LOCK: real, GATE_WF: WORKFLOW.read_bytes()})
+    assert_not_gated(run(base, dict(base, **{LOCK: yaml.safe_dump(doc).encode()})))
+    uses = set(gate._uses_values(yaml.safe_load(WORKFLOW.read_bytes())))
+    assert uses, "the gate workflow is expected to use at least one action"
+    name = sorted(uses)[0]
+    key = f"{name.rsplit('@', 1)[0].lower()}@{name.rsplit('@', 1)[1]}"
+    doc["dependencies"][key]["commit"] = "sha1-" + "f" * 40
+    assert_gated(run(base, dict(base, **{LOCK: yaml.safe_dump(doc).encode()})), "gate-itself")
+
+
+# ---- own-action pins in an unreviewed lockfile change: GitHub must confirm them ----
+#
+# Each refusal is asserted by its message, so a case cannot pass because some
+# other check happened to refuse it. Every id and name but the owner's is invented.
+
+OWN_ID = gate.OWN_ACTIONS_OWNER_ID
+OWN_OLD = "adam-s-daniel/tool@v1.0.0"
+OWN_NEW = "adam-s-daniel/tool@v1.1.0"
+OWN_REPO_ID = 3001
+SHA_OWN_OLD, SHA_OWN_NEW = "6" * 40, "7" * 40
+CI = ".github/workflows/ci.yml"
+
+
+def own_entry(ref="v1.1.0", sha=SHA_OWN_NEW, **changes):
+    return dict({"ref": ref, "commit": f"sha1-{sha}", "owner_id": OWN_ID,
+                 "repo_id": OWN_REPO_ID}, **changes)
+
+
+def own_repo(**changes):
+    return dict({"id": OWN_REPO_ID, "full_name": "Adam-S-Daniel/tool", "owner_id": OWN_ID,
+                 "fork": False, "default_branch": "main"}, **changes)
+
+
+def own_release(**changes):
+    return dict({"tag_name": "v1.1.0", "immutable": True, "draft": False,
+                 "prerelease": False}, **changes)
+
+
+class OwnFetcher(FakeFetcher):
+    """FakeFetcher plus what GitHub says about adam-s-daniel/tool. By default
+    v1.1.0 is a released, immutable tag at SHA_OWN_NEW on main."""
+
+    def __init__(self, base, head, repos=None, tags=None, releases=None, on_branch=None, **kw):
+        super().__init__(base, head, **kw)
+        self.repos = {"adam-s-daniel/tool": own_repo()} if repos is None else repos
+        self.tags = {("adam-s-daniel/tool", "v1.1.0"): SHA_OWN_NEW} if tags is None else tags
+        self.releases = {("adam-s-daniel/tool", "v1.1.0"): own_release()} \
+            if releases is None else releases
+        self.on_branch = {("adam-s-daniel/tool", "main", SHA_OWN_NEW)} \
+            if on_branch is None else on_branch
+        self.api_calls = []
+
+    def action_repo(self, name):
+        self.api_calls.append(("repo", name))
+        return self.repos.get(name)
+
+    def action_tag_commit(self, name, tag):
+        self.api_calls.append(("tag", name, tag))
+        return self.tags.get((name, tag))
+
+    def action_release(self, name, tag):
+        self.api_calls.append(("release", name, tag))
+        return self.releases.get((name, tag))
+
+    def commit_on_branch(self, name, branch, sha):
+        self.api_calls.append(("branch", name, branch, sha))
+        return (name, branch, sha) in self.on_branch
+
+
+def own_trees(head_deps, base_deps=None, head_ci=None):
+    """(base, head) where ci.yml uses the own action; the gate workflow does not."""
+    base_deps = {OWN_OLD: own_entry("v1.0.0", SHA_OWN_OLD)} if base_deps is None else base_deps
+    base_ci = sorted(["actions/checkout@v7.0.1", *base_deps])
+    base = tree(**{LOCK: lock_doc(workflows={CI: base_ci}, dependencies=base_deps),
+                   GATE_WF: GATE_WORKFLOW_BYTES})
+    head_ci = sorted(["actions/checkout@v7.0.1", *(k for k, v in head_deps.items() if v)]) \
+        if head_ci is None else head_ci
+    head = dict(base, **{LOCK: lock_doc(workflows={CI: head_ci}, dependencies=head_deps)})
+    return base, head
+
+
+def own_run(head_deps, base_deps=None, **kw):
+    fetcher = OwnFetcher(*own_trees(head_deps, base_deps), **kw)
+    return gate.decide(fetcher, BASE, HEAD, BASE_REF), fetcher
+
+
+def assert_own_refused(result, message):
+    gated, reasons = result
+    assert gated and ("gate-itself", LOCK) in reasons, reasons
+    details = [detail for code, detail in reasons if code == "own-action-unverified"]
+    assert len(details) == 1 and message in details[0], reasons
+
+
+BUMP = {OWN_OLD: None, OWN_NEW: own_entry()}
+
+
+def test_a_confirmed_own_action_bump_does_not_gate_and_checks_every_fact():
+    result, fetcher = own_run(BUMP)
+    assert_not_gated(result)
+    assert fetcher.api_calls == [
+        ("repo", "adam-s-daniel/tool"), ("tag", "adam-s-daniel/tool", "v1.1.0"),
+        ("branch", "adam-s-daniel/tool", "main", SHA_OWN_NEW),
+        ("release", "adam-s-daniel/tool", "v1.1.0")]
+
+
+def test_a_confirmed_own_action_added_beside_the_old_one_does_not_gate():
+    assert_not_gated(own_run({OWN_NEW: own_entry()})[0])
+
+
+def test_removing_an_own_action_asks_github_nothing_and_does_not_gate():
+    result, fetcher = own_run({OWN_OLD: None})
+    assert_not_gated(result)
+    assert fetcher.api_calls == []
+
+
+def test_a_third_party_bump_asks_github_nothing_and_does_not_gate():
+    """The broader rule stands: only own pins need GitHub's word, and the own
+    entry this lockfile already holds, unchanged, is not asked about."""
+    result, fetcher = own_run(
+        {"actions/setup-node@v7.1.0": dict(SETUP_NODE, commit="sha1-" + "9" * 40)})
+    assert_not_gated(result)
+    assert fetcher.api_calls == []
+
+
+@pytest.mark.parametrize("key,entry,message", [
+    ("Adam-S-Daniel/tool@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    ("adam-s-daniel/tool/sub@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    # Another key, but the owner's id: still an own pin, and still refused.
+    ("example-owner/tool@v1.1.0", own_entry(), "is not adam-s-daniel/<repo>@<tag>"),
+    (OWN_NEW, dict(own_entry(), uses=["example-owner/x@v1"]), "expected keys"),
+    (OWN_NEW, {"ref": "v1.1.0", "commit": f"sha1-{SHA_OWN_NEW}"}, "expected keys"),
+    (OWN_NEW, own_entry(ref="v1.2.0"), "ref does not match"),
+    (OWN_NEW, own_entry(owner_id=99), "wrong owner_id"),
+    (OWN_NEW, own_entry(owner_id=float(OWN_ID)), "wrong owner_id"),
+    (OWN_NEW, own_entry(repo_id=0), "no repo_id"),
+    (OWN_NEW, own_entry(repo_id=True), "no repo_id"),
+    (OWN_NEW, own_entry(commit=SHA_OWN_NEW), "not a sha1 pin"),
+], ids=repr)
+def test_an_own_entry_not_in_gh_actions_locks_shape_gates(key, entry, message):
+    assert_own_refused(own_run({OWN_OLD: None, key: entry})[0], message)
+
+
+@pytest.mark.parametrize("repo,message", [
+    (None, "does not confirm an own action's repository"),
+    (own_repo(id=4444), "does not confirm an own action's repository"),
+    (own_repo(owner_id=5555), "does not confirm an own action's repository"),
+    (own_repo(full_name="example-owner/tool"), "does not confirm an own action's repository"),
+    (own_repo(fork=True), "is a fork"),
+    (own_repo(fork=None), "is a fork"),
+    (own_repo(default_branch=None), "default branch"),
+    (own_repo(default_branch="-x"), "default branch"),
+], ids=repr)
+def test_an_own_repository_github_does_not_confirm_gates(repo, message):
+    repos = {} if repo is None else {"adam-s-daniel/tool": repo}
+    assert_own_refused(own_run(BUMP, repos=repos)[0], message)
+
+
+def test_an_own_tag_not_at_the_locked_commit_gates():
+    assert_own_refused(own_run(BUMP, tags={("adam-s-daniel/tool", "v1.1.0"): "8" * 40})[0],
+                       "tag is not at the locked commit")
+    assert_own_refused(own_run(BUMP, tags={})[0], "tag is not at the locked commit")
+
+
+def test_an_own_commit_off_the_default_branch_gates():
+    assert_own_refused(own_run(BUMP, on_branch=set())[0], "not on its default branch")
+
+
+@pytest.mark.parametrize("release,message", [
+    (None, "no published release"),
+    (own_release(tag_name="v1.1"), "no published release"),
+    (own_release(draft=True), "no published release"),
+    (own_release(prerelease=True), "no published release"),
+    (own_release(prerelease=None), "no published release"),
+    (own_release(immutable=False), "not immutable"),
+    (own_release(immutable=None), "not immutable"),
+], ids=repr)
+def test_an_own_release_that_is_not_published_and_immutable_gates(release, message):
+    releases = {} if release is None else {("adam-s-daniel/tool", "v1.1.0"): release}
+    assert_own_refused(own_run(BUMP, releases=releases)[0], message)
+
+
+def test_a_moved_own_pin_under_the_same_tag_is_checked_too():
+    base_deps = {OWN_NEW: own_entry(sha=SHA_OWN_OLD)}
+    result, _ = own_run({OWN_NEW: own_entry()}, base_deps=base_deps,
+                        tags={("adam-s-daniel/tool", "v1.1.0"): SHA_OWN_OLD})
+    assert_own_refused(result, "tag is not at the locked commit")
+
+
+def test_an_api_error_on_an_own_check_fails_closed():
+    class Down(OwnFetcher):
+        def action_repo(self, name):
+            raise gate.GateError("reading the repository failed (gh exit 1)")
+    fetcher = Down(*own_trees(BUMP))
+    assert codes(gate.decide(fetcher, BASE, HEAD, BASE_REF)) == {"fail-closed"}
+
+
+ARGS_FOR_LOCK = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD,
+                 "--base-ref", BASE_REF]
+
+
+def test_main_prints_an_own_action_refusal_as_fixed_text(monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    fetcher = OwnFetcher(*own_trees(BUMP), releases={})
+    gate.main(ARGS_FOR_LOCK, fetcher=fetcher)
+    assert capsys.readouterr().out == (
+        "gated=true\n"
+        f'  gate-itself: "{LOCK}"\n'
+        '  own-action-unverified: "an own action\'s tag has no published release"\n')
+
+
+# ---- the pull request must still be the one the event named ----
+
+@pytest.mark.parametrize("moved,message", [
+    ({"head": "c" * 40}, "no longer matches the event"),
+    ({"base": "c" * 40}, "no longer matches the event"),
+    ({"base_ref": "release/1"}, "no longer matches the event"),
+    ({"default_branch": "trunk"}, "does not target the default branch"),
+], ids=repr)
+def test_a_pull_request_that_moved_or_misses_the_default_branch_fails_closed(moved, message):
+    fetcher = FakeFetcher(tree(), tree())
+    fetcher.pr_now.update(moved)
+    gated, reasons = gate.decide(fetcher, BASE, HEAD, BASE_REF)
+    assert gated and len(reasons) == 1 and reasons[0][0] == "fail-closed", reasons
+    assert message in reasons[0][1]
+
+
+def test_an_unreadable_pull_request_fails_closed():
+    class Gone(FakeFetcher):
+        def pull_request(self):
+            return None
+    gated, reasons = gate.decide(Gone(tree(), tree()), BASE, HEAD, BASE_REF)
+    assert gated and reasons[0][0] == "fail-closed" and "no longer matches" in reasons[0][1]
+
+
+def test_the_pull_request_is_read_after_its_file_list():
+    """Read before, a push in between could pair one commit's files with another's verdict."""
+    order = []
+
+    class Ordered(FakeFetcher):
+        def changed_files(self):
+            order.append("files")
+            return super().changed_files()
+
+        def pull_request(self):
+            order.append("pull")
+            return super().pull_request()
+    gate.decide(Ordered(tree(), tree()), BASE, HEAD, BASE_REF)
+    assert order == ["files", "pull"]
+
+
+# ---- upstream copies: text a hook also fetches live ----
+
+COPY = "plugins/alpha/hooks/guidance/fallback.md"
+COPIES = [{"path": COPY, "upstream_repo": "example-owner/_upstream",
+           "upstream_branch": "main", "upstream_path": "docs/source.md"}]
+UPSTREAM_KEY = ("example-owner/_upstream", "main", "docs/source.md")
+
+
+def copy_run(head_bytes, upstream_bytes=b"new text\n", copies=COPIES, extra_head=None,
+             hooks=None, notes=None, **kw):
+    base = tree(**{COPY: b"old text\n",
+                   "plugins/alpha/hooks/hooks.json": hooks or hook_config(
+                       '"${CLAUDE_PLUGIN_ROOT}"/hooks/guidance/start.sh'),
+                   "plugins/alpha/hooks/guidance/start.sh": b"echo start\n"})
+    head = dict(base, **(extra_head or {}))
+    if head_bytes is None:
+        del head[COPY]
+    else:
+        head[COPY] = head_bytes
+    upstream = {} if upstream_bytes is None else {UPSTREAM_KEY: upstream_bytes}
+    fetcher = FakeFetcher(base, head, upstream=upstream, **kw)
+    return gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=copies, notes=notes), fetcher
+
+
+def test_an_upstream_copy_equal_to_its_upstream_does_not_gate():
+    notes = []
+    result, fetcher = copy_run(b"new text\n", notes=notes)
+    assert_not_gated(result)
+    assert fetcher.upstream_reads == [UPSTREAM_KEY]
+    assert notes == [f'upstream-copy-verified: "{COPY}" equals '
+                     f"example-owner/_upstream@{UPSTREAM_SHA[:7]}:docs/source.md"]
+
+
+def test_an_upstream_copy_named_by_a_hook_command_is_excused_from_that_too():
+    hooks = hook_config('"${CLAUDE_PLUGIN_ROOT}"/hooks/guidance/start.sh '
+                        '"${CLAUDE_PLUGIN_ROOT}"/hooks/guidance/fallback.md')
+    unlisted, _ = copy_run(b"new text\n", copies=(), hooks=hooks)
+    assert codes(unlisted) == {"hook-file", "hook-referenced"}
+    assert_not_gated(copy_run(b"new text\n", hooks=hooks)[0])
+
+
+def test_an_upstream_copy_that_differs_from_its_upstream_gates():
+    result, _ = copy_run(b"new text, edited here\n")
+    assert result == (True, [("copy-differs-from-upstream", COPY), ("hook-file", COPY)]), result
+
+
+def test_an_upstream_copy_whose_upstream_is_missing_or_unreadable_gates():
+    result, _ = copy_run(b"new text\n", upstream_bytes=None)
+    assert result == (True, [("copy-differs-from-upstream", COPY), ("hook-file", COPY)]), result
+    result, _ = copy_run(b"new text\n", fail_on="upstream")
+    assert result == (True, [("hook-file", COPY), ("upstream-unreadable", COPY)]), result
+
+
+def test_a_removed_or_renamed_upstream_copy_gates():
+    removed, fetcher = copy_run(None)
+    assert_gated(removed, "hook-file")
+    assert ("copy-differs-from-upstream", COPY) in removed[1]
+    moved = "plugins/alpha/hooks/guidance/moved.md"
+    renamed, _ = copy_run(None, extra_head={moved: b"new text\n"}, renames={moved: COPY})
+    assert ("hook-file", moved) in renamed[1] and ("hook-file", COPY) in renamed[1], renamed
+
+
+def test_an_unlisted_file_is_not_excused_however_equal_it_is():
+    result, fetcher = copy_run(b"new text\n", copies=())
+    assert result == (True, [("hook-file", COPY)]), result
+    assert fetcher.upstream_reads == []
+
+
+def test_a_verified_copy_does_not_excuse_another_change_in_the_pull_request():
+    result, _ = copy_run(b"new text\n",
+                         extra_head={"plugins/alpha/hooks/guidance/start.sh": b"echo other\n"})
+    assert result[0] and {path for _, path in result[1]} == {
+        "plugins/alpha/hooks/guidance/start.sh"}, result
+
+
+def test_a_listed_skill_file_is_still_judged_by_what_it_changes():
+    """Listing a path excuses it from the path rules only; frontmatter and
+    load-time commands are judged as for any skill file."""
+    listed = [dict(COPIES[0], path=SKILL)]
+    base = tree(**{SKILL: b"---\nname: one\n---\n"})
+    head = dict(base, **{SKILL: HOOKED})
+    fetcher = FakeFetcher(base, head, upstream={UPSTREAM_KEY: HOOKED})
+    assert_gated(gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=listed), "skill-frontmatter-runtime-key")
+
+
+def test_an_untouched_upstream_copy_is_never_fetched():
+    base = tree(**{COPY: b"old text\n"})
+    fetcher = FakeFetcher(base, dict(base, **{"docs/x.md": b"x\n"}))
+    assert_not_gated(gate.decide(fetcher, BASE, HEAD, BASE_REF, copies=COPIES))
+    assert fetcher.upstream_reads == []
+
+
+def write_copies(tmp_path, doc):
+    path = tmp_path / "copies.json"
+    path.write_text(doc if isinstance(doc, str) else json.dumps(doc), encoding="utf-8")
+    return str(path)
+
+
+def test_the_checked_in_upstream_copies_load_and_name_files_that_exist():
+    copies = gate.load_upstream_copies()
+    assert copies, "expected at least the fleet-guidance fallback"
+    for copy in copies:
+        assert (REPO_ROOT / copy["path"]).is_file(), copy
+
+
+def test_each_checked_in_upstream_copy_is_what_its_hook_fetches_live():
+    """The exemption rests on the hook installing the upstream's bytes without
+    review whenever its fetch works. So the hook beside each listed copy must
+    fetch that same repository, branch and path."""
+    for copy in gate.load_upstream_copies():
+        hook = (REPO_ROOT / copy["path"]).parent / "on-session-start.sh"
+        text = hook.read_text(encoding="utf-8")
+        repo, branch, path = copy["upstream_repo"], copy["upstream_branch"], copy["upstream_path"]
+        assert f"https://github.com/{repo} refs/heads/{branch}" in text, copy
+        assert f"https://raw.githubusercontent.com/{repo}/$sha/{path}" in text, copy
+
+
+@pytest.mark.parametrize("doc", [
+    "not json",
+    '{"copies": [], "copies": []}',
+    [],
+    {"copies": [], "other": 1},
+    {"copies": {}},
+    {"copies": ["a.md"]},
+    {"copies": [dict(COPIES[0], extra="x")]},
+    {"copies": [{k: v for k, v in COPIES[0].items() if k != "upstream_branch"}]},
+    {"copies": [dict(COPIES[0], upstream_path=7)]},
+    {"copies": [dict(COPIES[0], path="plugins/alpha/hooks/guidance/start.sh")]},
+    {"copies": [dict(COPIES[0], path="plugins/alpha/../alpha/hooks/x.md")]},
+    {"copies": [dict(COPIES[0], path="/abs/x.md")]},
+    {"copies": [dict(COPIES[0], upstream_path="")]},
+    {"copies": [dict(COPIES[0], upstream_path="../x.md")]},
+    {"copies": [dict(COPIES[0], upstream_repo="no-slash")]},
+    {"copies": [dict(COPIES[0], upstream_repo="owner/..")]},
+    {"copies": [dict(COPIES[0], upstream_repo="owner/repo/extra")]},
+    {"copies": [dict(COPIES[0], upstream_branch="main?ref=x")]},
+    {"copies": [dict(COPIES[0], upstream_branch="")]},
+    {"copies": [COPIES[0], dict(COPIES[0], path=COPY.upper()[:-3] + ".md")]},
+], ids=repr)
+def test_an_upstream_copies_file_in_any_other_shape_is_refused(tmp_path, doc):
+    with pytest.raises(gate.GateError):
+        gate.load_upstream_copies(write_copies(tmp_path, doc))
+
+
+def test_a_missing_or_refused_upstream_copies_file_fails_the_whole_gate_closed(tmp_path, monkeypatch):
+    with pytest.raises(gate.GateError):
+        gate.load_upstream_copies(str(tmp_path / "absent.json"))
+    monkeypatch.setattr(gate, "load_upstream_copies",
+                        lambda: (_ for _ in ()).throw(gate.GateError("refused")))
+    assert gate.decide(FakeFetcher(tree(), tree()), BASE, HEAD, BASE_REF) == (True, [("fail-closed", "refused")])
+
+
+def test_a_well_formed_upstream_copies_file_loads(tmp_path):
+    assert gate.load_upstream_copies(write_copies(tmp_path, {"copies": COPIES})) == COPIES
+    assert gate.load_upstream_copies(write_copies(tmp_path, {"copies": []})) == []
+
+
+def test_main_prints_a_verified_copy_as_a_note(tmp_path, monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    monkeypatch.setattr(gate, "load_upstream_copies", lambda: COPIES)
+    base = tree(**{COPY: b"old text\n"})
+    fetcher = FakeFetcher(base, dict(base, **{COPY: b"new text\n"}),
+                          upstream={UPSTREAM_KEY: b"new text\n"})
+    assert gate.main(["--repo", "owner/repo", "--pr", "12", "--base", BASE, "--head", HEAD,
+                      "--base-ref", BASE_REF],
+                     fetcher=fetcher) == 0
+    assert capsys.readouterr().out == (
+        "gated=false\n"
+        f'  upstream-copy-verified: "{COPY}" equals example-owner/_upstream@{UPSTREAM_SHA[:7]}:docs/source.md\n')
+
+
+def test_the_real_fetcher_resolves_the_branch_before_reading(monkeypatch):
+    """read_upstream asks for refs/heads/<branch> first and reads the file at
+    that commit, so a tag named like the branch cannot stand in for it."""
+    calls = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(argv)
+        out = (UPSTREAM_SHA + "\n").encode() if "git/ref/heads/main" in argv[2] else b"text\n"
+        return subprocess.CompletedProcess(argv, 0, out, b"")
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    fetcher = gate.GhFetcher("owner/repo", 12)
+    assert fetcher.read_upstream("example-owner/_upstream", "main", "docs/a b.md") == (UPSTREAM_SHA, b"text\n")
+    assert calls[0][:3] == ["gh", "api", "repos/example-owner/_upstream/git/ref/heads/main"]
+    assert calls[1][-1] == f"repos/example-owner/_upstream/contents/docs/a%20b.md?ref={UPSTREAM_SHA}"
+
+    monkeypatch.setattr(gate.subprocess, "run", lambda argv, **kw: subprocess.CompletedProcess(
+        argv, 0, b"not-a-sha\n", b""))
+    with pytest.raises(gate.GateError):
+        fetcher.read_upstream("example-owner/_upstream", "main", "docs/a.md")
 
 
 def test_a_change_to_another_workflow_or_script_does_not_gate():
@@ -1133,7 +1720,7 @@ def test_an_unexpected_error_gates_without_printing_its_message():
     class Broken(FakeFetcher):
         def changed_files(self):
             raise KeyError("secret-looking content")
-    gated, reasons = gate.decide(Broken(tree(), tree()), BASE, HEAD)
+    gated, reasons = gate.decide(Broken(tree(), tree()), BASE, HEAD, BASE_REF)
     assert gated and reasons == [("fail-closed", "unexpected KeyError")]
 
 
@@ -1828,7 +2415,7 @@ def test_r4_a_404_on_a_listed_file_fails_closed():
 
     base = base_p(**{SCRIPT: b"1\n"})
     head = dict(base, **{SCRIPT: b"2\n"})
-    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD, BASE_REF), "fail-closed")
 
 
 # Round 5 of the #164 review.
@@ -1858,7 +2445,7 @@ def test_r5_a_404_on_a_hook_config_the_tree_lists_fails_closed():
     man = {"name": "p", "hooks": "./config/hooks.json"}
     base = base_p(**{PR + "/.claude-plugin/plugin.json": man, PR + "/README.md": b"a\n"})
     head = dict(base, **{PR + "/README.md": b"b\n"})
-    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD), "fail-closed")
+    assert_gated(gate.decide(Ghost(base, head), BASE, HEAD, BASE_REF), "fail-closed")
     assert_not_gated(run(base, head))
 
 
@@ -1887,7 +2474,8 @@ def test_r5_a_retired_skill_named_only_inside_itself_does_not_gate():
 # =================================================================================
 
 
-ARGS = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD]
+ARGS = ["--repo", "owner/repo", "--pr", "7", "--base", BASE, "--head", HEAD,
+        "--base-ref", BASE_REF]
 
 
 def test_main_writes_the_verdict_and_exits_zero(tmp_path, monkeypatch, capsys):
@@ -1920,9 +2508,10 @@ def test_main_never_prints_file_contents(monkeypatch, capsys):
 
 @pytest.mark.parametrize("bad", [
     ["--repo", "not a repo"], ["--pr", "x"], ["--pr", "0"], ["--base", "abc"], ["--head", "B" * 40],
+    ["--base-ref", "not a branch"], ["--base-ref", ""], ["--base-ref", "-x"],
 ])
 def test_a_usage_error_exits_nonzero(bad, monkeypatch):
-    for name in ("REPO", "PR_NUMBER", "BASE_SHA", "HEAD_SHA"):
+    for name in ("REPO", "PR_NUMBER", "BASE_SHA", "HEAD_SHA", "GITHUB_BASE_REF"):
         monkeypatch.delenv(name, raising=False)
     args = list(ARGS)
     flag = args.index(bad[0])
@@ -1937,8 +2526,10 @@ def test_arguments_default_to_the_environment(monkeypatch):
     monkeypatch.setenv("PR_NUMBER", "12")
     monkeypatch.setenv("BASE_SHA", BASE)
     monkeypatch.setenv("HEAD_SHA", HEAD)
+    monkeypatch.setenv("GITHUB_BASE_REF", "release/1")
     args = gate._parse_args([])
-    assert (args.repo, args.pr, args.base, args.head) == ("owner/repo", 12, BASE, HEAD)
+    assert (args.repo, args.pr, args.base, args.head, args.base_ref) == (
+        "owner/repo", 12, BASE, HEAD, "release/1")
 
 
 def test_gh_output_is_read_as_a_stream_of_json_values():

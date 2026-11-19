@@ -73,6 +73,20 @@ wait. The workflow, `.github/workflows/plugin-runtime-review.yml`, has no
 `paths:` filter because its check is required; whether a change is salient is
 decided in its `detect` job.
 
+Two changes do not wait (ADR 0016, its "two changes" update): a file listed in
+[`scripts/plugin_runtime_upstream_copies.json`](scripts/plugin_runtime_upstream_copies.json)
+whose bytes equal its upstream branch tip (today the bundled
+`fleet-guidance.md` fallback, so copy it from `_agent-guidance`'s current
+`main` or it gates), and an `actions.lock` change that leaves every entry for
+the actions `plugin-runtime-review.yml` uses untouched. The list takes `.md`
+files only; a bundled script always waits. In that lockfile change, every
+`adam-s-daniel/*` entry added or moved must be confirmed by GitHub as a
+published, immutable, non-prerelease release whose commit is on the action's
+default branch, or it waits with `own-action-unverified`. The gate also
+re-reads the pull request after listing its files and fails closed when the
+head, base or base branch has moved, or the base is not the default branch, so
+a pull request into any other branch always waits.
+
 It runs only on `pull_request_target`, which GitHub blocks by default on public
 repos from 2026-11-02. An Actions event policy declared in repo-settings'
 `fleet.yml` allows that event for this one workflow file
@@ -96,7 +110,7 @@ it means to answer both harnesses. Claude-only hooks go in a file the
 
 The API-credit lane (`plugins/adam-coding-local/bin/claude-credit`, `plugins/adam-coding-local/hooks/credit-lane/`, `plugins/adam-coding-local/hooks/claude-code.json`) is [ADR 0018](docs/decisions/0018-api-credit-lane-for-claude-code.md).
 
-The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: at session start it fetches `_agent-guidance`'s `main` HEAD commit with a commit-only git fetch and `base.md` at that commit from `raw.githubusercontent.com`, and installs it through the bundled `fleet-memory.sh`. It never reads the project directory. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a reviewed pull request and never edited here.
+The fleet-guidance hook (`plugins/adam-anything-anywhere/hooks/fleet-guidance/`, wired in that plugin's `hooks/claude-code.json`) is [ADR 0023](docs/decisions/0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md). It is Claude-only: at session start it fetches `_agent-guidance`'s `main` HEAD commit with a commit-only git fetch and `base.md` at that commit from `raw.githubusercontent.com`, and installs it through the bundled `fleet-memory.sh`. It never reads the project directory. That script and the bundled `fleet-guidance.md` fallback are verbatim copies from `_agent-guidance`, refreshed only in a pull request and never edited here; a refresh of the script waits on the plugin runtime review, and a refresh of the fallback to current `main` does not.
 
 The write-marker hook (`plugins/adam-anything-anywhere/hooks/github-write-marker/github-write-marker.sh`, wired as a `PreToolUse` hook on `Bash` and GitHub MCP tools in the same `hooks/claude-code.json`) enforces the fleet guidance's agent-marker rule: it blocks (exit 2) a GitHub issue, PR, comment or review write whose body lacks `on behalf of @Adam-S-Daniel`, and any APPROVE review. It is Claude-only too, and a verbatim copy of `_agent-guidance`'s `.claude/hooks/github-write-marker.sh` under the same refresh rule; `scripts/test_github_write_marker_hook.py` pins what it blocks and what it never blocks.
 

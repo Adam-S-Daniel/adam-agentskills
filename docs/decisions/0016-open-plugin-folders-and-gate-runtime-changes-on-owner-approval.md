@@ -167,6 +167,91 @@ and `subagentStatusLine` is accepted and ignored. The gate is unchanged: it
 guards a plugin-root `settings.json` because `agent` still replaces the main
 thread's system prompt, tools and model while it applies.
 
+### Update 2026-11-17: two changes the owner's approval could not affect no longer wait
+
+The owner asked that pull requests like
+[#178](https://github.com/Adam-S-Daniel/adam-agentskills/pull/178), a refresh
+of the bundled guidance fallback, stop needing his deployment review. A survey
+of every run that entered `plugin-runtime-review` (49 runs on 21 pull requests,
+2026-10-08 to 2026-11-17; every pull request was approved in the end, none
+rejected) found two kinds where the approval could not change what runs. The gate now lets both through; everything else
+gates as before.
+
+- **A copy of text the hook already fetches live.** The fleet-guidance hook
+  installs `_agent-guidance`'s `agents-md/base.md` from `main` at every session
+  start, with no review here, and falls back to the bundled
+  `fleet-guidance.md` only when that fetch fails
+  ([ADR 0023](0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)).
+  A pull request that makes the fallback byte-identical to the upstream branch
+  tip gives a session nothing the live fetch would not. Such copies are listed
+  in `scripts/plugin_runtime_upstream_copies.json`, and a change to a listed
+  path is excused from the `hook-file`, `hook-referenced` and `plugin-path`
+  reasons when its bytes at head equal the upstream file at the tip of the
+  named branch. The limits:
+  - The list is read from the base checkout, is a gate file itself, and
+    accepts `.md` paths only. A script is never excused this way, however
+    verbatim: the bundled `fleet-memory.sh` and `github-write-marker.sh` are
+    code that runs on the owner's machine, and this gate is the one place the
+    owner sees a change to them before it does.
+  - Different bytes, a removal, a rename or an upstream that cannot be read
+    gates as before, with the extra reason `copy-differs-from-upstream` or
+    `upstream-unreadable`.
+  - The branch is resolved to a commit first, so a tag of the same name
+    cannot stand in for it. A test holds each listed copy to the repository,
+    branch and path its hook fetches.
+  - Covered: #130 and #178 (2 of the 21 pull requests).
+- **A lockfile change that leaves the gate's own pins alone.**
+  `.github/workflows/actions.lock` is a gate file because it chooses the commit
+  the gate workflow's actions run at. It now gates only when its format
+  version, the gate workflow's own list, or an entry for an action the gate
+  workflow uses differs between base and head. "Uses" is read from the
+  lockfile's list and from the workflow's own `uses:` lines, at base and at
+  head, and matches the action's `owner/repo` under any version or letter
+  case, plus any entry such an entry names. A missing lockfile gates, and a
+  shape the script cannot read fails closed. An entry only other workflows
+  use does not gate: those workflows already run the pull request's own code
+  on `pull_request`. Covered: #106 and #144, and #89 as the gate workflow
+  stood then (it did not use `setup-python` yet; the same bump would gate
+  today).
+
+Still gated, by design: hook scripts and hook configs, `bin/`, plugin settings
+and package files, runtime manifest keys, skill frontmatter and load-time
+commands, the body of a skill that grants a shell, the gate's workflow, script,
+tests and copy list, `scripts/cloud-env-setup.sh` and
+`scripts/codex-session-start.sh`, and a Dependabot bump of an action the gate
+workflow itself uses. Those were the other 16 pull requests.
+
+### Update 2026-11-18: own-action pins need GitHub's word, and the gate checks the pull request did not move
+
+Two safeguards from the narrower rule the owner set aside
+([#181](https://github.com/Adam-S-Daniel/adam-agentskills/pull/181), closed as
+superseded by [#179](https://github.com/Adam-S-Daniel/adam-agentskills/pull/179))
+come back on top of the lockfile rule above, at the owner's request.
+
+- **An own-action pin must be a real release.** The lockfile is the pull
+  request's word, and Dependabot can propose an own-action bump soon after a
+  release (#180 drops the cooldown for own actions). So in a lockfile change the rule above lets through, every entry
+  added or changed for an `adam-s-daniel/*` action (by key, or by the owner's
+  numeric id 4205216) must be exactly `adam-s-daniel/<repo>@<tag>` with gh
+  actions-lock's four keys and `ref` equal to the tag, and GitHub must confirm
+  that the repository has that `repo_id`, the owner's id and is not a fork,
+  that the tag resolves to the locked commit, that the commit is on the
+  default branch, and that the tag's release is published, not a prerelease
+  and immutable. Anything else gates as `gate-itself` with the extra reason
+  `own-action-unverified` and a fixed message; an API error fails closed.
+  Removing an own entry, and third-party entries, ask GitHub nothing.
+- **The pull request must still be the one the event named.** The file list
+  carries no sha: it describes the pull request when it is listed. The gate
+  now re-reads the pull request after listing and fails closed unless its
+  head sha, base sha and base branch equal the event's (`GITHUB_BASE_REF`,
+  which the runner sets on `pull_request_target`) and the base branch is the
+  repository's default branch. A pull request into any other branch therefore
+  always waits for the owner.
+
+Not carried over from #181, because the owner asked for these two only: its
+byte-for-byte check that the lockfile is in the form gh actions-lock writes,
+and its comparison from the merge base as well as from the base.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —
@@ -178,4 +263,5 @@ thread's system prompt, tools and model while it applies.
 - [Plugin loading](https://code.claude.com/docs/en/plugins/loading) and
   [plugin components](https://code.claude.com/docs/en/plugins/components)
 - `scripts/plugin_runtime_gate.py`, `scripts/test_plugin_runtime_gate.py`,
+  `scripts/plugin_runtime_upstream_copies.json`,
   `.github/workflows/plugin-runtime-review.yml`

@@ -34,15 +34,22 @@ The gate denies by default. A pull request is GATED when any of these holds:
                           ${CLAUDE_PLUGIN_ROOT}, $CLAUDE_PLUGIN_ROOT,
                           ${PLUGIN_ROOT}, $PLUGIN_ROOT, or cmd.exe's
                           %PLUGIN_ROOT% / %CLAUDE_PLUGIN_ROOT%.
-  (4) gate-itself         the gate's own workflow, this script or its tests,
-                          and scripts/codex-session-start.sh (setup.sh copies
+  (4) gate-itself         the gate's own workflow, this script, its tests or
+                          its list of upstream copies, and
+                          scripts/codex-session-start.sh (setup.sh copies
                           it to where local Codex runs it at every session
                           start, so it is runtime code too), and
                           scripts/cloud-env-setup.sh (every owner cloud
-                          environment runs it as root at setup).
+                          environment runs it as root at setup). The action
+                          lockfile gates only when it changes what the gate's
+                          own workflow runs (see "Two changes that do not
+                          gate" below).
   (5) fail-closed         anything this script cannot decide: an API error, a
                           file that does not parse, a diff at GitHub's
-                          3000-file cap, or anything unexpected.
+                          3000-file cap, a pull request whose head, base or
+                          base branch moved from the event's, one that does
+                          not target the default branch, or anything
+                          unexpected.
   (6) skill and command files, judged by what they change rather than by path
       (a prose edit does not gate; these gate):
       skill-frontmatter-runtime-key  YAML frontmatter `hooks`, `allowed-tools`
@@ -72,10 +79,39 @@ load-time command at base or head. Nothing under <root>/hooks or <root>/bin is
 inert. (check_consistency.py already refuses any symlink under plugins/; the
 gate cannot see file modes.)
 
+Two changes that do not gate, because the owner's approval could not change
+what runs (ADR 0016, update of 2026-11-17):
+
+  * An upstream copy. scripts/plugin_runtime_upstream_copies.json lists .md
+    files a hook installs as text and also fetches live from another
+    repository's branch. A change to one is not gated under (1) or (3) when
+    its bytes at head equal the upstream file at that branch's tip: the hook
+    already installs those bytes with no review. Anything else about the path
+    (a removal, a rename, different bytes, an upstream that cannot be read)
+    gates as before, with the extra reason copy-differs-from-upstream. The list
+    is read from the base checkout, never from the pull request, holds .md
+    files only, and is itself a gate file.
+  * A lockfile change that leaves the gate's pins alone. actions.lock gates
+    under (4) when its format version, the gate workflow's own list, or any
+    entry for an action the gate workflow uses (at base or head, under any
+    version or letter case, plus entries those name) differs between base and
+    head, or when either side is missing or is not the expected shape. An
+    entry only other workflows use does not gate: those workflows run the pull
+    request's own code already. One more condition holds for that change:
+    each entry it adds or changes for an own action (adam-s-daniel/*, by key
+    or by owner id) must be exactly adam-s-daniel/<repo>@<tag> with gh
+    actions-lock's four keys, and GitHub, not the pull request, must confirm
+    that the repo has that id, the owner's id and is not a fork, that the tag
+    is at the locked commit, that the commit is on the default branch, and
+    that the tag's release is published, not a prerelease and immutable.
+    Anything else gates as gate-itself with the extra reason
+    own-action-unverified and a fixed message.
+
 Everything read from the pull request is untrusted DATA. It is fetched through
 the GitHub API (never checked out), parsed with json only, capped in size, and
 never executed. The summary prints repo-relative paths (JSON-quoted, so a path
-cannot inject a workflow command) and reason codes, never file contents.
+cannot inject a workflow command), reason codes and fixed refusal messages,
+never file contents.
 
 Exit status: 0 whether gated or not; 2 only on a usage error. The workflow
 treats a failed or empty result as gated.
@@ -83,8 +119,10 @@ treats a failed or empty result as gated.
 Usage:
   python3 scripts/plugin_runtime_gate.py [--repo OWNER/REPO] [--pr N]
                                          [--base SHA] [--head SHA]
+                                         [--base-ref BRANCH]
   Each flag defaults to an environment variable: REPO, PR_NUMBER, BASE_SHA,
-  HEAD_SHA. GH_TOKEN must be set for `gh api`.
+  HEAD_SHA, and GITHUB_BASE_REF, which the runner sets from the event.
+  GH_TOKEN must be set for `gh api`.
 """
 
 import argparse
@@ -144,17 +182,43 @@ ROOT_FILES = frozenset({
 # them is itself gated. The action lockfile is listed too: it chooses the
 # commit each tag-pinned action (the gate's checkout among them) runs at. The
 # local-Codex launcher is listed because it runs at every Codex session start.
+LOCKFILE = ".github/workflows/actions.lock"
+GATE_WORKFLOW = ".github/workflows/plugin-runtime-review.yml"
+# Read from the base checkout beside this script, never from the pull request.
+UPSTREAM_COPIES_FILE = "scripts/plugin_runtime_upstream_copies.json"
 GATE_FILES = frozenset({
-    ".github/workflows/actions.lock",
-    ".github/workflows/plugin-runtime-review.yml",
+    LOCKFILE,
+    GATE_WORKFLOW,
+    UPSTREAM_COPIES_FILE,
     "scripts/cloud-env-setup.sh",
     "scripts/codex-session-start.sh",
     "scripts/plugin_runtime_gate.py",
     "scripts/test_plugin_runtime_gate.py",
 })
+# The reasons an upstream copy is excused from; what a skill or command file
+# changes is still judged in (6).
+COPY_EXCUSED_CODES = frozenset({"hook-file", "hook-referenced", "plugin-path"})
+LOCK_KEYS = frozenset({"version", "workflows", "dependencies"})
+
+# The account whose actions an unreviewed lockfile change may add or move. Such a
+# pin is the pull request's word alone, so GitHub must confirm it is a real,
+# released commit of that account's repository (ADR 0016, update of
+# 2026-11-18). gh actions-lock writes owner/repo in lowercase and keeps the tag
+# exact; the numeric id is what survives a rename, so it is the id that decides.
+OWN_ACTIONS_OWNER = "adam-s-daniel"
+OWN_ACTIONS_OWNER_ID = 4205216
+_OWN_ACTION_KEY = re.compile(
+    re.escape(OWN_ACTIONS_OWNER) + r"/([a-z0-9][a-z0-9._-]*)@([A-Za-z0-9][A-Za-z0-9._-]*)")
+_OWN_ENTRY_KEYS = frozenset({"ref", "commit", "owner_id", "repo_id"})
+_LOCK_COMMIT = re.compile(r"sha1-([0-9a-f]{40})")
+MAX_TAG_DEPTH = 5  # how many annotated tags may wrap the commit
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+# Another repository's name may start with `_` or `.`, which REPO_RE (this
+# repository's own name, from the event) does not allow.
+UPSTREAM_REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]*/(?!\.{1,2}$)[A-Za-z0-9._-]+$")
+BRANCH_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)*$")
 # Every spelling of the plugin root a hook command can use: POSIX shells see
 # ${CLAUDE_PLUGIN_ROOT} or $CLAUDE_PLUGIN_ROOT (Claude Code substitutes the
 # first; Codex only exports both names), and Codex's Windows `commandWindows`
@@ -234,6 +298,85 @@ class GhFetcher:
              f"repos/{self.repo}/contents/{quote(path, safe='/')}?ref={sha}"],
             f"reading {json.dumps(path)}", ok_404=True)
         return None if proc is None else proc.stdout
+
+    def read_upstream(self, repo: str, branch: str, path: str) -> Tuple[str, Optional[bytes]]:
+        """(tip sha, the file's bytes there) for another repository's branch.
+        The branch is resolved to a commit first, so a tag of the same name
+        cannot stand in for it."""
+        proc = self._gh(
+            ["api", f"repos/{repo}/git/ref/heads/{quote(branch, safe='/')}",
+             "--jq", ".object.sha"],
+            f"resolving {repo}@{branch}")
+        sha = proc.stdout.decode("utf-8", "replace").strip()
+        if not SHA_RE.match(sha):
+            raise GateError(f"{repo}@{branch} did not resolve to a commit")
+        proc = self._gh(
+            ["api", "-H", "Accept: application/vnd.github.raw",
+             f"repos/{repo}/contents/{quote(path, safe='/')}?ref={sha}"],
+            f"reading {json.dumps(path)} in {repo}", ok_404=True)
+        return sha, (None if proc is None else proc.stdout)
+
+    def _one_object(self, endpoint: str, jq: str, what: str) -> Optional[dict]:
+        """One JSON object from the API; None on a 404 or any other shape."""
+        proc = self._gh(["api", endpoint, "--jq", jq], what, ok_404=True)
+        if proc is None:
+            return None
+        values = _json_values(proc.stdout.decode("utf-8"))
+        return values[0] if len(values) == 1 and isinstance(values[0], dict) else None
+
+    def pull_request(self) -> Optional[dict]:
+        """The pull request as GitHub has it now."""
+        return self._one_object(
+            f"repos/{self.repo}/pulls/{self.pr}",
+            "{head: .head.sha, base: .base.sha, base_ref: .base.ref, "
+            "default_branch: .base.repo.default_branch}",
+            "reading the pull request")
+
+    def action_repo(self, name: str) -> Optional[dict]:
+        """An action repository's identity, from GitHub."""
+        return self._one_object(
+            f"repos/{quote(name, safe='/')}",
+            "{id, full_name, owner_id: .owner.id, fork, default_branch}",
+            f"reading the repository {json.dumps(name)}")
+
+    def action_release(self, name: str, tag: str) -> Optional[dict]:
+        """The release published for exactly this tag; None when there is none."""
+        return self._one_object(
+            f"repos/{quote(name, safe='/')}/releases/tags/{quote(tag, safe='')}",
+            "{tag_name, immutable, draft, prerelease}", f"reading a release of {json.dumps(name)}")
+
+    def commit_on_branch(self, name: str, branch: str, sha: str) -> bool:
+        """Whether the branch contains the commit. Compared from the branch, the
+        commit is `behind` or `identical` only then; a commit that exists only
+        in a fork of the repository is `diverged` or `ahead`."""
+        found = self._one_object(
+            f"repos/{quote(name, safe='/')}/compare/{quote(branch, safe='')}...{sha}?per_page=1",
+            "{status}", f"comparing a commit of {json.dumps(name)}")
+        return found is not None and found.get("status") in ("behind", "identical")
+
+    def action_tag_commit(self, name: str, tag: str) -> Optional[str]:
+        """The commit a tag resolves to, through any annotated tags; None when
+        the tag does not exist or does not end at a commit."""
+        repo = quote(name, safe="/")
+        what = f"resolving a tag of {json.dumps(name)}"
+        found = self._one_object(
+            f"repos/{repo}/git/ref/tags/{quote(tag, safe='')}",
+            "{ref, type: .object.type, sha: .object.sha}", what)
+        if found is None or found.get("ref") != f"refs/tags/{tag}":
+            return None
+        for _ in range(MAX_TAG_DEPTH):
+            sha = found.get("sha")
+            if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+                return None
+            if found.get("type") == "commit":
+                return sha
+            if found.get("type") != "tag":
+                return None
+            found = self._one_object(
+                f"repos/{repo}/git/tags/{sha}", "{type: .object.type, sha: .object.sha}", what)
+            if found is None:
+                return None
+        return None
 
 
 def _json_values(text: str) -> List[object]:
@@ -537,6 +680,14 @@ def _grants_bash(value) -> bool:
     return "bash" in text or "powershell" in text
 
 
+def _import_yaml():
+    try:
+        import yaml  # third-party; the workflow installs the base branch's pin
+    except ImportError:
+        raise GateError("PyYAML is not installed, so YAML cannot be read") from None
+    return yaml
+
+
 def _strict_yaml_load(yaml, text: str):
     """safe_load that refuses a repeated mapping key (PyYAML keeps the last)."""
     class Loader(yaml.SafeLoader):
@@ -558,10 +709,7 @@ def _read_skill(data: Optional[bytes], path: str) -> _Skill:
     that does not parse, so the caller fails closed."""
     if data is None:
         return _NO_SKILL
-    try:
-        import yaml  # third-party; the runner image ships it
-    except ImportError:
-        raise GateError("PyYAML is not installed, so SKILL.md frontmatter cannot be read") from None
+    yaml = _import_yaml()
     try:
         text = data.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -649,10 +797,255 @@ def _is_skill_file(path: str, roots: Set[str], named: Set[str]) -> bool:
     return False
 
 
-def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
+def load_upstream_copies(path: Optional[str] = None) -> List[dict]:
+    """The upstream copies declared beside this script, which the workflow
+    checks out from the base branch. Raises GateError on a file that is
+    missing or is not exactly the expected shape, so the gate fails closed
+    instead of excusing nothing or everything."""
+    if path is None:
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            posixpath.basename(UPSTREAM_COPIES_FILE))
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            doc = json.loads(handle.read(), object_pairs_hook=_no_repeated_keys)
+    except (OSError, ValueError):
+        raise GateError(f"{UPSTREAM_COPIES_FILE} is missing or is not valid JSON") from None
+    if not isinstance(doc, dict) or set(doc) != {"copies"} or not isinstance(doc["copies"], list):
+        raise GateError(f"{UPSTREAM_COPIES_FILE} must be an object with one key, `copies`, a list")
+    keys = {"path", "upstream_repo", "upstream_branch", "upstream_path"}
+    seen: Set[str] = set()
+    for entry in doc["copies"]:
+        if not isinstance(entry, dict) or set(entry) != keys \
+                or not all(isinstance(entry[key], str) for key in keys):
+            raise GateError(f"an entry in {UPSTREAM_COPIES_FILE} must hold exactly {sorted(keys)}, as strings")
+        for key in ("path", "upstream_path"):
+            if not entry[key] or _norm(entry[key]) != entry[key]:
+                raise GateError(f"`{key}` in {UPSTREAM_COPIES_FILE} is not a plain repo-relative path")
+        # Text a hook installs, never a script it runs: the exemption rests on
+        # the bytes being data, so only a Markdown file may be listed.
+        if not entry["path"].lower().endswith(".md"):
+            raise GateError(f"{UPSTREAM_COPIES_FILE} may list .md files only")
+        if not UPSTREAM_REPO_RE.match(entry["upstream_repo"]) or not BRANCH_RE.match(entry["upstream_branch"]):
+            raise GateError(f"an upstream in {UPSTREAM_COPIES_FILE} is not OWNER/REPO and a branch name")
+        if entry["path"].lower() in seen:
+            raise GateError(f"{UPSTREAM_COPIES_FILE} lists a path twice")
+        seen.add(entry["path"].lower())
+    return doc["copies"]
+
+
+def _copy_matches_upstream(fetcher, head_snap: Snapshot, copy: dict) -> Tuple[bool, str]:
+    """(whether the copy's bytes at head equal the upstream branch tip's, the
+    tip sha). A missing file on either side is not a match."""
+    data = head_snap.raw(copy["path"])
+    sha, upstream = fetcher.read_upstream(
+        copy["upstream_repo"], copy["upstream_branch"], copy["upstream_path"])
+    return data is not None and upstream is not None and data == upstream, sha
+
+
+def _strings(node) -> Iterable[str]:
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            yield from _strings(key)
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _strings(value)
+
+
+def _uses_values(node) -> Iterable[str]:
+    """Every `uses` value anywhere in a parsed workflow."""
+    if isinstance(node, dict):
+        if isinstance(node.get("uses"), str):
+            yield node["uses"]
+        for value in node.values():
+            yield from _uses_values(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _uses_values(value)
+
+
+def _action_identity(ref: str) -> Optional[str]:
+    """`owner/repo` in lowercase for `owner/repo[/path]@ref`; None for a local
+    action, a container or anything else."""
+    name, at, _ = ref.rpartition("@")
+    parts = name.split("/")
+    if not at or len(parts) < 2 or not all(parts[:2]) or name.startswith((".", "$")) or ":" in name:
+        return None
+    return "/".join(parts[:2]).lower()
+
+
+def _load_yaml(data: bytes, what: str):
+    yaml = _import_yaml()
+    try:
+        return _strict_yaml_load(yaml, data.decode("utf-8"))
+    except (yaml.YAMLError, UnicodeDecodeError):
+        raise GateError(f"{what} does not parse") from None
+
+
+def _lockfile_changes_the_gate(base_snap: Snapshot, head_snap: Snapshot) -> bool:
+    """Whether actions.lock differs between base and head in anything that can
+    change what the gate's own workflow runs: the format version, the gate
+    workflow's list, or an entry for an action that workflow uses on either
+    side (under any version or letter case, plus the entries those name). A
+    missing lockfile gates; a shape this cannot read raises GateError."""
+    locks, refs = [], set()
+    for snap in (base_snap, head_snap):
+        data = snap.raw(LOCKFILE)
+        if data is None:
+            return True
+        lock = _load_yaml(data, f"{LOCKFILE} at {snap.side}")
+        if not isinstance(lock, dict) or set(lock) - LOCK_KEYS \
+                or not isinstance(lock.get("workflows"), dict) \
+                or not isinstance(lock.get("dependencies"), dict) \
+                or not all(isinstance(key, str) for part in ("workflows", "dependencies")
+                           for key in lock[part]):
+            raise GateError(f"{LOCKFILE} at {snap.side} does not have the expected shape")
+        locks.append(lock)
+        workflow = snap.raw(GATE_WORKFLOW)
+        if workflow is not None:
+            refs |= set(_uses_values(_load_yaml(workflow, f"{GATE_WORKFLOW} at {snap.side}")))
+        for key, listed in lock["workflows"].items():
+            if (_norm(key) or "").lower() == GATE_WORKFLOW:
+                if not isinstance(listed, list) or not all(isinstance(item, str) for item in listed):
+                    raise GateError(f"{LOCKFILE} at {snap.side} lists the gate workflow in an unexpected shape")
+                refs |= set(listed)
+    names = set()
+    for ref in refs:
+        identity = _action_identity(ref)
+        if identity is None:
+            raise GateError("the gate workflow uses an action the lockfile check cannot place")
+        names.add(identity)
+
+    def view(lock):
+        deps = lock["dependencies"]
+        by_lower: Dict[str, List[str]] = {}
+        for key in deps:
+            by_lower.setdefault(key.lower(), []).append(key)
+        # An entry whose key cannot be placed is kept, so a change to it gates.
+        keep = {key for key in deps if _action_identity(key) in names | {None}}
+        frontier = list(keep)
+        while frontier:
+            for text in _strings(deps[frontier.pop()]):
+                for key in by_lower.get(text.lower(), []):
+                    if key not in keep:
+                        keep.add(key)
+                        frontier.append(key)
+        return (lock.get("version"),
+                {key: value for key, value in lock["workflows"].items()
+                 if (_norm(key) or "").lower() == GATE_WORKFLOW},
+                {key: deps[key] for key in keep})
+
+    return view(locks[0]) != view(locks[1])
+
+
+class _OwnActionUnverified(Exception):
+    """Why an own-action pin in an unreviewed lockfile change is not confirmed.
+    Fixed text only: the message is printed, so it never carries anything from
+    the pull request."""
+
+
+def _is_positive_int(value) -> bool:
+    return type(value) is int and value > 0  # bool is an int subclass; 1.0 == 1
+
+
+def _is_own_entry(key: str, entry) -> bool:
+    """An entry for an own action, by its key's owner or by the owner id it
+    claims, so neither spelling can carry an own pin past the check."""
+    identity = _action_identity(key)
+    if identity is not None and identity.split("/", 1)[0] == OWN_ACTIONS_OWNER:
+        return True
+    return isinstance(entry, dict) and entry.get("owner_id") == OWN_ACTIONS_OWNER_ID
+
+
+def _check_own_action_on_github(fetcher, key: str, entry) -> None:
+    """The lockfile is the pull request's word. Only GitHub can say the repo
+    still belongs to the owner and this commit is a real, released one on its
+    default branch."""
+    match = _OWN_ACTION_KEY.fullmatch(key)
+    if match is None:
+        raise _OwnActionUnverified("an own action's key is not adam-s-daniel/<repo>@<tag>")
+    # Exactly gh actions-lock's keys: a nested `uses` list would pin actions
+    # GitHub cannot vouch for here.
+    if not isinstance(entry, dict) or set(entry) != _OWN_ENTRY_KEYS:
+        raise _OwnActionUnverified("an own action's entry does not have the expected keys")
+    name, tag = f"{OWN_ACTIONS_OWNER}/{match.group(1)}", match.group(2)
+    if entry["ref"] != tag:
+        raise _OwnActionUnverified("an own action's ref does not match its key")
+    if entry["owner_id"] != OWN_ACTIONS_OWNER_ID or type(entry["owner_id"]) is not int:
+        raise _OwnActionUnverified("an own action's entry has the wrong owner_id")
+    if not _is_positive_int(entry["repo_id"]):
+        raise _OwnActionUnverified("an own action's entry has no repo_id")
+    commit_match = _LOCK_COMMIT.fullmatch(entry["commit"]) if isinstance(entry["commit"], str) else None
+    if commit_match is None:
+        raise _OwnActionUnverified("an own action's commit is not a sha1 pin")
+    commit = commit_match.group(1)
+
+    repo = fetcher.action_repo(name)
+    if not isinstance(repo, dict) or not _is_positive_int(repo.get("id")) \
+            or repo["id"] != entry["repo_id"] \
+            or not _is_positive_int(repo.get("owner_id")) \
+            or repo["owner_id"] != OWN_ACTIONS_OWNER_ID \
+            or not isinstance(repo.get("full_name"), str) \
+            or repo["full_name"].lower() != name:
+        raise _OwnActionUnverified("GitHub does not confirm an own action's repository and owner")
+    if repo.get("fork") is not False:
+        raise _OwnActionUnverified("an own action's repository is a fork, or GitHub does not say")
+    branch = repo.get("default_branch")
+    if not isinstance(branch, str) or not BRANCH_RE.fullmatch(branch):
+        raise _OwnActionUnverified("GitHub does not name an own action's default branch")
+    if fetcher.action_tag_commit(name, tag) != commit:
+        raise _OwnActionUnverified("an own action's tag is not at the locked commit")
+    if fetcher.commit_on_branch(name, branch, commit) is not True:
+        raise _OwnActionUnverified("an own action's commit is not on its default branch")
+    release = fetcher.action_release(name, tag)
+    if not isinstance(release, dict) or release.get("tag_name") != tag \
+            or release.get("draft") is not False \
+            or release.get("prerelease") is not False:
+        raise _OwnActionUnverified("an own action's tag has no published release")
+    if release.get("immutable") is not True:
+        raise _OwnActionUnverified("an own action's release is not immutable")
+
+
+def _own_action_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot) -> Optional[str]:
+    """Why an otherwise unreviewed lockfile change still gates; None when every
+    own-action entry it adds or changes is confirmed by GitHub. Removing an own
+    entry adds no code, so it needs nothing. Runs only after
+    _lockfile_changes_the_gate has read both sides, so both parse."""
+    base_deps = _load_yaml(base_snap.raw(LOCKFILE), f"{LOCKFILE} at base")["dependencies"]
+    head_deps = _load_yaml(head_snap.raw(LOCKFILE), f"{LOCKFILE} at head")["dependencies"]
+    bumped = sorted(key for key, entry in head_deps.items()
+                    if _is_own_entry(key, entry) and base_deps.get(key, _ABSENT) != entry)
+    try:
+        for key in bumped:
+            _check_own_action_on_github(fetcher, key, head_deps[key])
+    except _OwnActionUnverified as exc:
+        return str(exc)
+    return None
+
+
+def _check_pull_request_unmoved(fetcher, base: str, head: str, base_ref: str) -> None:
+    """The file list has no sha of its own: it describes the pull request as it
+    is when listed. Reading the pull request AFTER it ties the list to the
+    commits the event named, so a push or a retarget in between cannot pair one
+    commit's verdict with another commit's files."""
+    current = fetcher.pull_request()
+    if not isinstance(current, dict) or current.get("head") != head \
+            or current.get("base") != base or current.get("base_ref") != base_ref:
+        raise GateError("the pull request no longer matches the event that started this run")
+    if current.get("default_branch") != base_ref:
+        raise GateError("the pull request does not target the default branch")
+
+
+def evaluate(fetcher, base: str, head: str, base_ref: str, copies: Iterable[dict] = (),
+             notes: Optional[List[str]] = None) -> List[Tuple[str, str]]:
     """The (reason code, path) pairs that gate this pull request; empty when
-    nothing does. Raises GateError (or anything else) when it cannot decide."""
+    nothing does. Raises GateError (or anything else) when it cannot decide.
+    `copies` are the upstream copies the base checkout declares; a line is
+    appended to `notes` for each one this run verified."""
     files = fetcher.changed_files()
+    _check_pull_request_unmoved(fetcher, base, head, base_ref)
     if not isinstance(files, list):
         raise GateError("the pull request's file list is not a list")
     if len(files) >= MAX_CHANGED_FILES:
@@ -688,9 +1081,17 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
         snap.listed = set(fetcher.list_files(snap.sha))
     reasons: Set[Tuple[str, str]] = set()
 
-    # (f) first: it needs nothing fetched.
+    # (4) first. Only the lockfile is read: it gates when it changes what the
+    # gate's own workflow runs, or adds or moves an own-action pin GitHub does
+    # not confirm.
     for path in changed & GATE_FILES:
-        reasons.add(("gate-itself", path))
+        if path != LOCKFILE or _lockfile_changes_the_gate(base_snap, head_snap):
+            reasons.add(("gate-itself", path))
+            continue
+        refusal = _own_action_refusal(fetcher, base_snap, head_snap)
+        if refusal is not None:
+            reasons.add(("gate-itself", path))
+            reasons.add(("own-action-unverified", refusal))
 
     markets = {"base": base_snap.json(MARKETPLACE), "head": head_snap.json(MARKETPLACE)}
     entry_roots = {side: _local_roots(markets[side]) for side in markets}
@@ -931,13 +1332,41 @@ def evaluate(fetcher, base: str, head: str) -> List[Tuple[str, str]]:
                     _grants_bash(skill.values["allowed-tools"]) for skill in (before, after)):
                 reasons.add(("skill-body-bash", path))
 
+    # Last: an upstream copy whose bytes at head are the upstream branch tip's
+    # is excused from (1) and (3). The hook already installs those bytes when
+    # its live fetch works, so the owner's approval could not change what a
+    # session gets.
+    for copy in copies:
+        path = copy["path"]
+        excused = {reason for reason in reasons
+                   if reason[1] == path and reason[0] in COPY_EXCUSED_CODES}
+        if path not in changed or not excused:
+            continue
+        try:
+            matches, sha = _copy_matches_upstream(fetcher, head_snap, copy)
+        except GateError:
+            reasons.add(("upstream-unreadable", path))
+            continue
+        if not matches:
+            reasons.add(("copy-differs-from-upstream", path))
+            continue
+        reasons -= excused
+        if notes is not None:
+            notes.append(f"upstream-copy-verified: {json.dumps(path)} equals "
+                         f"{copy['upstream_repo']}@{sha[:7]}:{copy['upstream_path']}")
+
     return sorted(reasons)
 
 
-def decide(fetcher, base: str, head: str) -> Tuple[bool, List[Tuple[str, str]]]:
-    """evaluate(), failing closed on anything it raises."""
+def decide(fetcher, base: str, head: str, base_ref: str,
+           copies: Optional[Iterable[dict]] = None,
+           notes: Optional[List[str]] = None) -> Tuple[bool, List[Tuple[str, str]]]:
+    """evaluate(), failing closed on anything it raises. `copies` defaults to
+    the list beside this script."""
     try:
-        reasons = evaluate(fetcher, base, head)
+        if copies is None:
+            copies = load_upstream_copies()
+        reasons = evaluate(fetcher, base, head, base_ref, copies, notes)
     except GateError as exc:
         reasons = [("fail-closed", str(exc))]
     except Exception as exc:  # noqa: BLE001 — anything unexpected gates
@@ -951,6 +1380,7 @@ def _parse_args(argv):
     parser.add_argument("--pr", default=os.environ.get("PR_NUMBER"))
     parser.add_argument("--base", default=os.environ.get("BASE_SHA"))
     parser.add_argument("--head", default=os.environ.get("HEAD_SHA"))
+    parser.add_argument("--base-ref", default=os.environ.get("GITHUB_BASE_REF"))
     args = parser.parse_args(argv)
     if not args.repo or not REPO_RE.match(args.repo):
         parser.error("--repo / REPO must be OWNER/REPO")
@@ -959,6 +1389,8 @@ def _parse_args(argv):
     for flag in ("base", "head"):
         if not getattr(args, flag) or not SHA_RE.match(getattr(args, flag)):
             parser.error(f"--{flag} must be a 40-character lowercase hex sha")
+    if not args.base_ref or not BRANCH_RE.fullmatch(args.base_ref):
+        parser.error("--base-ref / GITHUB_BASE_REF must be a branch name")
     args.pr = int(args.pr)
     return args
 
@@ -967,13 +1399,18 @@ def main(argv=None, fetcher=None) -> int:
     args = _parse_args(argv)
     if fetcher is None:
         fetcher = GhFetcher(args.repo, args.pr)
-    gated, reasons = decide(fetcher, args.base, args.head)
+    notes: List[str] = []
+    gated, reasons = decide(fetcher, args.base, args.head, args.base_ref, notes=notes)
     print(f"gated={'true' if gated else 'false'}")
     for code, detail in reasons:
         # A path comes from the pull request: JSON-quoting it keeps a newline
         # or a leading `::` from being read as a workflow command.
         shown = detail if code == "fail-closed" else json.dumps(detail)
         print(f"  {code}: {shown}")
+    for note in notes:
+        # Built from the base checkout's own list and a commit sha, with the
+        # path JSON-quoted.
+        print(f"  {note}")
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:

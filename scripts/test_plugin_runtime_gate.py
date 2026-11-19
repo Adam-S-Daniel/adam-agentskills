@@ -1069,7 +1069,7 @@ def test_a_bump_moving_the_gate_to_a_branch_ref_gates():
                                  "actions/checkout@main": dict(CHECKOUT_NEW, ref="main")})
     lock = lock.replace(b"actions/checkout@v7.1.0", b"actions/checkout@main")
     assert_bump_refused(bump_run(head_lock=lock, head_workflow=gate_workflow("main"))[0],
-                        "tag is not at the locked commit")
+                        "not a higher version than the base pinned")
 
 
 def test_a_bump_without_the_lockfile_gates():
@@ -1102,6 +1102,33 @@ def test_a_downgrade_or_a_tag_that_is_not_a_version_gates(new_tag):
     result, _, _ = bump_run(head_lock=lock, head_workflow=gate_workflow(new_tag),
                             tags={("actions/checkout", new_tag): SHA_CHECKOUT_NEW})
     assert_bump_refused(result, "not a higher version than the base pinned")
+
+
+def test_moving_the_gate_down_to_a_pin_another_workflow_holds_gates():
+    """Round-2 review: a pin already in the lockfile skips the new-pin checks,
+    so the gate's own refs must move up too."""
+    old = dict(CHECKOUT, ref="v6.1.0", commit="sha1-" + "6" * 40)
+    base_lock = lock_doc(workflows={".github/workflows/ci.yml": [
+        "actions/checkout@v6.1.0", "actions/setup-node@v7.1.0"]},
+        dependencies={"actions/checkout@v6.1.0": old})
+    head_lock = lock_doc(workflows={
+        ".github/workflows/ci.yml": ["actions/checkout@v6.1.0", "actions/setup-node@v7.1.0"],
+        GATE_WF: ["actions/checkout@v6.1.0", "actions/setup-python@v7.1.0"]},
+        dependencies={"actions/checkout@v6.1.0": old, "actions/checkout@v7.0.1": None})
+    base = tree(**{LOCK: base_lock, GATE_WF: gate_workflow()})
+    head = dict(base, **{LOCK: head_lock, GATE_WF: gate_workflow("v6.1.0")})
+    result = gate.decide(BumpFetcher(base, head), BASE, HEAD, BASE_REF, copies=[])
+    assert_bump_refused(result, "not a higher version than the base pinned")
+
+
+@pytest.mark.parametrize("brk", [b"\r", "\u0085".encode(), "\u2028".encode()])
+def test_a_line_break_hidden_after_a_uses_comment_gates(brk):
+    head = gate_workflow("v7.1.0").replace(
+        b"uses: actions/checkout@v7.1.0", b"uses: actions/checkout@v7.1.0 #" + brk + b"  with: {ref: x}")
+    gated, reasons = bump_run(head_workflow=head)[0]
+    assert gated and not any(code == "dependabot-bump-unverified" and "verified" in detail
+                             for code, detail in reasons), reasons
+    assert ("gate-itself", GATE_WF) in reasons or codes((gated, reasons)) == {"fail-closed"}, reasons
 
 
 def test_an_entry_a_gate_pin_names_is_covered_too():

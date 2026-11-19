@@ -287,7 +287,9 @@ fixed message (a pull request that is not Dependabot's gets no extra reason):
   `owner_id` and `repo_id`, which GitHub confirms), its tag resolves on
   GitHub to the locked commit, it is a higher version than every base pin of
   that action, and its release is published, not a prerelease, and at least 7
-  days old. Every entry those actions' entries name must be unchanged.
+  days old. Each `uses:` ref of the gate workflow only moves up, even to a
+  pin another workflow already holds. Every entry those actions' entries
+  name must be unchanged.
   Own-action pins in the same change still need the 2026-11-18 checks.
 
 The release checks repeat Dependabot's cooldown inside the gate, so even a

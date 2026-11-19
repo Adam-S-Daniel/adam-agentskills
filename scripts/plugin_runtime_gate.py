@@ -248,7 +248,7 @@ WEB_FLOW_EMAIL = "noreply@github.com"
 COOLDOWN_DAYS = 7
 _VERSION_TAG = re.compile(r"v?(\d+(?:\.\d+){0,3})")
 # A `uses:` line, the only kind of line a Dependabot bump edits.
-_USES_LINE = re.compile(r"^\s*(?:-\s+)?uses:\s*\S+\s*(?:#.*)?$")
+_USES_LINE = re.compile(r"^[ \t]*(?:-[ \t]+)?uses:[ \t]*[^\s#]+[ \t]*(?:#[^\r\n\x85\u2028\u2029]*)?$")
 _THIRD_PARTY_KEY = re.compile(r"([a-z0-9][a-z0-9-]*)/([a-z0-9._-]+)@([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -1228,8 +1228,13 @@ def _dependabot_bump_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot,
         if base_lock.get("version") != head_lock.get("version"):
             raise _BumpUnverified("actions.lock changed its format version")
         names: Set[str] = set()
+        refs_by_side: List[Dict[str, Set[str]]] = []
         for wf, lock in ((base_wf, base_lock), (head_wf, head_lock)):
             uses = set(_uses_values(wf))
+            refs: Dict[str, Set[str]] = {}
+            for ref in uses:
+                refs.setdefault(ref.rpartition("@")[0].lower(), set()).add(ref.rpartition("@")[2])
+            refs_by_side.append(refs)
             for ref in uses:
                 match = _THIRD_PARTY_KEY.fullmatch(ref.lower()) if "@" in ref else None
                 if match is None or match.group(1) == OWN_ACTIONS_OWNER:
@@ -1242,6 +1247,16 @@ def _dependabot_bump_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot,
                 raise _BumpUnverified("actions.lock does not list exactly what the gate workflow uses")
             if not all(key in lock["dependencies"] for key in expected):
                 raise _BumpUnverified("actions.lock does not pin every action the gate workflow uses")
+        # Each action the gate uses moves only up, whether or not its new pin is
+        # new to the lockfile: a pin another workflow already holds skips
+        # _check_third_party_pin.
+        for name in names:
+            before, after = refs_by_side[0].get(name, set()), refs_by_side[1].get(name, set())
+            for tag in after - before:
+                version = _version(tag)
+                if version is None or not before \
+                        or any(_version(old) is None or version <= _version(old) for old in before):
+                    raise _BumpUnverified("a new pin is not a higher version than the base pinned")
         base_deps, head_deps = base_lock["dependencies"], head_lock["dependencies"]
         known_ids: Dict[str, Tuple[int, int]] = {}
         base_versions: Dict[str, List[Tuple[int, ...]]] = {}

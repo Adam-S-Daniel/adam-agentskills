@@ -88,7 +88,7 @@ head, base or base branch has moved, or the base is not the default branch, so
 a pull request into any other branch always waits.
 
 A Dependabot bump of the actions `plugin-runtime-review.yml` itself uses does
-not wait either (ADR 0016, update of 2026-11-19), so third-party bumps land
+not wait either (ADR 0016, its Dependabot update), so third-party bumps land
 unreviewed after the cooldown as the fleet policy wants: every commit must be a
 GitHub-verified Dependabot commit, the workflow may change only in its `uses:`
 refs, and GitHub must confirm each new pin's repository and that its tag is at

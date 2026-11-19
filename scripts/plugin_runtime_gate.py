@@ -79,8 +79,9 @@ load-time command at base or head. Nothing under <root>/hooks or <root>/bin is
 inert. (check_consistency.py already refuses any symlink under plugins/; the
 gate cannot see file modes.)
 
-Two changes that do not gate, because the owner's approval could not change
-what runs (ADR 0016, update of 2026-11-17):
+Three changes that do not gate, the first two because the owner's approval
+could not change what runs (ADR 0016, update of 2026-11-17), the third because
+the owner's policy merges them unreviewed (update of 2026-11-19):
 
   * An upstream copy. scripts/plugin_runtime_upstream_copies.json lists .md
     files a hook installs as text and also fetches live from another
@@ -106,6 +107,14 @@ what runs (ADR 0016, update of 2026-11-17):
     that the tag's release is published, not a prerelease and immutable.
     Anything else gates as gate-itself with the extra reason
     own-action-unverified and a fixed message.
+  * A Dependabot bump of the actions the gate workflow uses. Dependabot
+    opened it from a dependabot/github_actions/ branch here and every commit
+    is its own, GitHub-verified; only the gate workflow and actions.lock
+    change among the gate files; the workflow differs only in its `uses:`
+    refs, all third-party; and each new pin keeps the repository the base
+    pinned and its tag resolves on GitHub to the locked commit. Anything else
+    from Dependabot gates as gate-itself with the extra reason
+    dependabot-bump-unverified and a fixed message.
 
 Everything read from the pull request is untrusted DATA. It is fetched through
 the GitHub API (never checked out), parsed with json only, capped in size, and
@@ -212,6 +221,18 @@ _OWN_ACTION_KEY = re.compile(
 _OWN_ENTRY_KEYS = frozenset({"ref", "commit", "owner_id", "repo_id"})
 _LOCK_COMMIT = re.compile(r"sha1-([0-9a-f]{40})")
 MAX_TAG_DEPTH = 5  # how many annotated tags may wrap the commit
+
+# A Dependabot bump of the actions the gate workflow itself uses (ADR 0016,
+# update of 2026-11-19). The owner's policy merges third-party action bumps
+# once the Dependabot cooldown has passed (a security fix at once), with no
+# review, so the gate must not hold one. It is exempt only when GitHub says
+# every commit is Dependabot's verified own: no person or agent can write
+# such a commit, so the pull request is what Dependabot proposed.
+DEPENDABOT_LOGIN = "dependabot[bot]"
+DEPENDABOT_ID = 49699333
+DEPENDABOT_ACTIONS_BRANCH = "dependabot/github_actions/"
+MAX_PR_COMMITS = 250  # the pull-request commits API lists at most 250
+_THIRD_PARTY_KEY = re.compile(r"([a-z0-9][a-z0-9-]*)/([a-z0-9._-]+)@([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 REPO_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$")
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -331,6 +352,24 @@ class GhFetcher:
             "{head: .head.sha, base: .base.sha, base_ref: .base.ref, "
             "default_branch: .base.repo.default_branch}",
             "reading the pull request")
+
+    def pull_request_origin(self) -> Optional[dict]:
+        """Who opened the pull request, and from which branch and repository."""
+        return self._one_object(
+            f"repos/{self.repo}/pulls/{self.pr}",
+            "{author: .user.login, author_id: .user.id, head_ref: .head.ref, "
+            "head_repo: .head.repo.full_name, base_repo: .base.repo.full_name}",
+            "reading the pull request's author")
+
+    def pull_request_commits(self) -> List[dict]:
+        """Each commit on the pull request, oldest first: its GitHub author and
+        whether GitHub verified its signature."""
+        proc = self._gh(
+            ["api", "--paginate", f"repos/{self.repo}/pulls/{self.pr}/commits?per_page=100",
+             "--jq", ".[] | {sha, author: .author.login, author_id: .author.id, "
+                     "verified: (.commit.verification.verified == true)}"],
+            "listing the pull request's commits")
+        return _json_values(proc.stdout.decode("utf-8"))
 
     def action_repo(self, name: str) -> Optional[dict]:
         """An action repository's identity, from GitHub."""
@@ -1025,6 +1064,134 @@ def _own_action_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot) -> Op
     return None
 
 
+class _BumpUnverified(Exception):
+    """Why a Dependabot pull request touching the gate's own pins still gates.
+    Fixed text only, like _OwnActionUnverified."""
+
+
+class _NotDependabot(Exception):
+    """The pull request is not Dependabot's own; the exemption does not apply."""
+
+
+def _check_dependabot_origin(fetcher, head: str) -> None:
+    """Raises _NotDependabot unless Dependabot opened the pull request from its
+    own github-actions branch in this repository, and _BumpUnverified unless
+    GitHub verified every commit on it as Dependabot's."""
+    origin = fetcher.pull_request_origin()
+    if not isinstance(origin, dict) or origin.get("author") != DEPENDABOT_LOGIN \
+            or origin.get("author_id") != DEPENDABOT_ID:
+        raise _NotDependabot()
+    head_ref = origin.get("head_ref")
+    if not isinstance(head_ref, str) or not head_ref.startswith(DEPENDABOT_ACTIONS_BRANCH) \
+            or not isinstance(origin.get("head_repo"), str) \
+            or origin.get("head_repo") != origin.get("base_repo"):
+        raise _BumpUnverified("the pull request is not from a Dependabot github-actions branch here")
+    commits = fetcher.pull_request_commits()
+    if not isinstance(commits, list) or not commits or len(commits) >= MAX_PR_COMMITS:
+        raise _BumpUnverified("the pull request's commits could not be listed in full")
+    for commit in commits:
+        if not isinstance(commit, dict) or commit.get("author") != DEPENDABOT_LOGIN \
+                or commit.get("author_id") != DEPENDABOT_ID or commit.get("verified") is not True:
+            raise _BumpUnverified("a commit on the pull request is not a verified Dependabot commit")
+    if commits[-1].get("sha") != head:
+        raise _BumpUnverified("the pull request's last commit is not the head the event named")
+
+
+def _without_refs(node):
+    """A parsed workflow with each `uses` value cut to the action's name, so
+    two workflows compare equal when they differ only in which ref they use."""
+    if isinstance(node, dict):
+        return {key: (value.rpartition("@")[0] or value
+                      if key == "uses" and isinstance(value, str) else _without_refs(value))
+                for key, value in node.items()}
+    if isinstance(node, list):
+        return [_without_refs(value) for value in node]
+    return node
+
+
+def _check_third_party_pin(fetcher, key: str, entry, known_ids: Dict[str, Tuple[int, int]]) -> None:
+    """A pin the bump adds for an action the gate workflow uses: exactly gh
+    actions-lock's four keys, the same repository the base pinned, and a tag
+    that GitHub resolves to the locked commit."""
+    match = _THIRD_PARTY_KEY.fullmatch(key)
+    if match is None:
+        raise _BumpUnverified("a new pin's key is not owner/repo@tag")
+    name, tag = f"{match.group(1)}/{match.group(2)}", match.group(3)
+    if not isinstance(entry, dict) or set(entry) != _OWN_ENTRY_KEYS or entry["ref"] != tag:
+        raise _BumpUnverified("a new pin's entry does not have the expected keys and ref")
+    if known_ids.get(name) != (entry["owner_id"], entry["repo_id"]) \
+            or not _is_positive_int(entry["owner_id"]) or not _is_positive_int(entry["repo_id"]):
+        raise _BumpUnverified("a new pin names another repository than the base pinned")
+    commit_match = _LOCK_COMMIT.fullmatch(entry["commit"]) if isinstance(entry["commit"], str) else None
+    if commit_match is None:
+        raise _BumpUnverified("a new pin's commit is not a sha1 pin")
+    repo = fetcher.action_repo(name)
+    if not isinstance(repo, dict) or repo.get("id") != entry["repo_id"] \
+            or repo.get("owner_id") != entry["owner_id"] \
+            or not isinstance(repo.get("full_name"), str) or repo["full_name"].lower() != name:
+        raise _BumpUnverified("GitHub does not confirm a new pin's repository")
+    if fetcher.action_tag_commit(name, tag) != commit_match.group(1):
+        raise _BumpUnverified("a new pin's tag is not at the locked commit")
+
+
+def _dependabot_bump_refusal(fetcher, base_snap: Snapshot, head_snap: Snapshot,
+                             head: str, changed: Set[str]) -> Optional[str]:
+    """None when this is a Dependabot bump of the gate workflow's own actions
+    that GitHub vouches for; else why not, in fixed text. Raises _NotDependabot
+    when Dependabot did not open it, so nothing extra is reported."""
+    try:
+        _check_dependabot_origin(fetcher, head)
+        if LOCKFILE not in changed:
+            raise _BumpUnverified("the gate's pins changed without actions.lock")
+        sides = {}
+        for snap in (base_snap, head_snap):
+            workflow, lock = snap.raw(GATE_WORKFLOW), snap.raw(LOCKFILE)
+            if workflow is None or lock is None:
+                raise _BumpUnverified("the gate workflow or actions.lock is missing on one side")
+            sides[snap.side] = (_load_yaml(workflow, f"{GATE_WORKFLOW} at {snap.side}"),
+                                _load_yaml(lock, f"{LOCKFILE} at {snap.side}"))
+        (base_wf, base_lock), (head_wf, head_lock) = sides["base"], sides["head"]
+        if _without_refs(base_wf) != _without_refs(head_wf):
+            raise _BumpUnverified("the gate workflow changed in more than its actions' refs")
+        if base_lock.get("version") != head_lock.get("version"):
+            raise _BumpUnverified("actions.lock changed its format version")
+        names: Set[str] = set()
+        for wf, lock in ((base_wf, base_lock), (head_wf, head_lock)):
+            uses = set(_uses_values(wf))
+            for ref in uses:
+                match = _THIRD_PARTY_KEY.fullmatch(ref.lower()) if "@" in ref else None
+                if match is None or match.group(1) == OWN_ACTIONS_OWNER:
+                    raise _BumpUnverified("the gate workflow uses an action this exemption does not cover")
+                names.add(f"{match.group(1)}/{match.group(2)}")
+            listed = [key for key in lock["workflows"] if (_norm(key) or "").lower() == GATE_WORKFLOW]
+            expected = sorted(ref.rpartition("@")[0].lower() + "@" + ref.rpartition("@")[2]
+                              for ref in uses)
+            if listed != [GATE_WORKFLOW] or sorted(lock["workflows"][GATE_WORKFLOW]) != expected:
+                raise _BumpUnverified("actions.lock does not list exactly what the gate workflow uses")
+            if not all(key in lock["dependencies"] for key in expected):
+                raise _BumpUnverified("actions.lock does not pin every action the gate workflow uses")
+        base_deps, head_deps = base_lock["dependencies"], head_lock["dependencies"]
+        known_ids: Dict[str, Tuple[int, int]] = {}
+        for key, entry in base_deps.items():
+            identity = _action_identity(key)
+            if identity in names and isinstance(entry, dict):
+                known_ids.setdefault(identity, (entry.get("owner_id"), entry.get("repo_id")))
+        for key in sorted(set(base_deps) | set(head_deps)):
+            identity = _action_identity(key)
+            if identity is not None and identity not in names:
+                continue
+            if key in base_deps and key in head_deps:
+                if base_deps[key] != head_deps[key]:
+                    raise _BumpUnverified("an existing pin of the gate's actions changed")
+            elif key in head_deps:
+                if identity is None:
+                    raise _BumpUnverified("a new pin's key is not owner/repo@tag")
+                _check_third_party_pin(fetcher, key, head_deps[key], known_ids)
+    except _BumpUnverified as exc:
+        return str(exc)
+    return _own_action_refusal(fetcher, base_snap, head_snap)
+
+
 def _check_pull_request_unmoved(fetcher, base: str, head: str, base_ref: str) -> None:
     """The file list has no sha of its own: it describes the pull request as it
     is when listed. Reading the pull request AFTER it ties the list to the
@@ -1084,14 +1251,35 @@ def evaluate(fetcher, base: str, head: str, base_ref: str, copies: Iterable[dict
     # (4) first. Only the lockfile is read: it gates when it changes what the
     # gate's own workflow runs, or adds or moves an own-action pin GitHub does
     # not confirm.
+    gate_hits: Set[Tuple[str, str]] = set()
+    own_refusal = None
     for path in changed & GATE_FILES:
         if path != LOCKFILE or _lockfile_changes_the_gate(base_snap, head_snap):
-            reasons.add(("gate-itself", path))
+            gate_hits.add(("gate-itself", path))
             continue
-        refusal = _own_action_refusal(fetcher, base_snap, head_snap)
-        if refusal is not None:
-            reasons.add(("gate-itself", path))
-            reasons.add(("own-action-unverified", refusal))
+        own_refusal = _own_action_refusal(fetcher, base_snap, head_snap)
+        if own_refusal is not None:
+            gate_hits.add(("gate-itself", path))
+            reasons.add(("own-action-unverified", own_refusal))
+    # A Dependabot bump of the gate workflow's own actions: the workflow's
+    # `uses:` refs and their lockfile entries, nothing else among the gate's
+    # files, and GitHub vouches for every commit and every new pin.
+    if gate_hits and own_refusal is None \
+            and {path for _, path in gate_hits} <= {GATE_WORKFLOW, LOCKFILE} \
+            and GATE_WORKFLOW in changed:
+        try:
+            refusal = _dependabot_bump_refusal(fetcher, base_snap, head_snap, head, changed)
+        except _NotDependabot:
+            pass
+        else:
+            if refusal is None:
+                gate_hits = set()
+                if notes is not None:
+                    notes.append("dependabot-bump-verified: the gate workflow's action pins "
+                                 "moved in verified Dependabot commits that GitHub confirms")
+            else:
+                reasons.add(("dependabot-bump-unverified", refusal))
+    reasons |= gate_hits
 
     markets = {"base": base_snap.json(MARKETPLACE), "head": head_snap.json(MARKETPLACE)}
     entry_roots = {side: _local_roots(markets[side]) for side in markets}

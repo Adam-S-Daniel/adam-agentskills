@@ -252,6 +252,42 @@ Not carried over from #181, because the owner asked for these two only: its
 byte-for-byte check that the lockfile is in the form gh actions-lock writes,
 and its comparison from the merge base as well as from the base.
 
+### Update 2026-11-19: a Dependabot bump of the gate workflow's own actions no longer waits
+
+The owner's policy for every fleet repo: third-party action bumps merge
+automatically once the Dependabot cooldown has passed, a bump that resolves a
+security alert merges at once, and bumps of the owner's own actions
+(`Adam-S-Daniel/*`, `jodidaniel/*`) merge with no cooldown. The 2026-11-17
+update let lockfile-only bumps through, but a bump of `actions/checkout` or
+`actions/setup-python`, which `plugin-runtime-review.yml` itself uses, still
+waited: Dependabot edits that workflow's `uses:` lines, and the workflow is a
+gate file. Every such bump would have needed the owner, against the policy.
+
+Such a pull request no longer waits when all of these hold, and otherwise
+gates as `gate-itself` with the extra reason `dependabot-bump-unverified` and a
+fixed message (a pull request that is not Dependabot's gets no extra reason):
+
+- **Dependabot's own.** GitHub names `dependabot[bot]` (by login and account
+  id) as the pull request's author, its branch is a
+  `dependabot/github_actions/` branch in this repository, and every commit on
+  it is authored by that account with a signature GitHub verified, the last
+  being the head the event named. No person or agent can write such a commit,
+  so the change is exactly what Dependabot proposed, after its cooldown.
+- **Only refs move.** Among the gate's files only the gate workflow and
+  `actions.lock` changed. The workflow, parsed, is identical at base and head
+  once each `uses:` value is cut to its action's name, and every action it
+  uses is a third-party `owner/repo@ref`.
+- **The pins are GitHub's word.** `actions.lock` keeps its format version,
+  lists for the gate workflow exactly the actions it uses and pins each one;
+  an existing pin of those actions is unchanged; each new one has gh
+  actions-lock's four keys, names the repository the base pinned (same
+  `owner_id` and `repo_id`, which GitHub confirms), and its tag resolves on
+  GitHub to the locked commit. Own-action pins in the same change still need
+  the 2026-11-18 checks.
+
+Any other change in the same pull request is judged as before, so a plugin
+change carried by a Dependabot branch still waits.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —

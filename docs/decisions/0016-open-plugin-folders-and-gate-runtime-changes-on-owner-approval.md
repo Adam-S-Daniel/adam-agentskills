@@ -252,6 +252,56 @@ Not carried over from #181, because the owner asked for these two only: its
 byte-for-byte check that the lockfile is in the form gh actions-lock writes,
 and its comparison from the merge base as well as from the base.
 
+### Update 2026-11-19: a Dependabot bump of the gate workflow's own actions no longer waits
+
+The owner's policy for every fleet repo: third-party action bumps merge
+automatically once the Dependabot cooldown has passed, a bump that resolves a
+security alert merges at once, and bumps of the owner's own actions
+(`Adam-S-Daniel/*`, `jodidaniel/*`) merge with no cooldown. The 2026-11-17
+update let lockfile-only bumps through, but a bump of `actions/checkout` or
+`actions/setup-python`, which `plugin-runtime-review.yml` itself uses, still
+waited: Dependabot edits that workflow's `uses:` lines, and the workflow is a
+gate file. Every such bump would have needed the owner, against the policy.
+
+Such a pull request no longer waits when all of these hold, and otherwise
+gates as `gate-itself` with the extra reason `dependabot-bump-unverified` and a
+fixed message (a pull request that is not Dependabot's gets no extra reason):
+
+- **Dependabot's own.** GitHub names `dependabot[bot]` (by login and account
+  id) as the pull request's author, its branch is a
+  `dependabot/github_actions/` branch in this repository, and every commit on
+  it is authored by that account and committed and signed by GitHub itself
+  (`web-flow`, by login, id and email, with a `valid` signature), the last
+  being the head the event named. The commit author alone proves nothing: it
+  is the account that owns the author email, which anyone can type, and a
+  verified signature vouches only for the committer.
+- **Only refs move.** Among the gate's files only the gate workflow and
+  `actions.lock` changed, and the lockfile change moves a pin of the gate's
+  actions. The workflow's text differs only on `uses:` lines, it parses to the
+  same tree once each `uses:` value is cut to its action's name, and every
+  action it uses is a third-party `owner/repo@ref`.
+- **The pins are GitHub's word.** `actions.lock` keeps its format version,
+  lists for the gate workflow exactly the actions it uses and pins each one;
+  an existing pin of those actions is unchanged; each new one has gh
+  actions-lock's four keys, names the repository the base pinned (same
+  `owner_id` and `repo_id`, which GitHub confirms), its tag resolves on
+  GitHub to the locked commit, it is a higher version than every base pin of
+  that action, and its release is published, not a prerelease, and at least 7
+  days old. Each `uses:` ref of the gate workflow only moves up, even to a
+  pin another workflow already holds. Every entry those actions' entries
+  name must be unchanged.
+  Own-action pins in the same change still need the 2026-11-18 checks.
+
+The release checks repeat Dependabot's cooldown inside the gate, so even a
+branch that only looks like Dependabot's (say, a GitHub-side rebase that
+keeps the author and re-signs as `web-flow`) can bring in nothing but what
+Dependabot itself would propose. One consequence: a security update to one of
+the gate workflow's own actions whose release is under 7 days old still waits
+for the owner. Every other workflow's security bumps are not affected.
+
+Any other change in the same pull request is judged as before, so a plugin
+change carried by a Dependabot branch still waits.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —

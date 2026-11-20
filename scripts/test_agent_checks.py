@@ -50,6 +50,10 @@ def env_for(tmp_path: Path) -> dict:
     # Under Actions on a pull request these name the REAL event, which the ci check would read.
     env.pop("GITHUB_EVENT_NAME", None)
     env.pop("GITHUB_EVENT_PATH", None)
+    # The runner's lint pass is _agent-guidance's to test (ADR 0050). Here it
+    # would lint these fixtures, and under Actions (GITHUB_ACTIONS=true leaks
+    # in) try to install tools, which fails closed on the Windows runner.
+    env["AGENT_CHECKS_LINT"] = "off"
     env.update(HOME=str(home), USERPROFILE=str(home),
                GIT_CONFIG_GLOBAL=str(tmp_path / "gitconfig"), GIT_CONFIG_NOSYSTEM="1",
                GIT_AUTHOR_NAME="Test", GIT_AUTHOR_EMAIL="test@example.com",

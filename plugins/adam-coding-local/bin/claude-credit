@@ -133,7 +133,8 @@ sign && [[ -s "$token" ]] || die 75 "could not sign the federation assertion; us
 # 5. The child's environment, and only the child's.
 CLAUDE_BIN="${CLAUDE_CREDIT_CLAUDE_BIN:-claude}"
 child_env=(env -u ANTHROPIC_API_KEY -u ANTHROPIC_AUTH_TOKEN -u CLAUDE_CODE_OAUTH_TOKEN
-           -u ANTHROPIC_PROFILE)
+           -u ANTHROPIC_PROFILE -u CLAUDE_CODE_PROMPT_CACHE_TTL
+           -u CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL -u ENABLE_PROMPT_CACHING_1H)
 wif="$("$PY" "$LANE/lane.py" wif-env 2>/dev/null)" \
   || die 75 "lane closed (config.json has no usable wif ids); use the Agent tool instead"
 while IFS= read -r assignment; do
@@ -144,6 +145,14 @@ token_for_child="$token"
 # A Windows-native claude (Git Bash) reads a Windows path.
 if command -v cygpath >/dev/null 2>&1; then token_for_child="$(cygpath -w "$token")"; fi
 child_env+=("ANTHROPIC_IDENTITY_TOKEN_FILE=$token_for_child")
+# This lane bills API dollars, where a 1-hour cache write costs 2x base input
+# against 1.25x for a 5-minute one. The subscription lane prefers 1 hour
+# (skills-evals docs/cache-ttl.md), and its user settings or ambient env would
+# reach this child through the shared HOME; FORCE_PROMPT_CACHING_5M outranks
+# every other TTL setting in Claude Code.
+# (The ambient TTL variables are unset in child_env's first line: env stops
+# reading -u options at its first assignment.)
+child_env+=(FORCE_PROMPT_CACHING_5M=1)
 
 # 6. Prove the child bills the API before spending anything.
 "${child_env[@]}" "$CLAUDE_BIN" auth status --json </dev/null >"$run_dir/auth.json" 2>/dev/null

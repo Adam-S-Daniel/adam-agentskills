@@ -962,7 +962,23 @@ def test_the_success_path(world, fakes):
     assert (fakes.dir / "token-seen.txt").read_text().count(".") == 2
     for name in LEAKY:
         assert name not in child, name
+    assert child["FORCE_PROMPT_CACHING_5M"] == "1"
     assert_released(world)
+
+
+@posix_only
+def test_the_child_never_writes_a_one_hour_cache(world, fakes):
+    # API dollars price a 1-hour write at 1.6x a 5-minute one; the
+    # subscription lane's 1-hour preference must not leak into this child.
+    ambient = {"CLAUDE_CODE_PROMPT_CACHE_TTL": "1h",
+               "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": "1h",
+               "ENABLE_PROMPT_CACHING_1H": "1"}
+    proc = run_wrapper(world, fakes, "-p", "task", extra=ambient)
+    assert proc.returncode == 0, proc.stderr
+    child = fakes.child_env()
+    assert child["FORCE_PROMPT_CACHING_5M"] == "1"
+    for name in ambient:
+        assert name not in child, name
 
 
 @posix_only

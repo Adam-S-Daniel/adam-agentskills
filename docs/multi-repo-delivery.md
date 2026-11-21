@@ -314,6 +314,15 @@ the only check. The script above already includes it, before its final
 `exit 0`. It builds Git once (about a minute on 4 cores, measured 2026-10-20);
 the snapshot keeps it for later sessions.
 
+- **The build installs the OpenSSL, zlib, expat and libcurl headers and passes
+  `NO_RUST=1`.** Without them it stopped at `openssl/ssl.h` and then at
+  `cargo: not found` on Ubuntu 24.04 (reproduced 2026-11-21), and the session
+  kept Git 2.43; a failed build now prints its first error line.
+- **Each attached repo's `scripts/dev_setup.sh` runs after it**, so the
+  snapshot carries what that repo's tests need beyond the checkout (skills-evals':
+  pinned pip packages, fixture `npm ci` directories, gems). Bounded at 20
+  minutes and never fatal.
+
 - **`--system`, not the default global scope.** The session's `~/.gitconfig`
   holds settings the harness writes (commit signing, proxy). Whether it is
   rewritten when a session starts is not established, so the hooks go in the

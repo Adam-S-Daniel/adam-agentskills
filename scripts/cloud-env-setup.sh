@@ -87,20 +87,43 @@ echo "wiring: wrote $user_claude/settings.json"
 
 # Config-based git hooks need Git 2.54+ (ADR 0020). Never fatal: without them
 # CI still runs the same checks.
+# The build needs the OpenSSL, zlib, expat and libcurl headers, and NO_RUST=1
+# where there is no `cargo`: on Ubuntu 24.04 it stopped at `openssl/ssl.h: No
+# such file or directory`, then at `cargo: not found` (both reproduced
+# 2026-11-21), leaving Ubuntu's Git 2.43, which also fails skills-evals' tests
+# of `fleet_hooks: true` fixtures. The flags match skills-evals'
+# `scripts/dev_setup.sh --build-git`.
 if ! git version | awk '{split($3,v,"."); exit !(v[1]>2 || (v[1]==2 && v[2]>=54))}'; then
-  apt-get install -y -q libcurl4-openssl-dev >/dev/null 2>&1 || true
+  apt-get install -y -q libcurl4-openssl-dev libssl-dev zlib1g-dev libexpat1-dev \
+    >/dev/null 2>&1 || true
   src=$(mktemp -d)
   if git clone -q --depth 1 --branch v2.56.0 https://github.com/git/git "$src/git" \
      && make -C "$src/git" -j"$(nproc)" prefix=/usr/local sysconfdir=/etc \
-          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 install >/dev/null 2>&1; then
+          NO_GETTEXT=1 NO_TCLTK=1 NO_PERL=1 NO_PYTHON=1 NO_RUST=1 install >"$src/build.log" 2>&1; then
     echo "git: $(/usr/local/bin/git version)"
   else
     echo "git: build failed; local hooks will not run, CI still checks" >&2
+    grep -m 1 -E 'fatal error|Error [0-9]' "$src/build.log" >&2 || true
   fi
   rm -rf "$src"
 fi
 for f in "$project"/*/scripts/install-agent-hooks.sh; do
   [ -f "$f" ] && { bash "$f" --system || true; break; }
+done
+
+# A repo whose tests need more than its checkout (pinned pip packages, fixture
+# `npm ci` directories, gems) ships `scripts/dev_setup.sh`, which installs what
+# its CI test job installs; skills-evals' does. Run each one here so the
+# snapshot carries the installs and a session's tests do not fail for want of
+# them. Never fatal, and bounded, like everything else here.
+for f in "$project"/*/scripts/dev_setup.sh; do
+  [ -f "$f" ] || continue
+  repo=${f%/scripts/dev_setup.sh}
+  if (cd "$repo" && timeout 1200 bash scripts/dev_setup.sh) >/dev/null 2>&1; then
+    echo "dev-setup: ${repo##*/} installed"
+  else
+    echo "dev-setup: ${repo##*/} failed; its tests may skip or fail for missing installs"
+  fi
 done
 
 # ---- BEGIN owner block: fleet guidance (_agent-guidance ADR 0043) ----

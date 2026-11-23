@@ -1189,3 +1189,19 @@ def test_a_push_that_changes_nothing_the_check_reads_rechecks_nothing(tmp_path):
 def test_a_push_whose_range_cannot_be_read_rechecks_everything(tmp_path):
     out = _run_recheck_decision(tmp_path, ["README.md"], before="0" * 40)
     assert out == "run=true"
+
+
+def test_the_health_audit_dry_run_input_cannot_break_the_dispatch():
+    """scheduled-run-health.yml took dry_run as a free-text string and passed
+    fromJSON(inputs.dry_run) to the reusable's boolean input, so a dispatch
+    typed `yes` or `True` (not JSON) failed to evaluate and the audit never
+    ran. A `choice` input allows only 'false' or 'true', compared as a string.
+    (Not `boolean`: a dispatch passes it on as a string, which the reusable's
+    boolean input rejects.)"""
+    doc = yaml.safe_load((WORKFLOWS_DIR / "scheduled-run-health.yml").read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    spec = on["workflow_dispatch"]["inputs"]["dry_run"]
+    assert spec["type"] == "choice" and spec["options"] == ["false", "true"], spec
+    passed = doc["jobs"]["audit"]["with"]["dry_run"]
+    assert "fromJSON" not in passed, f"dry_run is still parsed as JSON: {passed!r}"
+    assert "inputs.dry_run == 'true'" in passed, passed

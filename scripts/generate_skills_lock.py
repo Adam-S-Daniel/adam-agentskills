@@ -566,8 +566,13 @@ def materialize(repo: Path, ref: str, dest: Path) -> None:
         with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
             try:
                 archive.extractall(dest, filter="data")
-            except TypeError:  # Python < 3.11.4 has no extraction filters
-                archive.extractall(dest)
+            except TypeError as exc:  # Python < 3.11.4 has no extraction filters
+                # Never fall back to an unfiltered extractall: it follows
+                # absolute and `..` member paths out of `dest`.
+                raise GeneratorError(
+                    "extracting the tree needs Python 3.11.4 or newer (tarfile "
+                    "extraction filters)"
+                ) from exc
     except tarfile.TarError as exc:
         # A commit whose tree has NO ENTRIES is the reachable case, and it is
         # not the "no bytes at all" it looks like: git still writes its

@@ -570,6 +570,12 @@ def test_acquire_takes_free_slots_then_reports_busy(world):
     assert set(data) == {"host_kind", "pid", "started", "heartbeat"} and data["pid"] == 101
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX permission bits")
+def test_slot_files_are_owner_only(world):
+    assert slots(world, "acquire", "--pid", "101").returncode == 0
+    assert slot_file(world, 1).stat().st_mode & 0o077 == 0
+
+
 def test_a_stale_slot_is_taken_over(world):
     slots(world, "acquire", "--pid", "101")
     slots(world, "acquire", "--pid", "102")

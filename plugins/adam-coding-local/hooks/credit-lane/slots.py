@@ -113,7 +113,7 @@ def _create(path, pid, now, retry=False):
     """
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     try:
-        fd = _sharing_retry(lambda: os.open(path, flags, 0o644)) if retry else os.open(path, flags, 0o644)
+        fd = _sharing_retry(lambda: os.open(path, flags, 0o600)) if retry else os.open(path, flags, 0o600)
     except FileExistsError:
         return False
     except PermissionError:
@@ -128,7 +128,7 @@ def _create(path, pid, now, retry=False):
 def _take_over(path, pid, now):
     lock = path + ".takeover"
     try:
-        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     except PermissionError:
         if os.name != "nt":
             raise

@@ -14142,3 +14142,23 @@ def test_setup_record_skips_without_launcher_values(tmp_path):
     proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
     assert proc.returncode == 0, proc.stderr
     assert "cloud-env-setup: no launcher values; record skipped" in proc.stdout
+
+
+def test_materialize_refuses_unfiltered_extraction_on_old_python(tmp_path, monkeypatch):
+    """Python < 3.11.4 has no `filter=`: refuse rather than extract unfiltered."""
+    import tarfile
+
+    def no_filters(self, path=".", members=None, **kwargs):
+        if "filter" in kwargs:
+            raise TypeError("extractall() got an unexpected keyword argument 'filter'")
+        raise AssertionError("extractall ran without a filter")
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", no_filters)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "a.txt").write_text("x", encoding="utf-8")
+    for cmd in (["init", "-q"], ["add", "."],
+                ["-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-qm", "m"]):
+        subprocess.run(["git", "-C", str(repo), *cmd], check=True)
+    with pytest.raises(gsl.GeneratorError, match="3.11.4"):
+        gsl.materialize(repo, "HEAD", tmp_path / "out")

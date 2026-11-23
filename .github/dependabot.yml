@@ -40,3 +40,7 @@ updates:
     cooldown:
       default-days: 7
       semver-major-days: 30
+    groups:
+      pip-security:
+        applies-to: security-updates
+        patterns: ["*"]

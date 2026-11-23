@@ -167,6 +167,141 @@ and `subagentStatusLine` is accepted and ignored. The gate is unchanged: it
 guards a plugin-root `settings.json` because `agent` still replaces the main
 thread's system prompt, tools and model while it applies.
 
+### Update 2026-11-17: two changes the owner's approval could not affect no longer wait
+
+The owner asked that pull requests like
+[#178](https://github.com/Adam-S-Daniel/adam-agentskills/pull/178), a refresh
+of the bundled guidance fallback, stop needing his deployment review. A survey
+of every run that entered `plugin-runtime-review` (49 runs on 21 pull requests,
+2026-10-08 to 2026-11-17; every pull request was approved in the end, none
+rejected) found two kinds where the approval could not change what runs. The gate now lets both through; everything else
+gates as before.
+
+- **A copy of text the hook already fetches live.** The fleet-guidance hook
+  installs `_agent-guidance`'s `agents-md/base.md` from `main` at every session
+  start, with no review here, and falls back to the bundled
+  `fleet-guidance.md` only when that fetch fails
+  ([ADR 0023](0023-deliver-the-fleet-guidance-from-a-plugin-hook-that-fetches-it.md)).
+  A pull request that makes the fallback byte-identical to the upstream branch
+  tip gives a session nothing the live fetch would not. Such copies are listed
+  in `scripts/plugin_runtime_upstream_copies.json`, and a change to a listed
+  path is excused from the `hook-file`, `hook-referenced` and `plugin-path`
+  reasons when its bytes at head equal the upstream file at the tip of the
+  named branch. The limits:
+  - The list is read from the base checkout, is a gate file itself, and
+    accepts `.md` paths only. A script is never excused this way, however
+    verbatim: the bundled `fleet-memory.sh` and `github-write-marker.sh` are
+    code that runs on the owner's machine, and this gate is the one place the
+    owner sees a change to them before it does.
+  - Different bytes, a removal, a rename or an upstream that cannot be read
+    gates as before, with the extra reason `copy-differs-from-upstream` or
+    `upstream-unreadable`.
+  - The branch is resolved to a commit first, so a tag of the same name
+    cannot stand in for it. A test holds each listed copy to the repository,
+    branch and path its hook fetches.
+  - Covered: #130 and #178 (2 of the 21 pull requests).
+- **A lockfile change that leaves the gate's own pins alone.**
+  `.github/workflows/actions.lock` is a gate file because it chooses the commit
+  the gate workflow's actions run at. It now gates only when its format
+  version, the gate workflow's own list, or an entry for an action the gate
+  workflow uses differs between base and head. "Uses" is read from the
+  lockfile's list and from the workflow's own `uses:` lines, at base and at
+  head, and matches the action's `owner/repo` under any version or letter
+  case, plus any entry such an entry names. A missing lockfile gates, and a
+  shape the script cannot read fails closed. An entry only other workflows
+  use does not gate: those workflows already run the pull request's own code
+  on `pull_request`. Covered: #106 and #144, and #89 as the gate workflow
+  stood then (it did not use `setup-python` yet; the same bump would gate
+  today).
+
+Still gated, by design: hook scripts and hook configs, `bin/`, plugin settings
+and package files, runtime manifest keys, skill frontmatter and load-time
+commands, the body of a skill that grants a shell, the gate's workflow, script,
+tests and copy list, `scripts/cloud-env-setup.sh` and
+`scripts/codex-session-start.sh`, and a Dependabot bump of an action the gate
+workflow itself uses. Those were the other 16 pull requests.
+
+### Update 2026-11-18: own-action pins need GitHub's word, and the gate checks the pull request did not move
+
+Two safeguards from the narrower rule the owner set aside
+([#181](https://github.com/Adam-S-Daniel/adam-agentskills/pull/181), closed as
+superseded by [#179](https://github.com/Adam-S-Daniel/adam-agentskills/pull/179))
+come back on top of the lockfile rule above, at the owner's request.
+
+- **An own-action pin must be a real release.** The lockfile is the pull
+  request's word, and Dependabot can propose an own-action bump soon after a
+  release (#180 drops the cooldown for own actions). So in a lockfile change the rule above lets through, every entry
+  added or changed for an `adam-s-daniel/*` action (by key, or by the owner's
+  numeric id 4205216) must be exactly `adam-s-daniel/<repo>@<tag>` with gh
+  actions-lock's four keys and `ref` equal to the tag, and GitHub must confirm
+  that the repository has that `repo_id`, the owner's id and is not a fork,
+  that the tag resolves to the locked commit, that the commit is on the
+  default branch, and that the tag's release is published, not a prerelease
+  and immutable. Anything else gates as `gate-itself` with the extra reason
+  `own-action-unverified` and a fixed message; an API error fails closed.
+  Removing an own entry, and third-party entries, ask GitHub nothing.
+- **The pull request must still be the one the event named.** The file list
+  carries no sha: it describes the pull request when it is listed. The gate
+  now re-reads the pull request after listing and fails closed unless its
+  head sha, base sha and base branch equal the event's (`GITHUB_BASE_REF`,
+  which the runner sets on `pull_request_target`) and the base branch is the
+  repository's default branch. A pull request into any other branch therefore
+  always waits for the owner.
+
+Not carried over from #181, because the owner asked for these two only: its
+byte-for-byte check that the lockfile is in the form gh actions-lock writes,
+and its comparison from the merge base as well as from the base.
+
+### Update 2026-11-19: a Dependabot bump of the gate workflow's own actions no longer waits
+
+The owner's policy for every fleet repo: third-party action bumps merge
+automatically once the Dependabot cooldown has passed, a bump that resolves a
+security alert merges at once, and bumps of the owner's own actions
+(`Adam-S-Daniel/*`, `jodidaniel/*`) merge with no cooldown. The 2026-11-17
+update let lockfile-only bumps through, but a bump of `actions/checkout` or
+`actions/setup-python`, which `plugin-runtime-review.yml` itself uses, still
+waited: Dependabot edits that workflow's `uses:` lines, and the workflow is a
+gate file. Every such bump would have needed the owner, against the policy.
+
+Such a pull request no longer waits when all of these hold, and otherwise
+gates as `gate-itself` with the extra reason `dependabot-bump-unverified` and a
+fixed message (a pull request that is not Dependabot's gets no extra reason):
+
+- **Dependabot's own.** GitHub names `dependabot[bot]` (by login and account
+  id) as the pull request's author, its branch is a
+  `dependabot/github_actions/` branch in this repository, and every commit on
+  it is authored by that account and committed and signed by GitHub itself
+  (`web-flow`, by login, id and email, with a `valid` signature), the last
+  being the head the event named. The commit author alone proves nothing: it
+  is the account that owns the author email, which anyone can type, and a
+  verified signature vouches only for the committer.
+- **Only refs move.** Among the gate's files only the gate workflow and
+  `actions.lock` changed, and the lockfile change moves a pin of the gate's
+  actions. The workflow's text differs only on `uses:` lines, it parses to the
+  same tree once each `uses:` value is cut to its action's name, and every
+  action it uses is a third-party `owner/repo@ref`.
+- **The pins are GitHub's word.** `actions.lock` keeps its format version,
+  lists for the gate workflow exactly the actions it uses and pins each one;
+  an existing pin of those actions is unchanged; each new one has gh
+  actions-lock's four keys, names the repository the base pinned (same
+  `owner_id` and `repo_id`, which GitHub confirms), its tag resolves on
+  GitHub to the locked commit, it is a higher version than every base pin of
+  that action, and its release is published, not a prerelease, and at least 7
+  days old. Each `uses:` ref of the gate workflow only moves up, even to a
+  pin another workflow already holds. Every entry those actions' entries
+  name must be unchanged.
+  Own-action pins in the same change still need the 2026-11-18 checks.
+
+The release checks repeat Dependabot's cooldown inside the gate, so even a
+branch that only looks like Dependabot's (say, a GitHub-side rebase that
+keeps the author and re-signs as `web-flow`) can bring in nothing but what
+Dependabot itself would propose. One consequence: a security update to one of
+the gate workflow's own actions whose release is under 7 days old still waits
+for the owner. Every other workflow's security bumps are not affected.
+
+Any other change in the same pull request is judged as before, so a plugin
+change carried by a Dependabot branch still waits.
+
 ## References
 
 - [ADR 0013](0013-start-a-fresh-public-registry-grouped-by-audience-and-runtime.md) —
@@ -178,4 +313,5 @@ thread's system prompt, tools and model while it applies.
 - [Plugin loading](https://code.claude.com/docs/en/plugins/loading) and
   [plugin components](https://code.claude.com/docs/en/plugins/components)
 - `scripts/plugin_runtime_gate.py`, `scripts/test_plugin_runtime_gate.py`,
+  `scripts/plugin_runtime_upstream_copies.json`,
   `.github/workflows/plugin-runtime-review.yml`

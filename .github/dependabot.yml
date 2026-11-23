@@ -1,37 +1,33 @@
-# Dependabot for this repo.
-#
-# github-actions only: onboards weekly bumps for the actions across
-# .github/workflows/*.yml, each named by exact release tag and locked to a
-# commit in .github/workflows/actions.lock (Dependabot updates both). One
-# cooldown block carries two different waits:
-#   - default-days: 7 — this account's standing cooling-off convention for
-#     third-party action releases (pinned through actions.lock per
-#     _agent-guidance ADR 0024), matching cms-platform's own
-#     .github/dependabot.yml.
-#   - exclude below — a cms-platform release is this account's own code,
-#     gated by its own required checks before a tag ever exists, so it is
-#     exempted from that 7-day wait; only third-party actions keep it
-#     (https://github.com/Adam-S-Daniel/cms-platform/issues/424).
-#
-# No semver-major-days (or any semver-*-days key): GitHub's Dependabot
-# options reference does not support per-SemVer-tier cooldown for the
-# github-actions ecosystem — adding one is a schema validation error that
-# disables the WHOLE FILE, not a key Dependabot quietly ignores.
-# dependabot/dependabot-core#14628 is the open upstream request to add the
-# support.
-#
-# GitHub validates this file only when a commit to the default branch
-# changes it, and records the result as the `dependabot` app's
-# `.github/dependabot.yml` check run. This repo's first commit (559ceb7)
-# carried the file without one, so the fleet's config-health sweep read it
-# as unknown (Adam-S-Daniel/_agent-guidance#162). Merging this comment is
-# what gives the file a recorded check.
+# Managed by _agent-guidance's templates/dependabot/; overwritten on drift, so
+# change the template, not this copy. Why the groups and the ignore:
+# https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/dependabot-grouping.md
 version: 2
 updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     cooldown:
       default-days: 7
-      exclude: ["Adam-S-Daniel/cms-platform/*"]
+      # Own actions skip the cooldown, so they stay out of the cooled-down group.
+      exclude: ["Adam-S-Daniel/*", "jodidaniel/*"]
+    groups:
+      actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["Adam-S-Daniel/*", "jodidaniel/*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  # The synced agent-checks dependency; _agent-guidance updates the source copy.
+  - package-ecosystem: npm
+    directory: "/.githooks/dated-phrasing"
+    schedule:
+      interval: weekly
+    # Holds back security updates too, so the synced package-lock.json copies
+    # do not each get a PR that the sync then overwrites.
+    ignore:
+      - dependency-name: "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30

@@ -4643,8 +4643,6 @@ _TESTS_IN_ANOTHER_REPO = {
 # citations are this repo's to keep true.
 _DELIVERED_BY_AGENT_GUIDANCE_SYNC = {
     ".claude/hooks/agent-checks-guard.sh",
-    ".claude/hooks/fleet-memory.sh",
-    ".claude/hooks/guidance-load-record.sh",
     # The plugin's bundled verbatim copy of fleet-memory.sh, refreshed by hand
     # in a reviewed pull request and never edited here (AGENTS.md).
     "plugins/adam-anything-anywhere/hooks/fleet-guidance/fleet-memory.sh",
@@ -13714,6 +13712,36 @@ def test_setup_script_survives_a_failed_install(tmp_path):
     assert "wiring: bubblewrap/socat install failed" in proc.stdout
     settings_json = json.loads(settings.read_text(encoding="utf-8"))
     assert settings_json["hooks"]["SessionStart"]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="cloud-only Linux setup script")
+def test_setup_script_runs_each_child_repos_dev_setup(tmp_path):
+    # A child repo's scripts/dev_setup.sh installs what its tests need; it runs
+    # from that repo's root, and a failing one never fails the setup.
+    for name, code in (("ok-repo", 0), ("bad-repo", 3)):
+        scripts = tmp_path / "project" / name / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "dev_setup.sh").write_text(
+            f'pwd > "{tmp_path}/{name}.ran"\nexit {code}\n', encoding="utf-8")
+    proc, _calls, _settings = _run_setup_script(tmp_path, apt_exit=0)
+    assert proc.returncode == 0, proc.stderr
+    for name in ("ok-repo", "bad-repo"):
+        ran = (tmp_path / f"{name}.ran").read_text(encoding="utf-8").strip()
+        assert ran == str(tmp_path / "project" / name)
+    assert "dev-setup: ok-repo installed" in proc.stdout
+    assert "dev-setup: bad-repo failed" in proc.stdout
+
+
+def test_setup_script_git_build_has_what_ubuntu_lacks():
+    # Ubuntu 24.04 without these stopped the build at openssl/ssl.h, then at
+    # `cargo: not found` (2026-11-21), and sessions kept Git 2.43.
+    text = _cloud_env_setup_text()
+    install = next(line for line in text.splitlines()
+                   if "apt-get install" in line and "libcurl4-openssl-dev" in line)
+    for package in ("libssl-dev", "zlib1g-dev", "libexpat1-dev"):
+        assert package in install
+    build = next(line for line in text.splitlines() if "NO_GETTEXT=1" in line)
+    assert "NO_RUST=1" in build
 
 
 @pytest.mark.parametrize("script_name", ["skills-bootstrap.sh"])

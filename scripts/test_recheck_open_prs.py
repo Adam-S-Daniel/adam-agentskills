@@ -16,12 +16,14 @@ import recheck_open_prs as mod  # noqa: E402
 REPO = "example-owner/example-repo"
 
 
-def pr(number, sha, ref="feature", base="main"):
-    return {"number": number, "head": {"sha": sha, "ref": ref}, "base": {"ref": base}}
+def pr(number, sha, ref="feature", base="main", head_repo=REPO):
+    return {"number": number, "head": {"sha": sha, "ref": ref, "repo": {"full_name": head_repo}},
+            "base": {"ref": base}}
 
 
-def run(run_id, number, created, status="completed", branch="feature"):
+def run(run_id, number, created, status="completed", branch="feature", head_repo=REPO):
     return {"id": run_id, "created_at": created, "status": status, "head_branch": branch,
+            "head_repository": {"full_name": head_repo},
             "pull_requests": [] if number is None else [{"number": number}]}
 
 
@@ -99,6 +101,18 @@ def test_a_fork_pull_requests_run_is_matched_by_its_head_branch():
                   {sha: [[run(1, None, "2026-01-01T00:00:00Z", branch="patch-1"),
                           run(2, None, "2026-01-02T00:00:00Z", branch="elsewhere")]]})
     assert api.recheck()[0] == 0 and api.reran == [10]
+
+
+def test_fork_pull_requests_sharing_a_branch_name_each_rerun_their_own_run():
+    """Two forks can push the same commit to a branch of the same name (the
+    default `patch-1`); a fork run names no pull request, so the branch name
+    alone matched the other fork's run too and re-ran it twice."""
+    sha = "a" * 40
+    runs = [run(1, None, "2026-01-01T00:00:00Z", branch="patch-1", head_repo="fork-a/example-repo"),
+            run(2, None, "2026-01-02T00:00:00Z", branch="patch-1", head_repo="fork-b/example-repo")]
+    api = FakeApi([pr(7, sha, ref="patch-1", head_repo="fork-a/example-repo"),
+                   pr(8, sha, ref="patch-1", head_repo="fork-b/example-repo")], {sha: [runs]})
+    assert api.recheck()[0] == 0 and api.reran == [10, 20]
 
 
 def test_a_pull_request_with_no_run_has_nothing_to_go_stale():

@@ -197,6 +197,19 @@ def test_history_scans_lines_after_an_added_line_that_starts_with_two_pluses(tmp
     assert_nothing_leaked(out.out + out.err)
 
 
+def test_a_quoted_header_path_is_unquoted():
+    """Runs on every platform: Windows cannot hold the file the next test commits."""
+    assert cpd._unquote_path('"b/say \\"hi\\".md"') == 'b/say "hi".md'
+    assert cpd._unquote_path('"b/a\\tb.md"') == "b/a\tb.md"
+    assert cpd._unquote_path("b/plain name.md\t") == "b/plain name.md"
+    assert cpd._unquote_path("b/plain.md") == "b/plain.md"
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="a file name holding a double quote cannot exist on Windows; "
+    "test_a_quoted_header_path_is_unquoted covers the parsing there",
+)
 def test_history_scans_a_file_whose_path_git_quotes(tmp_path, capsys):
     """git quotes a path holding a double quote even with core.quotepath=off
     (`+++ "b/say \\"hi\\".md"`), and the quoted header was read as no file."""

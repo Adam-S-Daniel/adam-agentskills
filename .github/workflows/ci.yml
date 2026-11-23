@@ -403,8 +403,9 @@ jobs:
       # run in full unless EVERY changed file matches. Measured 2026-08-31
       # before this landed: no suite this job runs reads any inert path — the
       # citation meta-test (test_every_test_this_repo_cites_by_name_exists)
-      # scans only tracked *.py/*.sh, and no test reads the real
-      # README/AGENTS/CLAUDE/STRATEGY or docs/. plugins/**/*.md is deliberately
+      # scans only tracked *.py/*.sh. Tests have since started reading README.md,
+      # docs/skill-impact.md, docs/multi-repo-delivery.md and docs/decisions/,
+      # so those run the suites (`read_docs`). plugins/**/*.md is deliberately
       # NOT inert: SKILL.md and PURPOSE.md feed the digests and lock checks.
       # scripts/test_ci_workflow.py pins this step byte-identical across both
       # pytest jobs, pins the regex, and executes the body against fixture
@@ -434,7 +435,10 @@ jobs:
           # emptiness test below is the verdict, not grep's exit code. No -q,
           # so there is no early-exit SIGPIPE race either.
           salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md)$' || true)
-          if [ -n "$salient" ]; then
+          # Inert-pattern docs a script or test reads anyway; test_ci_workflow.py
+          # finds those reads with an AST scan and fails when one is missing here.
+          read_docs=$(printf '%s\n' "$changed" | grep -E '^(README\.md|docs/skill-impact\.md|docs/multi-repo-delivery\.md|docs/decisions/.*\.md)$' || true)
+          if [ -n "$salient" ] || [ -n "$read_docs" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"
@@ -782,7 +786,10 @@ jobs:
           # emptiness test below is the verdict, not grep's exit code. No -q,
           # so there is no early-exit SIGPIPE race either.
           salient=$(printf '%s\n' "$changed" | grep -vE '^(docs/.*\.md|README\.md|AGENTS\.md|CLAUDE\.md|STRATEGY\.md)$' || true)
-          if [ -n "$salient" ]; then
+          # Inert-pattern docs a script or test reads anyway; test_ci_workflow.py
+          # finds those reads with an AST scan and fails when one is missing here.
+          read_docs=$(printf '%s\n' "$changed" | grep -E '^(README\.md|docs/skill-impact\.md|docs/multi-repo-delivery\.md|docs/decisions/.*\.md)$' || true)
+          if [ -n "$salient" ] || [ -n "$read_docs" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
           else
             echo "run=false" >> "$GITHUB_OUTPUT"

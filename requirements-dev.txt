@@ -39,7 +39,7 @@ pyyaml==6.0.3
 
 # check_skills.py parses SKILL.md bodies with a real CommonMark parser rather
 # than a regex.
-markdown-it-py==4.2.0
+markdown-it-py==4.3.0
 
 # check_skills.py distinguishes command/interpreter script positions from other
 # code-block arguments with a shell AST. Published 2023-01-18, past cooling-off.
@@ -57,7 +57,7 @@ jsonschema==4.26.0
 # newest at job time. 9.1.1 was published 2026-06-19, which clears the
 # cooling-off, and was still the newest release when it was pinned, so pinning
 # it changed no version CI was already resolving to.
-pytest==9.1.1
+pytest==9.2.0
 
 # ci.yml's `pytest` and `pytest-windows` jobs both pass `-n auto`, so the
 # runner needs xdist installed just to start — pytest treats `-n` as unknown

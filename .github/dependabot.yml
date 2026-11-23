@@ -1,5 +1,6 @@
-# Managed by _agent-guidance's templates/dependabot/; overwritten on drift, so
-# change the template, not this copy. Why the groups and the ignore:
+# Hand-maintained: the pip entry means the sync no longer delivers its template
+# here (it only writes files that list nothing but github-actions). Why the
+# groups and the ignore:
 # https://github.com/Adam-S-Daniel/_agent-guidance/blob/main/docs/reference/dependabot-grouping.md
 version: 2
 updates:
@@ -28,6 +29,14 @@ updates:
     # do not each get a PR that the sync then overwrites.
     ignore:
       - dependency-name: "*"
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+  # requirements-dev.txt at the root. Version updates only.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: weekly
     cooldown:
       default-days: 7
       semver-major-days: 30

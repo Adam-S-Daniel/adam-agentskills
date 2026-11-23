@@ -50,6 +50,7 @@ Usage:
 """
 
 import argparse
+import codecs
 import os
 import re
 import subprocess
@@ -216,6 +217,20 @@ def _commit_diff(repo: Path, sha: str) -> str:
                 parents[0] if parents else _EMPTY_TREE, sha).decode("utf-8", "replace")
 
 
+def _unquote_path(target: str) -> str:
+    """A diff header path as git wrote it, with git's C-style quoting undone:
+    even with core.quotepath=off, a path holding `"`, `\\` or a control
+    character is written as `"b/..."` with backslash escapes. A path holding
+    a space gets a trailing tab, which a real tab in the name never is (git
+    quotes that one as `\\t`)."""
+    if target.endswith("\t"):
+        target = target[:-1]
+    if len(target) < 2 or not (target.startswith('"') and target.endswith('"')):
+        return target
+    raw = codecs.escape_decode(target[1:-1].encode("utf-8"))[0]
+    return raw.decode("utf-8", "replace")
+
+
 def scan_history(repo: Path, base: str, patterns: Sequence["re.Pattern[str]"]) -> List[Match]:
     """Every commit in base..HEAD: its message, its author and committer
     identity (reported as `<sha>:identity:1..4` = author name, author email,
@@ -232,9 +247,16 @@ def scan_history(repo: Path, base: str, patterns: Sequence["re.Pattern[str]"]) -
         diff = _commit_diff(repo, sha)
         current = None
         line_no = 0
+        # A `+++ ` line is a file header only between `diff --git` and the
+        # first hunk: inside a hunk it is an added line that starts with `++`.
+        in_header = False
         for line in diff.splitlines():
-            if line.startswith("+++ "):
-                target = line[4:]
+            if line.startswith("diff --git "):
+                in_header = True
+                current = None
+                continue
+            if in_header and line.startswith("+++ "):
+                target = _unquote_path(line[4:])
                 current = target[2:] if target.startswith("b/") else None
                 if current is not None:
                     hits = _path_hits(current, patterns)
@@ -245,6 +267,7 @@ def scan_history(repo: Path, base: str, patterns: Sequence["re.Pattern[str]"]) -
                 continue
             hunk = _HUNK_RE.match(line)
             if hunk:
+                in_header = False
                 line_no = int(hunk.group(1))
                 continue
             if line.startswith("+") and current is not None:

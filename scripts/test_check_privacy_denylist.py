@@ -183,6 +183,33 @@ def test_history_catches_a_detail_added_then_deleted(tmp_path, capsys):
     assert_nothing_leaked(out.out + out.err)
 
 
+def test_history_scans_lines_after_an_added_line_that_starts_with_two_pluses(tmp_path, capsys):
+    """An added line `++ x` shows in the diff as `+++ x`, the shape of a file
+    header. Read as one, it ended the file, and every later added line of it
+    went unscanned."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    base = _git(repo, "rev-parse", "HEAD")
+    commit(repo, {"docs/draft.md": "++ a diff-like line\nby " + SECRET_NAME + "\n"}, "add a draft")
+    commit(repo, {"docs/draft.md": None}, "remove the draft")
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, "--base", base, capsys=capsys)
+    assert code == 1, out
+    assert ":docs/draft.md:2: pattern #1" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
+def test_history_scans_a_file_whose_path_git_quotes(tmp_path, capsys):
+    """git quotes a path holding a double quote even with core.quotepath=off
+    (`+++ "b/say \\"hi\\".md"`), and the quoted header was read as no file."""
+    repo = make_repo(tmp_path, {"README.md": "clean\n"})
+    base = _git(repo, "rev-parse", "HEAD")
+    commit(repo, {'docs/say "hi".md': "by " + SECRET_NAME + "\n"}, "add a draft")
+    commit(repo, {'docs/say "hi".md': None}, "remove the draft")
+    code, out = run(repo, {"PRIVACY_DENYLIST": DENYLIST}, "--base", base, capsys=capsys)
+    assert code == 1, out
+    assert ":1: pattern #1" in out.out
+    assert_nothing_leaked(out.out + out.err)
+
+
 def test_history_scans_commit_messages(tmp_path, capsys):
     repo = make_repo(tmp_path, {"README.md": "clean\n"})
     base = _git(repo, "rev-parse", "HEAD")

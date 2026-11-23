@@ -74,9 +74,11 @@ def runs_for(api: Callable, repo: str, pr: dict) -> List[dict]:
 
     Runs are listed by head sha, which two pull requests can share, so each
     run must also name this pull request, or (a pull request from a fork,
-    whose runs name none) come from its head branch.
+    whose runs name none) come from its head branch in its head repository:
+    two forks can push one commit to branches of the same name.
     """
     sha = pr["head"]["sha"]
+    head_repo = (pr["head"].get("repo") or {}).get("full_name")
     runs = _paged(
         api,
         f"repos/{repo}/actions/workflows/{WORKFLOW}/runs?event=pull_request&head_sha={sha}",
@@ -85,7 +87,9 @@ def runs_for(api: Callable, repo: str, pr: dict) -> List[dict]:
     mine = []
     for run in runs:
         numbers = [p.get("number") for p in run.get("pull_requests") or []]
-        if pr["number"] in numbers or (not numbers and run.get("head_branch") == pr["head"]["ref"]):
+        run_repo = (run.get("head_repository") or {}).get("full_name")
+        if pr["number"] in numbers or (not numbers and run.get("head_branch") == pr["head"]["ref"]
+                                       and head_repo is not None and run_repo == head_repo):
             mine.append(run)
     return mine
 

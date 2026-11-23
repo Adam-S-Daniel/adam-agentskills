@@ -19,13 +19,15 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Report findings without opening/updating/closing the tracking issue (true/false)'
-        # Declared `string` and fromJSON-coerced below. workflow_dispatch
-        # hands typed (boolean) inputs to a reusable's `with:` as strings,
-        # and the reusable's boolean input rejects them — the dispatch run
-        # startup-fails before any job. The scheduled cron is unaffected
-        # (the `&&` short-circuits, so fromJSON never runs there).
-        type: string
+        description: 'Report findings without opening/updating/closing the tracking issue'
+        # Not `boolean`: workflow_dispatch hands typed (boolean) inputs to a
+        # reusable's `with:` as strings, and the reusable's boolean input
+        # rejects them, so the dispatch run startup-fails before any job. A
+        # `choice` still arrives as a string, but only 'false' or 'true', and
+        # the comparison below turns it into a real boolean. Free text plus
+        # fromJSON failed the run on any non-JSON value (`yes`, `True`).
+        type: choice
+        options: ['false', 'true']
         default: 'false'
 
 # The reusable needs actions: read (list workflow runs) + issues: write
@@ -47,4 +49,4 @@ jobs:
     # in _agent-guidance's .github/health-audit-platform-ref.
     uses: Adam-S-Daniel/_agent-guidance/.github/workflows/scheduled-run-health-reusable.yml@725400664dd84021b3fcd717e213e5994d0b20ff
     with:
-      dry_run: ${{ github.event_name == 'workflow_dispatch' && fromJSON(inputs.dry_run) || false }}
+      dry_run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == 'true' }}

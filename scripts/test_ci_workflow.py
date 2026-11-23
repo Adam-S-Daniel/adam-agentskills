@@ -293,7 +293,7 @@ def _run_salience_body(tmp_path, changed_files, event_name, renames=()):
 def test_the_gate_skips_a_docs_only_change(tmp_path):
     out = _run_salience_body(
         tmp_path,
-        ["docs/guide.md", "README.md", "AGENTS.md", "CLAUDE.md", "STRATEGY.md"],
+        ["docs/guide.md", "AGENTS.md", "CLAUDE.md", "STRATEGY.md"],
         "pull_request")
     assert "run=false" in out and "run=true" not in out
 
@@ -322,6 +322,58 @@ def test_the_gate_runs_when_a_salient_file_is_renamed_to_an_inert_path(tmp_path)
         tmp_path, [], "pull_request",
         renames=[("scripts/thing.py", "docs/thing.md")])
     assert "run=true" in out and "run=false" not in out
+
+
+def _inert_paths_the_scripts_read():
+    """Tracked inert-listed paths that a script or test under scripts/ builds
+    from the repo root (`REPO_ROOT / "docs" / "x.md"`), found by walking each
+    file's AST rather than a line scan, so a path split across `/` operands
+    is still seen. Fixture paths built under tmp_path are not repo reads."""
+    import ast
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent
+    tracked = set(subprocess.run(["git", "-C", str(root), "ls-files"],
+                                 check=True, capture_output=True, text=True
+                                 ).stdout.splitlines())
+    inert = re.compile(INERT_DOCS_REGEX)
+
+    def parts(node):
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = parts(node.left), parts(node.right)
+            return None if left is None or right is None else left + right
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, ast.Name) and node.id in {"ROOT", "REPO", "REPO_ROOT"}:
+            return []
+        return None
+
+    found = set()
+    for source in sorted((root / "scripts").glob("*.py")):
+        for node in ast.walk(ast.parse(source.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+                built = parts(node)
+                if built:
+                    path = "/".join(built)
+                    if path in tracked and inert.match(path):
+                        found.add(path)
+    return sorted(found)
+
+
+def test_the_gate_runs_when_a_doc_the_suite_reads_changes(tmp_path):
+    """The inert list was measured once, then tests started reading
+    docs/skill-impact.md, docs/multi-repo-delivery.md, the ADRs and README.md.
+    A PR that changed only one of those skipped the suite that pins it and
+    reported green. Every such read must make the gate run."""
+    read = _inert_paths_the_scripts_read()
+    assert "docs/skill-impact.md" in read, "the AST scan found nothing; it drifted"
+    for i, path in enumerate(read):
+        (tmp_path / str(i)).mkdir()
+        out = _run_salience_body(tmp_path / str(i), [path], "pull_request")
+        assert "run=true" in out and "run=false" not in out, (
+            f"{path} is read by a script or test under scripts/, but a PR "
+            f"changing only it skips the suites. Add it to the salience "
+            f"gate's list of docs the suite reads, in both pytest jobs.")
 
 
 def test_the_gate_fails_open_off_pull_request_events(tmp_path):
@@ -1137,3 +1189,19 @@ def test_a_push_that_changes_nothing_the_check_reads_rechecks_nothing(tmp_path):
 def test_a_push_whose_range_cannot_be_read_rechecks_everything(tmp_path):
     out = _run_recheck_decision(tmp_path, ["README.md"], before="0" * 40)
     assert out == "run=true"
+
+
+def test_the_health_audit_dry_run_input_cannot_break_the_dispatch():
+    """scheduled-run-health.yml took dry_run as a free-text string and passed
+    fromJSON(inputs.dry_run) to the reusable's boolean input, so a dispatch
+    typed `yes` or `True` (not JSON) failed to evaluate and the audit never
+    ran. A `choice` input allows only 'false' or 'true', compared as a string.
+    (Not `boolean`: a dispatch passes it on as a string, which the reusable's
+    boolean input rejects.)"""
+    doc = yaml.safe_load((WORKFLOWS_DIR / "scheduled-run-health.yml").read_text(encoding="utf-8"))
+    on = doc.get("on", doc.get(True))
+    spec = on["workflow_dispatch"]["inputs"]["dry_run"]
+    assert spec["type"] == "choice" and spec["options"] == ["false", "true"], spec
+    passed = doc["jobs"]["audit"]["with"]["dry_run"]
+    assert "fromJSON" not in passed, f"dry_run is still parsed as JSON: {passed!r}"
+    assert "inputs.dry_run == 'true'" in passed, passed

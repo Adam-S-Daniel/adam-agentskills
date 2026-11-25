@@ -293,7 +293,10 @@ sweep_retired_homes() {
 
     if [[ ${#removed[@]} -gt 0 ]] || [[ "$dir_removed" -eq 1 ]]; then
       echo "=== $dir (retired home — setup.sh no longer links skills) ==="
-      for name in "${removed[@]}"; do
+      # Guarded: on bash before 4.4 (macOS /bin/bash is 3.2) an empty array
+      # under `set -u` is an unbound variable, and `removed` is empty when the
+      # home held no links of ours and was just emptied by the rmdir above.
+      for name in ${removed[@]+"${removed[@]}"}; do
         echo "  UNLINK   $name"
       done
       if [[ "$dir_removed" -eq 1 ]]; then

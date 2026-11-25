@@ -89,6 +89,41 @@ def test_a_plain_run_links_nothing_and_writes_nothing(tmp_path):
     assert "bash setup.sh --owner-machine" in proc.stdout
 
 
+def test_an_emptied_retired_home_is_removed_without_an_unbound_variable(tmp_path):
+    """The path where the `removed` array is EMPTY but the home is rmdir'd.
+    Under `set -u`, bash before 4.4 (macOS /bin/bash is 3.2) treats expanding
+    an empty array as an unbound variable. setup.sh guards that expansion, but
+    only a bash older than 4.4 can fail on it: this machine's bash (see
+    test_every_array_expansion_is_guarded_or_known_nonempty for the check that
+    does not depend on the bash version) only proves the path is reached and
+    prints what it should."""
+    empty_home = tmp_path / "home" / ".agents" / "skills"
+    empty_home.mkdir(parents=True)
+    proc = run_setup(tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "unbound variable" not in proc.stderr
+    assert "RMDIR" in proc.stdout
+    assert "UNLINK" not in proc.stdout
+    assert not empty_home.exists()
+
+
+# Arrays setup.sh expands unguarded because they cannot be empty at that point:
+# a literal non-empty list, a list the script exits on when empty, or a
+# `read -a` of a non-empty literal. Any other array must use the guard
+# ${name[@]+"${name[@]}"} (bash before 4.4 fails an empty one under set -u).
+NONEMPTY_ARRAYS = {"RETIRED_HOMES", "SKILL_DIRS", "PYTHON_CMD", "cmd"}
+
+
+def test_every_array_expansion_is_guarded_or_known_nonempty():
+    """A token-level check (names the array, does not read code shape; bashlex
+    cannot parse setup.sh's `[[ ]]`, so no AST is available): drop the guarded
+    form, then every remaining ${name[@]} must name a known non-empty array."""
+    text = SETUP.read_text(encoding="utf-8")
+    unguarded = re.sub(r'\$\{(\w+)\[@\]\+"\$\{\1\[@\]\}"\}', "", text)
+    names = set(re.findall(r"\$\{(\w+)\[@\]\}", unguarded))
+    assert names <= NONEMPTY_ARRAYS, sorted(names - NONEMPTY_ARRAYS)
+
+
 def test_a_plain_run_leaves_an_existing_settings_file_byte_identical(tmp_path):
     settings = tmp_path / "home" / ".claude" / "settings.json"
     settings.parent.mkdir(parents=True)

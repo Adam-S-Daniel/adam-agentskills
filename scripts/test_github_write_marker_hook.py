@@ -3,8 +3,10 @@
 The hook (plugins/adam-anything-anywhere/hooks/github-write-marker/) is a
 verbatim copy of _agent-guidance's .claude/hooks/github-write-marker.sh, whose
 own suite covers it in depth. These tests pin what this plugin depends on: it
-is wired as a Claude-only PreToolUse hook, a GitHub write without the agent
-marker is blocked, one with it passes, an APPROVE review is blocked, and the
+is wired as a harness-agnostic PreToolUse hook in hooks/hooks.json, so Claude
+Code and Codex both run it (ADR 0017, #198), a GitHub write without the agent
+marker is blocked, one with it passes, an APPROVE review is blocked, a write
+holding a privacy-denylisted term is blocked without naming it, and the
 calls a session makes all the time (non-GitHub tools, reads, `git push`,
 GitHub text inside an argument) are never blocked. The tests that run the
 script are POSIX-only; the shape tests also run on Windows.
@@ -27,6 +29,7 @@ PLUGIN = REPO / "plugins" / "adam-anything-anywhere"
 HOOKS = PLUGIN / "hooks"
 SCRIPT = HOOKS / "github-write-marker" / "github-write-marker.sh"
 CLAUDE_CODE_JSON = HOOKS / "claude-code.json"
+HOOKS_JSON = HOOKS / "hooks.json"
 
 MARKER = "<sub>🤖 Written by Claude Code on behalf of @Adam-S-Daniel</sub>"
 BLOCK = 2
@@ -41,9 +44,15 @@ posix_only = pytest.mark.skipif(
     reason="runs the hook script with a POSIX bash and python3")
 
 
-def run_hook(event, cwd=None):
-    """Feed one PreToolUse event to the hook; return (exit code, stderr)."""
+def run_hook(event, cwd=None, denylist=None):
+    """Feed one PreToolUse event to the hook; return (exit code, stderr).
+
+    The privacy denylist and this machine's identity names are pinned (none
+    unless `denylist` names a file), so no case depends on the machine."""
     env = {k: v for k, v in os.environ.items() if k != "AGENT_NAME"}
+    env["PRIVACY_DENYLIST_FILE"] = str(denylist or REPO / "nonexistent-denylist.txt")
+    env["AGENT_CHECKS_LOCAL_USER"] = ""
+    env["AGENT_CHECKS_LOCAL_HOST"] = ""
     proc = subprocess.run(
         ["bash", str(SCRIPT)],
         input=event if isinstance(event, str) else json.dumps(event),
@@ -118,6 +127,44 @@ def test_an_approve_review_is_blocked_even_with_the_marker(event):
     assert "APPROVE" in err
 
 
+# ── Blocked: a privacy-denylisted term in any GitHub write ──────────────────
+# The term is invented. The block names the field and the pattern number, and
+# never the term or the pattern, so the hook's own output leaks nothing.
+
+@posix_only
+@pytest.mark.parametrize("event", [
+    bash('gh issue comment 7 --body "About Zebrafinch.\n\n%s"' % MARKER),
+    bash('gh pr create --title "zebrafinch fix" --body "Text.\n\n%s"' % MARKER),
+    bash("git push origin 0123abc:refs/heads/zebrafinch-work"),
+    mcp("mcp__github__create_branch", owner="example", repo="repo", branch="zebrafinch"),
+    mcp("mcp__github__add_issue_comment", body="zebrafinch\n" + MARKER),
+], ids=lambda e: e["tool_name"] + ":" + str(e["tool_input"].get("command", "")))
+def test_a_denylisted_term_is_blocked_without_naming_it(event, tmp_path):
+    denylist = tmp_path / "denylist.txt"
+    denylist.write_text("# invented\nzebrafinch\n", encoding="utf-8")
+    rc, err = run_hook(event, denylist=denylist)
+    assert rc == BLOCK, err
+    assert "pattern #1" in err
+    assert "zebrafinch" not in err.lower()
+
+
+@posix_only
+def test_a_clean_write_passes_with_a_denylist(tmp_path):
+    denylist = tmp_path / "denylist.txt"
+    denylist.write_text("zebrafinch\n", encoding="utf-8")
+    rc, err = run_hook(bash('gh pr comment 7 --body "Clean.\n\n%s"' % MARKER), denylist=denylist)
+    assert rc == 0, err
+
+
+@posix_only
+def test_a_codex_event_is_checked_and_gets_the_codex_footer() -> None:
+    event = bash('gh pr comment 7 --body "A comment."')
+    event["transcript_path"] = "/home/example/.codex/sessions/s.jsonl"
+    rc, err = run_hook(event)
+    assert rc == BLOCK, err
+    assert "Written by Codex on behalf of @Adam-S-Daniel" in err
+
+
 # ── Never blocked: the calls every session makes ─────────────────────────────
 
 @posix_only
@@ -161,8 +208,8 @@ def test_ordinary_calls_are_never_blocked(event):
 
 # ── Wiring ───────────────────────────────────────────────────────────────────
 
-def test_the_hook_is_wired_as_one_claude_only_pre_tool_use_handler():
-    config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
+def test_the_hook_is_wired_once_for_both_harnesses() -> None:
+    config = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
     groups = config["hooks"]["PreToolUse"]
     assert len(groups) == 1
     group = groups[0]
@@ -170,15 +217,21 @@ def test_the_hook_is_wired_as_one_claude_only_pre_tool_use_handler():
     handler = group["hooks"][0]
     assert handler["type"] == "command"
     assert handler["timeout"] == 10
-    # Claude-only by design (ADR 0017), so no Codex fields.
-    assert not {"if", "args", "shell", "commandWindows"} & set(handler), handler
-    words = shlex.split(handler["command"])
-    assert words[:2] == ["/usr/bin/env", "bash"], handler["command"]
-    assert words[2:] == ["${CLAUDE_PLUGIN_ROOT}/hooks/github-write-marker/github-write-marker.sh"]
+    # Harness-agnostic (ADR 0017): no fields Codex drops, a Windows form.
+    assert not {"if", "args", "shell"} & set(handler), handler
+    assert handler["command"] == (
+        '"${CLAUDE_PLUGIN_ROOT}"/hooks/github-write-marker/github-write-marker.sh')
+    assert handler["commandWindows"] == (
+        '"C:\\Program Files\\Git\\bin\\bash.exe" '
+        '"%PLUGIN_ROOT%/hooks/github-write-marker/github-write-marker.sh"')
+    # Claude Code merges both files, so a second registration would run it twice.
+    claude_only = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
+    assert "PreToolUse" not in claude_only["hooks"]
 
 
 @pytest.mark.parametrize("tool,matches", [
     ("Bash", True),
+    ("exec_command", True),
     ("mcp__github__add_issue_comment", True),
     ("mcp__github-mcp__create_pull_request", True),
     ("Read", False),
@@ -186,9 +239,9 @@ def test_the_hook_is_wired_as_one_claude_only_pre_tool_use_handler():
     ("BashOutput", False),
     ("mcp__hearthbot__post_message", False),
 ])
-def test_the_matcher_reaches_only_bash_and_github_mcp_tools(tool, matches):
+def test_the_matcher_reaches_only_shell_and_github_mcp_tools(tool: str, matches: bool) -> None:
     import re
-    config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
+    config = json.loads(HOOKS_JSON.read_text(encoding="utf-8"))
     matcher = config["hooks"]["PreToolUse"][0]["matcher"]
     assert bool(re.search(matcher, tool)) is matches
 

@@ -60,6 +60,43 @@
 #   falls back to the old regex over the whole text, which errs toward
 #   checking.
 #
+# THE PRIVACY DENYLIST
+# ---------------------
+# An issue or PR comment is public the moment it posts, and no CI job runs on
+# it. So before the marker check, every GitHub write this hook can see is
+# checked for personal details, and blocked when one is found:
+#
+# - the patterns in `PRIVACY_DENYLIST_FILE`, else `~/.config/privacy-denylist.txt`
+#   (one Python regular expression per line, `#` comments and blank lines
+#   skipped, matched case-insensitively: the format of adam-agentskills'
+#   `scripts/check_privacy_denylist.py`);
+# - this machine's account name inside a home-directory path, and its hostname
+#   as a whole word, under the identity rules of agent-checks' `local-identity`
+#   (`AGENT_CHECKS_LOCAL_USER`/`AGENT_CHECKS_LOCAL_HOST` override the lookup,
+#   even when empty; generic names are not checked; nothing under
+#   `GITHUB_ACTIONS=true`). One difference: the hostname is matched in any
+#   case and a `-` or `_` next to it still ends the word, so a branch named
+#   `<host>-fix` is caught.
+#
+# With no denylist file (any cloud session) only the identity names are
+# checked, silently; a pattern that does not compile is skipped with a warning
+# naming its number. The fields checked are the user-visible ones:
+#
+# - `gh issue|pr create|comment|edit|review|close|reopen|merge`: `--title`,
+#   `--body`, `--body-file` contents, `--comment`, `--head`, `--subject`;
+# - `gh api` with a write method (or a field and no method): every `-f`/`-F`
+#   field value, a `key=@file` file's contents and an `--input` file's
+#   contents; `-` (stdin) means the command's heredoc bodies;
+# - `git push`: the destination of each refspec (`<sha>:refs/heads/<name>`,
+#   `HEAD:<name>`), or the current branch for `git push`, `git push origin`
+#   and `git push origin HEAD`;
+# - a GitHub MCP tool that is not a read (`get_`/`list_`/`search_`/`*_read`):
+#   every string in its input but `owner` and `repo`.
+#
+# A command `shlex` cannot tokenize is checked as a whole. The block names the
+# field and the pattern NUMBER (or "this machine's hostname"), never the
+# matched text or the pattern, so the hook's own output leaks nothing.
+#
 # KNOWN GAPS: a command that holds the token anywhere passes as a whole, so a
 # chain of two writes with one marked passes too. Quote context is lost after
 # tokenizing, so a single-quoted `'$(gh pr comment ...)'` or backtick span is
@@ -75,17 +112,28 @@
 # stderr warning: a broken hook must not wedge every tool call.
 #
 # The footer names the agent from `AGENT_NAME`: `codex` gives `Codex`, any
-# other value or none gives `Claude Code`.
+# other value gives `Claude Code`. With `AGENT_NAME` unset, a Codex run is
+# told apart the way adam-agentskills' `hooks/lib/harness.sh` does it: a
+# `transcript_path` under `/.codex/`, or `PLUGIN_ROOT` set without
+# `CLAUDE_PROJECT_DIR`.
+#
+# CODEX loads the same script as a plugin hook (adam-agentskills#198). Its
+# PreToolUse event names its shell tool `Bash` and puts the command in
+# `tool_input.command`, and exit 2 with stderr blocks the call, as in Claude
+# Code. In case a Codex version reports the shell differently, the shell
+# names `exec_command`, `shell` and `local_shell` are read as `Bash` too, and
+# a command given as a list of words is joined back into one line.
 set -uo pipefail
 
 # Read stdin ONCE.
 EVENT="$(cat 2>/dev/null)" || EVENT=""
 
-# Fast path: nothing GitHub-shaped in the event, nothing to check. Every Bash
+# Fast path: nothing GitHub-shaped (or push-shaped) in the event, nothing to
+# check. Every Bash
 # call reaches this hook when it is registered on `Bash`, so the common case
 # never starts an interpreter.
 case "$EVENT" in
-    *gh*|*github*) ;;
+    *gh*|*github*|*push*) ;;
     *) exit 0 ;;
 esac
 
@@ -101,6 +149,8 @@ import json
 import os
 import re
 import shlex
+import socket
+import subprocess
 import sys
 
 TOKEN = "on behalf of @Adam-S-Daniel"
@@ -112,11 +162,18 @@ MCP_TOOL = re.compile(
     r"update_pull_request|pull_request_review_write|add_comment_to_pending_review|"
     r"add_reply_to_pull_request_comment|update_issue_comment)$")
 
+# Any GitHub MCP tool, and the ones that only read (left out of the denylist).
+MCP_GITHUB = re.compile(r"^mcp__.*github.*__(.+)$")
+MCP_READ = re.compile(r"^(?:get_|list_|search_)|_read$")
+
 # Bash, REGEX FALLBACK: used only when shlex cannot tokenize the command.
 # A gh subcommand that writes a body-bearing object.
 GH_WRITE = re.compile(r"\bgh\s+(?:issue\s+(?:create|comment|edit)|pr\s+(?:create|comment|edit|review))\b")
 GH_PR_REVIEW = re.compile(r"\bgh\s+pr\s+review\b")
 APPROVE_FLAG = re.compile(r"(?:^|\s)(?:--approve|-a)(?=\s|=|$|[;&|)])")
+# Bash, regex fallback for the denylist: anything that may write to GitHub.
+GH_ANY_WRITE = re.compile(
+    r"\bgh\s+(?:issue|pr|api|release|gist|repo|label)\b|\bgit\b.*\bpush\b")
 # Bash: `gh api` writing to an issues, pulls or comments endpoint.
 GH_API = re.compile(r"\bgh\s+api\b")
 API_METHOD = re.compile(r"(?:^|\s)(?:-X|--method)(?:\s+|=)?['\"]?(?:POST|PATCH|PUT)\b", re.I)
@@ -180,9 +237,130 @@ def block_unreadable(unreadable):
     sys.exit(2)
 
 
+def block_denylist(field, what):
+    sys.stderr.write(
+        "github-write-marker: blocked — the %s of this GitHub write matches %s. "
+        "GitHub text is public the moment it posts, and an edit keeps the old "
+        "text in its history. Reword it without that detail, then retry. The "
+        "matched text is not shown here on purpose.\n" % (field, what))
+    sys.exit(2)
+
+
+# ── Privacy denylist ───────────────────────────────────────────────────────
+GENERIC_USERS = {"root", "runner", "user", "ubuntu", "agent", "codex", "node",
+                 "vscode", "dev", "admin", "administrator", "codespace",
+                 "gitpod", "git", "nobody"}
+
+
+def denylist_patterns():
+    """[(number, compiled)] from the denylist file; [] when there is none."""
+    path = os.environ.get("PRIVACY_DENYLIST_FILE") or os.path.join(
+        os.path.expanduser("~"), ".config", "privacy-denylist.txt")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            raw = fh.read()
+    except FileNotFoundError:
+        return []
+    except Exception as exc:
+        sys.stderr.write("github-write-marker: WARNING — the privacy denylist "
+                         "could not be read (%s); checking identity names only."
+                         "\n" % exc.__class__.__name__)
+        return []
+    entries = [ln.strip() for ln in raw.replace("\r\n", "\n").split("\n")]
+    entries = [e for e in entries if e and not e.startswith("#")]
+    out = []
+    for number, pattern in enumerate(entries, start=1):
+        try:
+            out.append((number, re.compile(pattern, re.I)))
+        except re.error:
+            sys.stderr.write("github-write-marker: WARNING — privacy denylist "
+                             "pattern #%d is not a valid regular expression; "
+                             "it is skipped.\n" % number)
+    return out
+
+
+def identity_patterns():
+    """[(description, compiled)] for this machine's account and host names,
+    under agent-checks' local-identity rules."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return []
+    if "AGENT_CHECKS_LOCAL_USER" in os.environ:
+        user = os.environ["AGENT_CHECKS_LOCAL_USER"]
+    else:
+        try:
+            import pwd
+            user = pwd.getpwuid(os.getuid()).pw_name
+        except Exception:
+            user = ""
+    if "AGENT_CHECKS_LOCAL_HOST" in os.environ:
+        host = os.environ["AGENT_CHECKS_LOCAL_HOST"]
+    else:
+        try:
+            host = socket.gethostname().split(".")[0]
+        except Exception:
+            host = ""
+    out = []
+    if "\n" not in user and len(user) >= 3 and user.lower() not in GENERIC_USERS:
+        u = re.escape(user)
+        out.append(("this machine's account name in a home-directory path",
+                    re.compile(r"(/home/|/Users/|\\{1,2}(home|Users)\\{1,2})%s"
+                               r"([^A-Za-z0-9_-]|$)|-home-%s-" % (u, u))))
+    lower = host.lower()
+    if ("\n" not in host and len(host) >= 4 and lower != "localhost"
+            and not (re.fullmatch(r"[0-9a-f]+", lower) and len(host) >= 12)):
+        out.append(("this machine's hostname",
+                    re.compile(r"(^|[^A-Za-z0-9])%s([^A-Za-z0-9]|$)"
+                               % re.escape(host), re.I)))
+    return out
+
+
+def check_denylist(fields):
+    """Block on the first (field, text) holding a denylisted detail."""
+    if not fields:
+        return
+    checks = [("privacy denylist pattern #%d" % n, rx)
+              for n, rx in denylist_patterns()] + identity_patterns()
+    for field, text in fields:
+        if not isinstance(text, str) or not text:
+            continue
+        for what, rx in checks:
+            if rx.search(text):
+                block_denylist(field, what)
+
+
+def read_text(path, cwd):
+    if cwd and not os.path.isabs(path):
+        path = os.path.join(cwd, path)
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except Exception:
+        return None  # the marker check reports a body file it cannot read
+
+
+def current_branch(cwd):
+    try:
+        out = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"],
+                             cwd=cwd or None, capture_output=True, text=True,
+                             timeout=3)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 # ── Bash: deciding what is a GitHub write ──────────────────────────────────
-# Each write found is a record: {"approve": bool, "has_body": bool,
-# "paths": [body-file paths, expanded]}.
+# Each write found is a record: {"marker": bool (the marker rule applies),
+# "approve": bool, "has_body": bool, "paths": [body-file paths, expanded],
+# "fields": [(name, text)], "files": [(name, path)], "stdin": bool,
+# "branch": bool (a push of the current branch), "cwd": str or None}.
+
+def record(**kw):
+    rec = {"marker": True, "approve": False, "has_body": False, "paths": [],
+           "fields": [], "files": [], "stdin": False, "branch": False,
+           "cwd": None}
+    rec.update(kw)
+    return rec
+
 
 def expand(text, shell_vars):
     """$NAME/${NAME} from inline assignments, then the environment, then ~."""
@@ -196,21 +374,24 @@ def regex_records(text):
     is_gh_write = bool(GH_WRITE.search(text))
     is_api_write = bool(GH_API.search(text) and API_PATH.search(text)
                         and (API_METHOD.search(text) or API_BODY_FIELD.search(text)))
+    # The denylist reads the whole command when it cannot be tokenized.
+    whole = record(marker=False, fields=[("command", text)])
     if not (is_gh_write or is_api_write):
-        return []
-    return [{
-        "approve": bool(GH_PR_REVIEW.search(text) and APPROVE_FLAG.search(text)),
-        "has_body": bool((is_gh_write and BODY_FLAG.search(text))
-                         or (is_api_write and API_BODY_FIELD.search(text))),
-        "paths": [expand(p, {}) for _, p in BODY_FILE.findall(text)]
-                 + [expand(p, {}) for p in API_BODY_FILE.findall(text)],
-    }]
+        return [whole] if GH_ANY_WRITE.search(text) else []
+    return [whole, record(
+        approve=bool(GH_PR_REVIEW.search(text) and APPROVE_FLAG.search(text)),
+        has_body=bool((is_gh_write and BODY_FLAG.search(text))
+                      or (is_api_write and API_BODY_FIELD.search(text))),
+        paths=[expand(p, {}) for _, p in BODY_FILE.findall(text)]
+              + [expand(p, {}) for p in API_BODY_FILE.findall(text)],
+    )]
 
 
-def strip_heredocs(text):
+def strip_heredocs(text, bodies=None):
     """Drop heredoc bodies (and backslash-newlines) outside quotes, so body
     prose is never tokenized as shell. Returns None when a heredoc has no
-    closing delimiter line; the caller then tokenizes the text as it is."""
+    closing delimiter line; the caller then tokenizes the text as it is.
+    Each body dropped is appended to `bodies` when one is given."""
     out, pending, quote = [], [], None
     i, n = 0, len(text)
     while i < n:
@@ -257,6 +438,8 @@ def strip_heredocs(text):
                         break
                     if k == -1:
                         return None
+                    if bodies is not None:
+                        bodies.append(line)
                     j = k + 1
             pending = []
             i = j
@@ -316,58 +499,156 @@ def substitutions(word):
         start = i + 2
 
 
+GH_TEXT_FLAGS = {"--title": "title", "-t": "title", "--body": "body",
+                 "-b": "body", "--comment": "comment", "-c": "comment",
+                 "--head": "head", "-H": "head", "--subject": "subject",
+                 "-s": "subject"}
+GH_DENYLIST_ACTS = {"create", "comment", "edit", "review", "close", "reopen",
+                    "merge"}
+API_VALUE_FLAGS = {"-H", "--header", "-q", "--jq", "-t", "--template",
+                   "--hostname", "--cache", "-p", "--preview"}
+
+
 def gh_record(args, shell_vars):
     """A record when `gh <args>` is a GitHub write, else None."""
     if not args:
         return None
     sub, act = args[0], (args[1] if len(args) > 1 else "")
-    if (sub == "issue" and act in ("create", "comment", "edit")) or \
-            (sub == "pr" and act in ("create", "comment", "edit", "review")):
+    fields, files, stdin = [], [], False
+    if sub in ("issue", "pr") and act in GH_DENYLIST_ACTS:
+        marker = ((sub == "issue" and act in ("create", "comment", "edit")) or
+                  (sub == "pr" and act in ("create", "comment", "edit", "review")))
         rest = args[2:]
         has_body, paths = False, []
         for j, a in enumerate(rest):
+            nxt = rest[j + 1] if j + 1 < len(rest) else None
+            flag, eq, val = a.partition("=")
+            if flag in GH_TEXT_FLAGS and (eq or nxt is not None) and \
+                    not (sub == "issue" and flag in ("-H", "-s")):
+                fields.append((GH_TEXT_FLAGS[flag], val if eq else nxt))
             if a in ("--body", "-b") or a.startswith(("--body=", "-b=")):
                 has_body = True
             elif a in ("--body-file", "-F"):
                 has_body = True
-                if j + 1 < len(rest):
-                    paths.append(rest[j + 1])
+                if nxt is not None:
+                    paths.append(nxt)
             elif a.startswith(("--body-file=", "-F=")):
                 has_body = True
                 paths.append(a.split("=", 1)[1])
         approve = (sub == "pr" and act == "review"
                    and any(a in ("--approve", "-a") or a.startswith("--approve=")
                            for a in rest))
+        paths = [expand(p, shell_vars) for p in paths]
+        files = [("body", p) for p in paths if p != "-"]
+        stdin = "-" in paths
     elif sub == "api":
         rest = args[1:]
         method = body_field = False
+        method_given = None
         paths = []
-        for j, a in enumerate(rest):
+        any_field = False
+        j = 0
+        while j < len(rest):
+            a = rest[j]
             nxt = rest[j + 1] if j + 1 < len(rest) else ""
             if a in ("-X", "--method"):
-                method = method or nxt.upper() in WRITE_METHODS
-            elif a.startswith("--method="):
-                method = method or a.split("=", 1)[1].upper() in WRITE_METHODS
+                method_given = nxt.upper()
+                j += 2
+                continue
+            if a.startswith("--method="):
+                method_given = a.split("=", 1)[1].upper()
             elif a.startswith("-X") and not a.startswith("--"):
-                method = method or a[2:].lstrip("=").upper() in WRITE_METHODS
-            elif a in ("-f", "-F", "--field", "--raw-field"):
-                if nxt.startswith("body="):
+                method_given = a[2:].lstrip("=").upper()
+            elif a in ("-f", "-F", "--field", "--raw-field") or \
+                    a.startswith(("--field=", "--raw-field=", "-f=", "-F=")):
+                if "=" in a and a.startswith("--") or a[:3] in ("-f=", "-F="):
+                    flag, _, kv = a.partition("=")
+                    step = 1
+                else:
+                    flag, kv, step = a, nxt, 2
+                key, _, val = kv.partition("=")
+                any_field = True
+                typed = flag in ("-F", "--field")
+                if typed and val.startswith("@"):
+                    src = val[1:]
+                    if src == "-":
+                        stdin = True
+                    else:
+                        files.append((key, expand(src, shell_vars)))
+                else:
+                    fields.append((key, val))
+                if key == "body":
                     body_field = True
-                    if a in ("-F", "--field") and nxt.startswith("body=@"):
-                        paths.append(nxt[len("body=@"):])
-            else:
-                for flag in ("--field=", "--raw-field=", "-f=", "-F="):
-                    if a.startswith(flag + "body="):
-                        body_field = True
-                        if flag in ("--field=", "-F=") and a.startswith(flag + "body=@"):
-                            paths.append(a[len(flag + "body=@"):])
-        if not (any(API_PATH.search(a) for a in rest) and (method or body_field)):
+                    if typed and val.startswith("@"):
+                        paths.append(val[1:])
+                j += step
+                continue
+            elif a == "--input" or a.startswith("--input="):
+                src = a.split("=", 1)[1] if "=" in a else nxt
+                if src == "-":
+                    stdin = True
+                elif src:
+                    files.append(("input", expand(src, shell_vars)))
+                if "=" not in a:
+                    j += 2
+                    continue
+            elif a in API_VALUE_FLAGS:
+                j += 2
+                continue
+            j += 1
+        method = (method_given in WRITE_METHODS) if method_given else False
+        writes = (method_given in WRITE_METHODS or method_given == "DELETE"
+                  or (method_given is None and (any_field or files or stdin)))
+        if not writes:
             return None
+        marker = bool(any(API_PATH.search(a) for a in rest)
+                      and (method or body_field))
         has_body, approve = body_field, False
+        paths = [expand(p, shell_vars) for p in paths]
     else:
         return None
-    return {"approve": approve, "has_body": has_body,
-            "paths": [expand(p, shell_vars) for p in paths]}
+    return record(marker=marker, approve=approve, has_body=has_body,
+                  paths=paths, fields=fields, files=files, stdin=stdin)
+
+
+GIT_VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                  "--exec-path", "--config-env"}
+PUSH_VALUE_OPTS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+
+
+def git_push_record(args, shell_vars):
+    """A record when `git <args>` is a push, naming the refs it creates."""
+    cwd, i = None, 0
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] in GIT_VALUE_OPTS:
+            if args[i] == "-C" and i + 1 < len(args):
+                cwd = expand(args[i + 1], shell_vars)
+            i += 2
+        else:
+            i += 1
+    if i >= len(args) or args[i] != "push":
+        return None
+    positional, rest, j = [], args[i + 1:], 0
+    while j < len(rest):
+        a = rest[j]
+        if a in PUSH_VALUE_OPTS:
+            j += 2
+            continue
+        if not a.startswith("-"):
+            positional.append(a)
+        j += 1
+    fields, branch = [], False
+    refspecs = positional[1:]
+    if not refspecs:
+        branch = True
+    for spec in refspecs:
+        spec = spec.lstrip("+")
+        dst = spec.split(":", 1)[1] if ":" in spec else spec
+        if dst in ("HEAD", "@", ""):
+            branch = True
+        else:
+            fields.append(("pushed ref", dst))
+    return record(marker=False, fields=fields, branch=branch, cwd=cwd)
 
 
 def analyze(text, shell_vars, depth=0):
@@ -420,6 +701,10 @@ def analyze(text, shell_vars, depth=0):
             rec = gh_record(args, shell_vars)
             if rec:
                 records.append(rec)
+        elif base == "git":
+            rec = git_push_record(args, shell_vars)
+            if rec:
+                records.append(rec)
     return records
 
 
@@ -433,12 +718,36 @@ except Exception as exc:
                      "object (%s); allowing the call unchecked.\n" % exc.__class__.__name__)
     allow()
 
+agent_env = os.environ.get("AGENT_NAME")
+transcript = event.get("transcript_path")
+if agent_env is None and (
+        (isinstance(transcript, str) and "/.codex/" in transcript.replace("\\", "/"))
+        or (os.environ.get("PLUGIN_ROOT") and not os.environ.get("CLAUDE_PROJECT_DIR"))):
+    FOOTER = "<sub>🤖 Written by Codex on behalf of @Adam-S-Daniel</sub>"
+
 tool = event.get("tool_name")
 tool_input = event.get("tool_input")
 if not isinstance(tool, str) or not isinstance(tool_input, dict):
     allow()
 
 # ── MCP ────────────────────────────────────────────────────────────────────
+def strings(value, name):
+    if isinstance(value, str):
+        yield name, value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            if name == "" and k in ("owner", "repo"):
+                continue
+            yield from strings(v, "%s.%s" % (name, k) if name else str(k))
+    elif isinstance(value, list):
+        for v in value:
+            yield from strings(v, name)
+
+
+gm = MCP_GITHUB.match(tool)
+if gm and not MCP_READ.match(gm.group(1)):
+    check_denylist(list(strings(tool_input, "")))
+
 m = MCP_TOOL.match(tool)
 if m:
     ev = tool_input.get("event")
@@ -449,11 +758,13 @@ if m:
         block("this %s" % m.group(1))
     allow()
 
-if tool != "Bash":
+if tool not in ("Bash", "exec_command", "shell", "local_shell"):
     allow()
 
 # ── Bash ───────────────────────────────────────────────────────────────────
-cmd = tool_input.get("command")
+cmd = tool_input.get("command", tool_input.get("cmd"))
+if isinstance(cmd, list) and all(isinstance(w, str) for w in cmd):
+    cmd = shlex.join(cmd)
 if not isinstance(cmd, str):
     allow()
 
@@ -464,13 +775,36 @@ except Exception:
 if not records:
     allow()
 
+# ── The privacy denylist, over every write's user-visible fields ──────────
+cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
+fields = [f for r in records for f in r["fields"]]
+for r in records:
+    for name, path in r["files"]:
+        text = read_text(path, cwd)
+        if text is not None:
+            fields.append((name, text))
+    if r["branch"]:
+        where = r["cwd"] if r["cwd"] and os.path.isabs(r["cwd"]) else (
+            os.path.join(cwd, r["cwd"]) if r["cwd"] else cwd)
+        fields.append(("pushed branch", current_branch(where)))
+if any(r["stdin"] for r in records):
+    bodies = []
+    if strip_heredocs(cmd, bodies) is None:
+        fields.append(("command", cmd))
+    else:
+        fields.append(("body", "\n".join(bodies)))
+check_denylist(fields)
+
+records = [r for r in records if r["marker"]]
+if not records:
+    allow()
+
 if any(r["approve"] for r in records):
     block_approve()
 
 if TOKEN in cmd:
     allow()
 
-cwd = event.get("cwd") if isinstance(event.get("cwd"), str) else ""
 unreadable = []
 for path in [p for r in records for p in r["paths"]]:
     if path == "-":

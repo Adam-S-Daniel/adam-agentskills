@@ -1452,8 +1452,9 @@ CLAUDE_CODE_JSON = HOOKS / "claude-code.json"
 def test_claude_code_json_wires_one_session_start_hook():
     config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
     assert set(config) == {"hooks"}
-    # PreToolUse is the write-marker hook, checked in test_github_write_marker_hook.py.
-    assert set(config["hooks"]) == {"SessionStart", "PreToolUse"}
+    # The write-marker hook is in hooks/hooks.json (both harnesses), checked in
+    # test_github_write_marker_hook.py.
+    assert set(config["hooks"]) == {"SessionStart"}
     groups = config["hooks"]["SessionStart"]
     assert len(groups) == 1
     group = groups[0]
@@ -1474,8 +1475,11 @@ def test_the_manifests_name_the_claude_only_file_and_codex_never_sees_it():
     assert claude["hooks"] == "./hooks/claude-code.json"
     agent_plugin = json.loads((PLUGIN / "plugin.json").read_text(encoding="utf-8"))
     assert "hooks" not in agent_plugin
-    # Both harnesses load hooks/hooks.json by default; this plugin must not have one.
-    assert not (HOOKS / "hooks.json").exists()
+    # Both harnesses load hooks/hooks.json by default, so the Claude-only
+    # fleet-guidance hook must not be in it; only the write-marker hook is.
+    shared = json.loads((HOOKS / "hooks.json").read_text(encoding="utf-8"))
+    assert set(shared["hooks"]) == {"PreToolUse"}
+    assert "fleet-guidance" not in (HOOKS / "hooks.json").read_text(encoding="utf-8")
     assert claude["version"] == agent_plugin["version"]
 
 
@@ -1505,7 +1509,7 @@ def test_the_bare_bash_rule_accepts_the_env_bash_command():
     assert errors == []
     config = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8"))
     assert check_consistency._bare_bash_hooks(config) == 0
-    # Negative control: each command with a bare `bash` first is reported (the
-    # SessionStart hook and the PreToolUse write-marker hook).
+    # Negative control: a command with a bare `bash` first is reported (the
+    # SessionStart hook; the write-marker hook is in hooks/hooks.json).
     bare = json.loads(CLAUDE_CODE_JSON.read_text(encoding="utf-8").replace("/usr/bin/env bash", "bash"))
-    assert check_consistency._bare_bash_hooks(bare) == 2
+    assert check_consistency._bare_bash_hooks(bare) == 1

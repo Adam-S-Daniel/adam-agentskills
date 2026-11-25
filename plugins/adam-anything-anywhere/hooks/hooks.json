@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|exec_command|shell|local_shell|mcp__.*github.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/hooks/github-write-marker/github-write-marker.sh",
+            "commandWindows": "\"C:\\Program Files\\Git\\bin\\bash.exe\" \"%PLUGIN_ROOT%/hooks/github-write-marker/github-write-marker.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

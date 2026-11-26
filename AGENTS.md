@@ -108,7 +108,7 @@ published, non-prerelease release at least 7 days old. Otherwise it waits with
 `dependabot-bump-unverified`.
 
 It runs only on `pull_request_target`, which GitHub blocks by default on public
-repos from 2026-11-02. An Actions event policy declared in repo-settings'
+repos from 2026-12-02. An Actions event policy declared in repo-settings'
 `fleet.yml` allows that event for this one workflow file
 ([repo-settings ADR 0009](https://github.com/Adam-S-Daniel/repo-settings/blob/main/docs/decisions/0009-allow-pull-request-target-with-a-workflow-scoped-policy-owned-by-name.md)).
 The policy's `allowed_events` is an allowlist, so **a trigger added to this

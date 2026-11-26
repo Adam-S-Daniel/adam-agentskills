@@ -1,6 +1,6 @@
 # 0013. Start a fresh public registry and group plugins by audience and runtime
 
-- **Status:** Accepted (closed-folder clause amended by [0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md); the `sync-skills` skill and its global pre-push hook retired by [0014](0014-retire-the-account-zip-upload-channel.md))
+- **Status:** Accepted (closed-folder clause amended by [0016](0016-open-plugin-folders-and-gate-runtime-changes-on-owner-approval.md); the `sync-skills` skill and its global pre-push hook retired by [0014](0014-retire-the-account-zip-upload-channel.md); the `privacy` CI job and its checker retired for the fleet `agent-checks` privacy scan, _agent-guidance#635 item 7)
 - **Date:** 2026-09-24
 - **Deciders:** Adam Daniel
 

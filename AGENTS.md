@@ -304,12 +304,18 @@ only). Which repo a bare path resolves in, and the reasoned waivers, are in
   and PR text use **invented data only** — `example.com`, fictional names,
   `<user>` placeholders — never real personal details, usernames, hostnames,
   or account/org/session IDs.
-- `scripts/check_privacy_denylist.py` runs as the `privacy` CI job against the
-  `PRIVACY_DENYLIST` repository secret. Never commit the list; the checker
-  prints only `file:line` and a pattern number, never the matched text.
-- Run it locally with `PRIVACY_DENYLIST_FILE=<path outside the repo>` (add
-  `--base <ref>` to also scan the range's commit messages and added lines).
-  With no denylist it fails closed in CI and only warns locally.
+- The fleet's `agent-checks` job (a required check, `.github/workflows/agent-checks.yml`,
+  running the synced `.githooks/agent-checks`) covers privacy: it scans each
+  pull request's and push's added lines, commit messages and identities,
+  branch name, and pull request title and body against the `PRIVACY_DENYLIST`
+  repository secret, and prints only the place and a pattern number, never the
+  matched text. Never commit the list. This repo has no privacy job of its
+  own. A run with no secret (a fork pull request) warns instead of failing,
+  and nothing rescans the whole tree, so a pattern added to the secret checks
+  only changes made after it.
+- Run it locally with `PRIVACY_DENYLIST_FILE=<path outside the repo>`: the
+  pre-push hook checks ref names and commit messages, and
+  `bash .githooks/agent-checks ci <base> <head>` runs the CI scan.
 - The PR template (`.github/pull_request_template.md`) carries the
   invented-data checkbox; tick it only after checking.
 

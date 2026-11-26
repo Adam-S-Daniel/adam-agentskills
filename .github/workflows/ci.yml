@@ -895,46 +895,6 @@ jobs:
             xargs -a "$hooks" shellcheck -S warning
           fi
 
-  # ADR 0013: this registry replaced one whose git history carried personal
-  # data, so a denylist of personal details is checked on every push and pull
-  # request. The list itself is the PRIVACY_DENYLIST repository secret and is
-  # never in the repo; it reaches the script through `env:` only — never
-  # interpolated into `run:`, whose rendered text is echoed to a public log —
-  # and the script prints file:line and a pattern NUMBER, never the match.
-  #
-  # FAILS CLOSED without the secret (CI=true): a privacy job that scanned for
-  # nothing must not go green. That includes a pull request from a fork, which
-  # GitHub runs without repository secrets.
-  #
-  # Full history, because on a push or pull request it also scans every commit
-  # in the range (messages and added lines): a detail added and then deleted
-  # is gone from the tree and still public in the history.
-  privacy:
-    if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v7.1.0
-        with:
-          python-version: '3.12'
-      - name: Scan for denylisted personal details
-        env:
-          PRIVACY_DENYLIST: ${{ secrets.PRIVACY_DENYLIST }}
-          PR_BASE: ${{ github.event.pull_request.base.sha }}
-          PUSH_BEFORE: ${{ github.event.before }}
-        run: |
-          set -euo pipefail
-          base="${PR_BASE:-${PUSH_BEFORE:-}}"
-          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ] \
-              && git cat-file -e "${base}^{commit}" 2>/dev/null; then
-            python3 scripts/check_privacy_denylist.py --base "$base"
-          else
-            echo "No usable base commit for this event; scanning the tree only."
-            python3 scripts/check_privacy_denylist.py
-          fi
-
   # The one context only a pull request into the default branch can report
   # (issue #137). Required checks belong to a head commit, not to one pull
   # request, so a second pull request from the same head into a branch whose
@@ -959,7 +919,7 @@ jobs:
             && github.event.pull_request.base.ref == github.event.repository.default_branch
             && 'merge-gate'
           || 'merge-gate (not a pull request into the default branch)' }}
-    needs: [privacy, pytest, pytest-windows]
+    needs: [pytest, pytest-windows]
     if: always() && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions: {}
@@ -971,8 +931,8 @@ jobs:
           set -euo pipefail
           bad="$(jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"' <<< "$NEEDS")"
           count="$(jq -r 'length' <<< "$NEEDS")"
-          if [ "$count" != 3 ] || [ -n "$bad" ]; then
-            printf '::error::merge-gate needs three successful jobs, and got:\n%s\n' "${bad:-$count jobs}"
+          if [ "$count" != 2 ] || [ -n "$bad" ]; then
+            printf '::error::merge-gate needs two successful jobs, and got:\n%s\n' "${bad:-$count jobs}"
             exit 1
           fi
 

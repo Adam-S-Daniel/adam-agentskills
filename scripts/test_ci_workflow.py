@@ -1040,7 +1040,7 @@ def test_the_loop_path_guard_ignores_other_branches(tmp_path):
 # a pull request into the default branch reports under that name.
 
 MERGE_GATE = "merge-gate"
-GATED_JOBS = ["privacy", "pytest", "pytest-windows"]
+GATED_JOBS = ["pytest", "pytest-windows"]
 
 
 def test_merge_gate_reports_its_required_name_only_into_the_default_branch():
@@ -1105,7 +1105,7 @@ def test_merge_gate_fails_when_a_needed_job_did_not_succeed(job, result):
 @pytest.mark.skipif(os.name == "nt" or shutil.which("jq") is None,
                     reason="runs the step's bash with jq, as the Linux runner does")
 def test_merge_gate_fails_when_a_needed_job_is_missing():
-    assert _run_merge_gate({j: "success" for j in GATED_JOBS[:2]}).returncode == 1
+    assert _run_merge_gate({j: "success" for j in GATED_JOBS[:-1]}).returncode == 1
 
 
 RECHECK_JOB = "recheck-open-prs"

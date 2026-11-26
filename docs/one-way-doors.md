@@ -41,7 +41,7 @@ Each item says what breaks downstream when it changes.
 7. **Personal data in public history.** This repository is public, so
    personal or sensitive data committed or written in a pull request is
    published for good (its predecessor was retired for this reason, ADR
-   0013). The required `privacy` job is the check for this one; ordinary
+   0013). The privacy scan in the required `agent-checks` job is the check for this one; ordinary
    commits and pull request text are not a one-way door.
 8. **Records keyed by a skill's name elsewhere.** skills-evals'
    `evals/<skill>/` fixtures and results, the explorer data, the
@@ -146,7 +146,7 @@ so a second pull request from the same head into a branch whose `ci.yml`
 predates these steps can report `pytest` green for the pull request into the
 default branch. The required `merge-gate` check closes that (#137): its
 job reports under that name only on a pull request whose base is the default
-branch, needs `privacy`, `pytest` and `pytest-windows` to have succeeded in
+branch, needs `pytest` and `pytest-windows` to have succeeded in
 the same run, and cannot be reported at all by a `ci.yml` from before it
 existed. A pull request into the default branch runs the default branch's
 `ci.yml` unless its head changed the workflow, which the App cannot do. So
